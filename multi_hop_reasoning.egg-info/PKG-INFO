@@ -1,0 +1,63 @@
+Metadata-Version: 2.4
+Name: multi-hop-reasoning
+Version: 0.1.0
+Summary: Multi-hop reasoning evaluation and experimentation toolkit
+Author-email: Mihir Mishra <mrm367@cornell.edu>
+License: MIT
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: datasets>=2.14.0
+Requires-Dist: openai>=1.0.0
+Requires-Dist: pandas>=1.5.0
+Requires-Dist: tqdm>=4.65.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: ruff>=0.1.0; extra == "dev"
+
+# Limited Memory Language Models with Multi-Hop Reasoning
+
+## HotpotQA Evaluation Pipeline
+
+The `evaluation` package mirrors the HotpotQA scorer available in
+`LLMAgents/memento`. It computes exact-match, F1, supporting-fact, and joint
+metrics and can stream gold annotations directly from Hugging Face.
+
+### Quick start
+
+1. Install dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. Run the evaluator (module path: `eval.hotpotqa.evaluate`):
+
+   ```bash
+   python -m eval.hotpotqa.evaluate path/to/predictions.json \
+     --split validation \
+     --setting distractor
+   ```
+
+   Use `--data-path /path/to/hotpot-jsons` for offline evaluation. Metrics are
+   printed in plain text by default; add `--pretty` for a JSON summary or
+   `--metrics-output results.json` to export them.
+
+### Prediction format
+
+The default HotpotQA JSON structure is supported out of the box:
+
+```json
+{
+  "answer": {
+    "5a8b57f25542995d1e6f1371": "yes"
+  },
+  "sp": {
+    "5a8b57f25542995d1e6f1371": [["Scott Derrickson", 0], ["Ed Wood", 0]]
+  }
+}
+```
+
+Lists of records with `id`/`pred` keys or raw `{"id": "answer"}` mappings are
+also accepted and automatically converted to this layout.
