@@ -35,6 +35,9 @@ def main() -> None:
     parser.add_argument("--outdir", default=os.path.join(REPO_ROOT, "results", "eval"), help="Output directory")
     # Optional overrides
     parser.add_argument("--dataset", default=None)
+    parser.add_argument("--setting", default=None)
+    parser.add_argument("--split", default=None)
+    parser.add_argument("--source", default="hf")
     parser.add_argument("--agent", default=None)
     parser.add_argument("--llm", default=None)
     parser.add_argument("--bn", type=int, default=None)
@@ -42,7 +45,13 @@ def main() -> None:
     args = parser.parse_args()
 
     # Evaluate
-    results = evaluate_file(args.preds)
+    results = evaluate_file(
+        args.preds,
+        dataset=args.dataset,
+        setting=args.setting,
+        split=args.split,
+        source=args.source,
+    )
 
     # Build timestamp MM-DD-HH
     timestamp = datetime.now().strftime("%m-%d-%H")
@@ -59,6 +68,12 @@ def main() -> None:
         meta["bn"] = args.bn
     if args.bs is not None:
         meta["bs"] = args.bs
+    if args.dataset is not None:
+        meta["dataset"] = args.dataset
+    if args.setting is not None:
+        meta["setting"] = args.setting
+    if args.split is not None:
+        meta["split"] = args.split
     # Save timestamp in the JSON payload
     meta["timestamp"] = timestamp
 

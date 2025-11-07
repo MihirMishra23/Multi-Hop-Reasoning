@@ -48,7 +48,7 @@ def build_query(question: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run agent over a dataset and save predictions.")
-    parser.add_argument("--dataset", default="hotpotqa", choices=["hotpotqa"], help="Dataset name")
+    parser.add_argument("--dataset", choices=["hotpotqa", "musique"], help="Dataset name")
     parser.add_argument("--setting", default="distractor", choices=["distractor", "fullwiki"], help="Dataset setting")
     parser.add_argument("--split", default="dev", choices=["train", "dev", "validation", "test"], help="Dataset split")
     parser.add_argument("--method", default="icl", choices=["db", "rag", "icl"], help="Agent method label (for output path)")

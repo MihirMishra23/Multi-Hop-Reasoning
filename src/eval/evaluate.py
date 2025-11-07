@@ -17,14 +17,16 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Optional
 
 from .metrics import exact_match_score, f1_score
+from src.data import get_dataset
 
 
 @dataclass
 class EvalMeta:
     dataset: str
+    setting: str | None
     agent: str
     llm: str
     bn: int
@@ -116,6 +118,7 @@ def _extract_meta(preds: Dict[str, Any], preds_path: str) -> EvalMeta:
 
     return EvalMeta(
         dataset=dataset or "unknown",
+        setting=str(setting) if setting is not None else None,
         agent=str(agent or "unknown"),
         llm=str(llm or "unknown"),
         bn=int(bn) if isinstance(bn, int) or (isinstance(bn, str) and bn.isdigit()) else -1,
@@ -125,7 +128,13 @@ def _extract_meta(preds: Dict[str, Any], preds_path: str) -> EvalMeta:
     )
 
 
-def evaluate_file(preds_path: str) -> Dict[str, Any]:
+def evaluate_file(
+    preds_path: str,
+    dataset: Optional[str] = None,
+    setting: Optional[str] = None,
+    split: Optional[str] = None,
+    source: str = "hf",
+) -> Dict[str, Any]:
     """Evaluate a single preds JSON file and return metrics + metadata.
 
     Args:
@@ -140,6 +149,14 @@ def evaluate_file(preds_path: str) -> Dict[str, Any]:
         preds: Dict[str, Any] = json.load(f)
 
     meta = _extract_meta(preds, preds_path)
+
+    # Determine dataset/setting/split using overrides when provided
+    dataset_name = dataset or meta.dataset
+    setting_name = setting or meta.setting
+    split_name = split or meta.split
+
+    # Lazily loaded mapping from qid -> joined gold answers
+    gold_by_id: Dict[str, str] | None = None
 
     total = 0
     sum_em = 0.0
@@ -159,6 +176,25 @@ def evaluate_file(preds_path: str) -> Dict[str, Any]:
             else rec.get("true")
         )
         gold_text = _safe_join_gold(gold_field)
+
+        # If gold missing, try to load from dataset once
+        if gold_text == "" and dataset_name not in (None, "unknown") and split_name is not None:
+            if gold_by_id is None:
+                # get_dataset requires a setting param; for datasets without setting, pass a placeholder
+                effective_setting = setting_name or "na"
+                try:
+                    ds = get_dataset(dataset_name, effective_setting, split_name, source=source)
+                    tmp: Dict[str, str] = {}
+                    for row in ds:
+                        ans = row.get("answers") or []
+                        if isinstance(ans, list):
+                            tmp[row["id"]] = "\n".join(str(x) for x in ans)
+                        else:
+                            tmp[row["id"]] = str(ans)
+                    gold_by_id = tmp
+                except Exception:
+                    gold_by_id = {}
+            gold_text = gold_by_id.get(str(_qid), "")
 
         if gold_text == "":
             # If no gold present, skip this record
@@ -185,6 +221,7 @@ def evaluate_file(preds_path: str) -> Dict[str, Any]:
         "metrics": metrics,
         "meta": {
             "dataset": meta.dataset,
+            "setting": meta.setting,
             "agent": meta.agent,
             "llm": meta.llm,
             "bn": meta.bn,
