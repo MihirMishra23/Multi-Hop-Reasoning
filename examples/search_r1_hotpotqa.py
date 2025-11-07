@@ -6,6 +6,7 @@ Script to pull random questions from HotpotQA and generate responses using GPT-4
 import random
 import os
 import re
+import argparse
 from datasets import load_dataset
 from openai import OpenAI
 
@@ -32,7 +33,7 @@ def get_gpt4_response_multiturn(question):
     """Get a response from GPT-4 with multi-turn interaction for searches."""
     client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
     
-    initial_prompt = f"Answer the given question. You must conduct reasoning inside <think> and </think> first every time you get new information. After reasoning, if you find you lack some knowledge, you can call a search engine by <search> (\"entity\", \"relationship\") </search> and it will return the top searched results between <information> and </information>. You can search as many times as your want. If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>. The answer should be concise and direct - just provide the essential information without repeating the question or adding extra explanation. IMPORTANT: Do not include any blank lines or line breaks between tags - keep everything flowing on the same line with just spaces between tags.\n\nQuestion: {question}"
+    initial_prompt = f"Answer the given question. You must conduct reasoning inside <think> and </think> first every time you get new information. After reasoning, if you find you lack some knowledge, you can call a search engine by <search> (\"entity\", \"relationship\") </search> and it will return the top searched results between <information> and </information>. IMPORTANT: Output ONLY ONE <search> tag at a time, then STOP and wait for the search results. Do not output multiple searches in the same response. After receiving the search results, you can conduct more reasoning and perform another search if needed, or provide the final answer. If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>. The answer should be concise and direct - just provide the essential information without repeating the question or adding extra explanation. IMPORTANT: Do not include any blank lines or line breaks between tags - keep everything flowing on the same line with just spaces between tags.\n\nQuestion: {question}"
     
     # Initialize conversation history
     messages = [{
@@ -119,6 +120,11 @@ def print_reasoning_trace(messages, question):
 
 
 def main():
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Run HotpotQA questions with GPT-4')
+    parser.add_argument('--qid', '--question-id', type=str, help='Specific question ID to run')
+    args = parser.parse_args()
+    
     # Set random seed for reproducibility
     # seed = 2  # You can change this seed value
     # random.seed(seed)
@@ -132,15 +138,33 @@ def main():
     
     print(f"Dataset loaded! Total examples: {len(dataset)}\n")
     
-    # Get 1 random example
-    random_indices = random.sample(range(len(dataset)), 1)
+    # Determine which question(s) to process
+    if args.qid:
+        # Find the specific question by ID
+        print(f"Looking for question ID: {args.qid}")
+        example = None
+        for item in dataset:
+            if item['id'] == args.qid:
+                example = item
+                break
+        
+        if example is None:
+            print(f"Error: Question ID '{args.qid}' not found in dataset.")
+            return
+        
+        examples_to_process = [example]
+        print("=" * 80)
+        print("SPECIFIC HOTPOTQA QUESTION")
+        print("=" * 80)
+    else:
+        # Get 1 random example
+        random_indices = random.sample(range(len(dataset)), 1)
+        examples_to_process = [dataset[idx] for idx in random_indices]
+        print("=" * 80)
+        print("RANDOM HOTPOTQA QUESTION")
+        print("=" * 80)
     
-    print("=" * 80)
-    print("RANDOM HOTPOTQA QUESTION")
-    print("=" * 80)
-    
-    for i, idx in enumerate(random_indices, 1):
-        example = dataset[idx]
+    for i, example in enumerate(examples_to_process, 1):
         question = example['question']
         print(f"\nQuestion ID: {example['id']}")
         print(f"Question: {question}")

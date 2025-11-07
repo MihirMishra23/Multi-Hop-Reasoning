@@ -7,6 +7,7 @@ import random
 import os
 import re
 import json
+import argparse
 from datasets import load_dataset
 from openai import OpenAI
 
@@ -153,6 +154,11 @@ def print_reasoning_trace(messages, question):
 
 
 def main():
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Run MuSiQue questions with GPT-4')
+    parser.add_argument('--qid', '--question-id', type=str, help='Specific question ID to run')
+    args = parser.parse_args()
+    
     # Set random seed for reproducibility
     # seed = 2  # You can change this seed value
     # random.seed(seed)
@@ -165,15 +171,33 @@ def main():
     
     print(f"Dataset loaded! Total examples: {len(dataset)}\n")
     
-    # Get 1 random example
-    random_indices = random.sample(range(len(dataset)), 1)
+    # Determine which question(s) to process
+    if args.qid:
+        # Find the specific question by ID
+        print(f"Looking for question ID: {args.qid}")
+        example = None
+        for item in dataset:
+            if item['id'] == args.qid:
+                example = item
+                break
+        
+        if example is None:
+            print(f"Error: Question ID '{args.qid}' not found in dataset.")
+            return
+        
+        examples_to_process = [example]
+        print("=" * 80)
+        print("SPECIFIC MUSIQUE QUESTION")
+        print("=" * 80)
+    else:
+        # Get 1 random example
+        random_indices = random.sample(range(len(dataset)), 1)
+        examples_to_process = [dataset[idx] for idx in random_indices]
+        print("=" * 80)
+        print("RANDOM MUSIQUE QUESTION")
+        print("=" * 80)
     
-    print("=" * 80)
-    print("RANDOM MUSIQUE QUESTION")
-    print("=" * 80)
-    
-    for i, idx in enumerate(random_indices, 1):
-        example = dataset[idx]
+    for i, example in enumerate(examples_to_process, 1):
         question = example['question']
         question_id = example['id']
         print(f"\nQuestion ID: {question_id}")
