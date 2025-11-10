@@ -63,20 +63,22 @@ def _normalize_split(split: str) -> str:
 
 
 def _build_contexts(context_field: Any) -> List[str]:
-    """Hotpot context is [[title, [sentences...]], ...]. Build paragraphs per title."""
-    if not context_field:
+    """
+    Build paragraph strings assuming the context is a dict:
+      {"title": [t1, t2, ...], "sentences": [[sents1...], [sents2...], ...]}
+    Titles and sentence lists are matched by index.
+    """
+    if not isinstance(context_field, dict):
+        return []
+    titles = context_field.get("title")
+    sentences = context_field.get("sentences")
+    if not isinstance(titles, list) or not isinstance(sentences, list):
         return []
     contexts: List[str] = []
-    for item in context_field:
-        if not isinstance(item, (list, tuple)) or len(item) != 2:
-            continue
-        title, sentences = item
-        try:
-            title_str = str(title)
-            sent_list = [str(s) for s in (sentences or [])]
-        except Exception:
-            continue
-        paragraph = f"{title_str}: " + " ".join(sent_list).strip()
+    for i, title in enumerate(titles):
+        sents_i = sentences[i] if i < len(sentences) else []
+        sent_list = [s for s in (sents_i or [])]
+        paragraph = f"{title}: " + " ".join(sent_list).strip()
         contexts.append(paragraph.strip())
     return contexts
 
@@ -185,4 +187,5 @@ def load_hotpotqa(
     ds = _normalize_hf_dataset(raw)
     if limit is not None:
         ds = ds.select(range(min(limit, len(ds))))
+    print(f"DS: {ds[0]["contexts"]}")
     return ds
