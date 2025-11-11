@@ -64,14 +64,23 @@ conda activate lmlm
 pip install -e .
 ```
 
-3) Set credentials (OpenAI):
+3) Install FlashRAG:
+
+```bash
+cd src/tools
+git clone https://github.com/RUC-NLPIR/FlashRAG.git
+cd FlashRAG
+pip install -e .
+```
+
+4) Set credentials (OpenAI):
 
 ```bash
 export OPENAI_API_KEY="<your-key>"
 # Optional: export OPENAI_BASE_URL="https://api.openai.com/v1"
 ```
 
-4) Generate predictions (writes to `preds/<method>/...`):
+5) Generate predictions (writes to `preds/<method>/...`):
 
 ```bash
 python scripts/run_agent.py \
@@ -89,7 +98,7 @@ This will produce a file like:
 preds/icl/hotpotqa_distractor_validation_bn=1_bs=1.json
 ```
 
-5) Evaluate predictions (writes a timestamped JSON to `results/eval`):
+6) Evaluate predictions (writes a timestamped JSON to `results/eval`):
 
 ```bash
 python scripts/evaluate.py \
