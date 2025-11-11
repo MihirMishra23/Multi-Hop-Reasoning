@@ -187,5 +187,4 @@ def load_hotpotqa(
     ds = _normalize_hf_dataset(raw)
     if limit is not None:
         ds = ds.select(range(min(limit, len(ds))))
-    print(f"DS: {ds[0]["contexts"]}")
     return ds

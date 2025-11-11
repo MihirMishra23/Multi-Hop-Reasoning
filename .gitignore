@@ -14,3 +14,5 @@ results/
 data/processed/
 data/raw/
 
+# FlashRAG
+src/tools/FlashRAG/
