@@ -4,11 +4,11 @@
 - Instantiates LLM and Agent
 - Loads HotpotQA via Hugging Face datasets
 - Runs the agent over questions (optionally limited)
-- Saves predictions as JSON at preds/{method}/{dataset}_{setting}_{split}_bn={bn}.json
+- Saves predictions with structure: preds/{type}/{dataset}_{setting}/{model}/{split}_seed{s}_bn={n}_bs={b}.json
 
 The JSON format uses deduplicated metadata at the top level:
 {
-  "metadata": { model, split, batch_size, batch_number, type, retrieval },
+  "metadata": { model, split, batch_size, batch_number, type, seed, retrieval },
   "inference_params": { seed, temperature, max_tokens },
   "results": {
     "qid": { pred, gold_answer, gold_evidence, question, trace, evidence }
@@ -109,12 +109,24 @@ def main() -> None:
         ds = ds.select([])
         logger.warning("Batch %d is out of range (start_idx=%d >= %d). No examples to process.", args.batch_number, start_idx, total)
 
-    # Prepare output location
+    # Prepare output location with structure: type/dataset_setting/model/split_seed{s}_bn{n}_bs{b}.json
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
-    method_dir = os.path.join(base_output_dir, args.method)
-    os.makedirs(method_dir, exist_ok=True)
-    filename = f"{args.dataset}_{args.setting}_{args.split}_bn={args.batch_number}_bs={args.batch_size}.json"
-    output_path = os.path.join(method_dir, filename)
+    
+    # Sanitize model name (replace / with -)
+    safe_model = args.model.replace("/", "-")
+    
+    # Build directory structure: type/dataset_setting/model/
+    output_dir = os.path.join(
+        base_output_dir,
+        args.method,
+        f"{args.dataset}_{args.setting}",
+        safe_model
+    )
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Build filename: split_seed{s}_bn={n}_bs={b}.json
+    filename = f"{args.split}_seed{args.seed}_bn={args.batch_number}_bs={args.batch_size}.json"
+    output_path = os.path.join(output_dir, filename)
 
     # Run predictions
     results: Dict[str, Dict[str, Any]] = {}
