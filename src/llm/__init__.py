@@ -3,18 +3,24 @@ from typing import Any
 
 from .base import LLM
 from .openai import OpenAILLM
+from .llama import LlamaLLM
 
 
 def get_llm(model_name: str, **kwargs: Any) -> LLM:
     """Return an LLM instance for the given model name.
 
-    If the model name contains "gpt" (case-insensitive), an OpenAILLM instance
-    is created and returned with the provided keyword arguments. Otherwise, a
-    ValueError is raised.
+    Supported models:
+    - GPT models (contains "gpt"): OpenAILLM
+    - Llama models (contains "llama"): LlamaLLM
     """
-    if "gpt" in model_name.lower():
+    model_name_lower = model_name.lower()
+    
+    if "gpt" in model_name_lower:
         return OpenAILLM(model_name=model_name, **kwargs)
+    elif "llama" in model_name_lower:
+        return LlamaLLM(model_name=model_name, **kwargs)
 
     raise ValueError(
-        f"Unsupported model_name '{model_name}'. Only GPT models are supported."
+        f"Unsupported model_name '{model_name}'. "
+        "Supported models: GPT models (gpt-*) or Llama models (llama-3-*)."
     )
