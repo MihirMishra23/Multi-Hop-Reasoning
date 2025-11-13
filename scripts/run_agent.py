@@ -6,12 +6,14 @@
 - Runs the agent over questions (optionally limited)
 - Saves predictions as JSON at preds/{method}/{dataset}_{setting}_{split}_bn={bn}.json
 
-The JSON format is an object keyed by example id (pandas orient="index") where each
-row contains:
-  - pred: string prediction
-  - metadata: { model, split, batch_size, batch_number, type }
-  - inference_params: { seed, temperature, max_tokens }
-This matches the expectations of evals/utils/_get_preds.
+The JSON format uses deduplicated metadata at the top level:
+{
+  "metadata": { model, split, batch_size, batch_number, type, retrieval },
+  "inference_params": { seed, temperature, max_tokens },
+  "results": {
+    "qid": { pred, gold_answer, gold_evidence, question, trace, evidence }
+  }
+}
 """
 
 import argparse
@@ -115,7 +117,7 @@ def main() -> None:
     output_path = os.path.join(method_dir, filename)
 
     # Run predictions
-    predictions: Dict[str, Dict[str, Any]] = {}
+    results: Dict[str, Dict[str, Any]] = {}
     batch_size = len(ds)
     for ex in ds:
         qid = ex.get("id") or ex.get("_id")
@@ -177,40 +179,47 @@ def main() -> None:
             for step in (trace or [])
         ]
         
-        predictions[str(qid)] = {
+        results[str(qid)] = {
             "pred": answer,
             "gold_answer": ex["answers"],
             "gold_evidence": ex["supporting_facts"],
             "question": question,
             "trace": serialized_trace,
-            "metadata": {
-                "model": args.model,
-                "split": args.split,
-                "batch_size": batch_size,
-                "batch_number": args.batch_number,
-                "type": args.method,
-                "retrieval": ({
-                    "backend": args.retrieval,
-                    "scope": args.setting,
-                    "k": args.rag_k,
-                } if args.method == "rag" else None),
-            },
-            "inference_params": {
-                "seed": args.seed,
-                "temperature": args.temperature,
-                "max_tokens": args.max_tokens,
-            },
         }
         if args.method == "rag" and args.debug_evidence:
-            predictions[str(qid)]["evidence"] = evidence_docs
+            results[str(qid)]["evidence"] = evidence_docs
     
-    logger.info("Generated %d predictions", len(predictions))
-    logger.debug("Predictions payload: %s", json.dumps(predictions, ensure_ascii=False)[:2000])
-    # Save JSON in pandas orient="index" compatible layout
+    # Build final output with deduplicated metadata
+    output = {
+        "metadata": {
+            "model": args.model,
+            "split": args.split,
+            "batch_size": batch_size,
+            "batch_number": args.batch_number,
+            "type": args.method,
+        },
+        "inference_params": {
+            "seed": args.seed,
+            "temperature": args.temperature,
+            "max_tokens": args.max_tokens,
+        },
+        "results": results,
+    }
+    # Add retrieval metadata for RAG
+    if args.method == "rag":
+        output["metadata"]["retrieval"] = {
+            "backend": args.retrieval,
+            "scope": args.setting,
+            "k": args.rag_k,
+        }
+    
+    logger.info("Generated %d predictions", len(results))
+    logger.debug("Predictions payload: %s", json.dumps(output, ensure_ascii=False)[:2000])
+    # Save JSON with deduplicated metadata
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(predictions, f, ensure_ascii=False)
+        json.dump(output, f, ensure_ascii=False)
 
-    logger.info("Saved %d predictions to %s", len(predictions), output_path)
+    logger.info("Saved %d predictions to %s", len(results), output_path)
 
 
 if __name__ == "__main__":

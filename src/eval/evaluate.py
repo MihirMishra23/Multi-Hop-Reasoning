@@ -1,11 +1,13 @@
 """Utilities to evaluate prediction JSONs produced by scripts/run_agent.py.
 
-Reads a preds JSON (pandas orient="index" style) where each record contains:
-  - pred: model prediction (string)
-  - gold_answer: gold answer (string | list[str])
-  - question: original question (string)
-  - metadata: { model, split, batch_size, batch_number, type }
-  - inference_params: { seed, temperature, max_tokens }
+Reads a preds JSON with deduplicated metadata at the top level:
+{
+  "metadata": { model, split, batch_size, batch_number, type, retrieval },
+  "inference_params": { seed, temperature, max_tokens },
+  "results": {
+    "qid": { pred, gold_answer, gold_evidence, question, trace, evidence }
+  }
+}
 
 Computes answer-only metrics (EM, F1, precision, recall) and aggregates.
 This module exposes pure functions so a thin CLI can wrap it.
@@ -78,13 +80,7 @@ def _filename_parts_from_path(path: str) -> Tuple[str | None, str | None, str | 
 
 
 def _extract_meta(preds: Dict[str, Any], preds_path: str) -> EvalMeta:
-    """Extract metadata from the first record and filename as fallback."""
-    # Grab first record if available
-    first_record: Dict[str, Any] | None = None
-    for _, rec in preds.items():
-        first_record = rec
-        break
-
+    """Extract metadata from the top-level metadata field and filename as fallback."""
     # Defaults
     dataset, setting, split, bn_from_name, bs_from_name = _filename_parts_from_path(preds_path)
     agent = None
@@ -92,11 +88,11 @@ def _extract_meta(preds: Dict[str, Any], preds_path: str) -> EvalMeta:
     bn = None
     bs = None
 
-    if first_record is not None:
-        meta = first_record.get("metadata", {}) or {}
+    # Extract from top-level metadata if present
+    meta = preds.get("metadata", {}) or {}
+    if meta:
         agent = meta.get("type")
         llm = meta.get("model")
-        # split is also inside metadata
         split = split or meta.get("split")
         bn = meta.get("batch_number")
         bs = meta.get("batch_size")
@@ -164,7 +160,10 @@ def evaluate_file(
     sum_prec = 0.0
     sum_recall = 0.0
 
-    for _qid, rec in preds.items():
+    # Extract results from new format (with fallback for potential edge cases)
+    results = preds.get("results", preds)
+    
+    for _qid, rec in results.items():
         pred_text = rec.get("pred", "")
 
         # gold key variations for robustness
