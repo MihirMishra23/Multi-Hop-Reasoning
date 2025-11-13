@@ -197,6 +197,7 @@ def main() -> None:
             "batch_size": batch_size,
             "batch_number": args.batch_number,
             "type": args.method,
+            "seed": args.seed if args.seed is not None else None,
         },
         "inference_params": {
             "seed": args.seed,

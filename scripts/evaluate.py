@@ -42,6 +42,7 @@ def main() -> None:
     parser.add_argument("--llm", default=None)
     parser.add_argument("--bn", type=int, default=None)
     parser.add_argument("--bs", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
     args = parser.parse_args()
 
     # Evaluate
@@ -74,6 +75,8 @@ def main() -> None:
         meta["setting"] = args.setting
     if args.split is not None:
         meta["split"] = args.split
+    if args.seed is not None:
+        meta["seed"] = args.seed
     # Save timestamp in the JSON payload
     meta["timestamp"] = timestamp
 
