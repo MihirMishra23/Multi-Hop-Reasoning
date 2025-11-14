@@ -21,6 +21,8 @@ MODEL_MAP = {
     "llama-3-8b-instruct": "meta-llama/Meta-Llama-3-8B-Instruct",
     "llama-3-70b": "meta-llama/Meta-Llama-3-70B-Instruct",
     "llama-3-70b-instruct": "meta-llama/Meta-Llama-3-70B-Instruct",
+    "llama-3.2-1b": "meta-llama/Llama-3.2-1B-Instruct",
+    "llama-3.2-1b-instruct": "meta-llama/Llama-3.2-1B-Instruct",
 }
 
 
