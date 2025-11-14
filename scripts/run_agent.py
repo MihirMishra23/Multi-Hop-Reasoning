@@ -37,14 +37,7 @@ from src.llm.base import LLM
 from src.llm import get_llm
 from src.data import get_dataset
 from src.agent.rag_agent import RAGAgent
-
-
-def build_query(question: str) -> str:
-    """Instruction to ensure the Agent emits a FINAL_ANSWER the parser recognizes."""
-    instruction = (
-        "Provide only the final answer prefixed by 'FINAL_ANSWER:' with no extra text."
-    )
-    return f"{instruction}\n{question}"
+from src.agent.lmlm_agent import LMLMAgent
 
 
 def main() -> None:
@@ -52,17 +45,20 @@ def main() -> None:
     parser.add_argument("--dataset", choices=["hotpotqa", "musique"], help="Dataset name")
     parser.add_argument("--setting", default="distractor", choices=["distractor", "fullwiki"], help="Dataset setting")
     parser.add_argument("--split", default="dev", choices=["train", "dev", "validation", "test"], help="Dataset split")
-    parser.add_argument("--method", default="icl", choices=["db", "rag", "icl"], help="Agent method label (for output path)")
+    parser.add_argument("--method", default="icl", choices=["db", "rag", "icl", "lmlm"], help="Agent method label (for output path)")
+    #LMLM related flags
+    parser.add_argument("--model-path", default="../LMLM_develop/training/qwen/checkpoints/_full_ep20_bsz128_new_qa") 
+    parser.add_argument("--database-path", default = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json") 
+    parser.add_argument("--similarity-threshold", default = 0.6) #cosine similarity threshold for database retrieval
     # RAG-related flags
     parser.add_argument("--retrieval", default="bm25", choices=["bm25"], help="Retrieval backend for --method rag")
     parser.add_argument("--rag-k", type=int, default=4, help="Top-k documents to retrieve")
     parser.add_argument("--debug-evidence", action="store_true", help="Include retrieved evidence in saved preds for debugging")
-    
     parser.add_argument("--model", default="gpt-4", help="LLM model name")
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
     parser.add_argument("--max-tokens", type=int, default=256, help="Max output tokens")
     parser.add_argument("--max-steps", type=int, default=5, help="Max reasoning steps for the Agent")
-    parser.add_argument("--seed", type=int, default=0, help="Random seed")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--batch-number", type=int, default=1, help="Batch number index (1-based)")
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
     parser.add_argument("--output-dir", default=None, help="Base output directory (defaults to <repo>/preds)")
@@ -76,13 +72,11 @@ def main() -> None:
     logger = logging.getLogger("run_agent")
 
     random.seed(args.seed)
-
-    # Instantiate LLM and Agent
-    llm = get_llm(model_name=args.model)
-    agent = Agent(llm=llm, max_steps=args.max_steps)
+    
 
     # Load dataset
     ds = get_dataset(args.dataset, args.setting, args.split)
+    ds = ds.shuffle(seed = args.seed)
 
     logger.info(
         "Starting run: dataset=%s setting=%s split=%s method=%s model=%s batch_number=%d batch_size=%s",
@@ -114,47 +108,58 @@ def main() -> None:
     filename = f"{args.dataset}_{args.setting}_{args.split}_bn={args.batch_number}_bs={args.batch_size}.json"
     output_path = os.path.join(method_dir, filename)
 
+
+    match args.method:
+        case "rag":
+            llm = get_llm(model_name=args.model)
+            # Guard against unsupported combinations (we only support bm25 + distractor for now)
+            if args.retrieval != "bm25":
+                raise NotImplementedError("Only --retrieval bm25 is supported currently.")
+            if args.setting != "distractor":
+                raise NotImplementedError("Only --setting distractor is supported currently for RAG.")
+            
+            # Build per-example agent with provided contexts; RAGAgent initializes retriever internally
+            contexts = ex.get("contexts") or []
+            agent = RAGAgent(
+                llm=llm,
+                retriever_type=args.retrieval,
+                contexts=contexts,
+                rag_k=args.rag_k,
+                max_steps=args.max_steps,
+            )
+        case "icl" | "db":
+            llm = get_llm(model_name=args.model)
+            agent = Agent(llm=llm, max_steps=args.max_steps)
+            answer, trace = agent.run(
+                query,
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+            )
+            evidence_docs = []
+
+        case "lmlm":
+            agent = LMLMAgent(
+                model_path = args.model_path,
+                database_path = args.database_path,
+                similarity_threshold = args.similarity_threshold
+            )
+        case _:
+            raise NotImplementedError(f"Method '{args.method}' is not implemented.")
+
     # Run predictions
     predictions: Dict[str, Dict[str, Any]] = {}
     batch_size = len(ds)
     for ex in ds:
         qid = ex.get("id") or ex.get("_id")
         question = ex["question"]
-        query = build_query(question)
 
-        # Switch by method
-        match args.method:
-            case "rag":
-                # Guard against unsupported combinations (we only support bm25 + distractor for now)
-                if args.retrieval != "bm25":
-                    raise NotImplementedError("Only --retrieval bm25 is supported currently.")
-                if args.setting != "distractor":
-                    raise NotImplementedError("Only --setting distractor is supported currently for RAG.")
+        answer, trace = agent.run(
+                question,
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+            )
+        evidence_docs = getattr(agent, "_evidence_docs", [])
 
-                # Build per-example agent with provided contexts; RAGAgent initializes retriever internally
-                contexts = ex.get("contexts") or []
-                rag_agent = RAGAgent(
-                    llm=llm,
-                    retriever_type=args.retrieval,
-                    contexts=contexts,
-                    rag_k=args.rag_k,
-                    max_steps=args.max_steps,
-                )
-                answer, trace = rag_agent.run(
-                    query,
-                    temperature=args.temperature,
-                    max_tokens=args.max_tokens,
-                )
-                evidence_docs = getattr(rag_agent, "_evidence_docs", [])
-            case "icl" | "db":
-                answer, trace = agent.run(
-                    query,
-                    temperature=args.temperature,
-                    max_tokens=args.max_tokens,
-                )
-                evidence_docs = []
-            case _:
-                raise NotImplementedError(f"Method '{args.method}' is not implemented.")
         logging.info("Answer: %s", answer)
         logging.info("Trace: %s", trace)
 
@@ -208,7 +213,7 @@ def main() -> None:
     logger.debug("Predictions payload: %s", json.dumps(predictions, ensure_ascii=False)[:2000])
     # Save JSON in pandas orient="index" compatible layout
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(predictions, f, ensure_ascii=False)
+        json.dump(predictions, f, ensure_ascii=False, indent = 4)
 
     logger.info("Saved %d predictions to %s", len(predictions), output_path)
 
