@@ -39,6 +39,7 @@ from src.llm.base import LLM
 from src.llm import get_llm
 from src.data import get_dataset
 from src.agent.rag_agent import RAGAgent
+from src.agent.icl_agent import ICLAgent
 
 
 def build_query(question: str) -> str:
@@ -160,7 +161,25 @@ def main() -> None:
                     max_tokens=args.max_tokens,
                 )
                 evidence_docs = getattr(rag_agent, "_evidence_docs", [])
-            case "icl" | "db":
+            case "icl":
+                # Guard against unsupported setting
+                if args.dataset == "hotpotqa" and args.setting == "fullwiki":
+                    raise NotImplementedError("ICL is not supported for --setting fullwiki.")
+                
+                # Build per-example agent with provided contexts
+                contexts = ex.get("contexts") or []
+                icl_agent = ICLAgent(
+                    llm=llm,
+                    contexts=contexts,
+                    max_steps=args.max_steps,
+                )
+                answer, trace = icl_agent.run(
+                    query,
+                    temperature=args.temperature,
+                    max_tokens=args.max_tokens,
+                )
+                evidence_docs = []
+            case "db":
                 answer, trace = agent.run(
                     query,
                     temperature=args.temperature,
