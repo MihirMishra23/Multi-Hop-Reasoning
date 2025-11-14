@@ -51,6 +51,12 @@ class RAGAgent(Agent):
         else:
             return f"Evidence:\n{evidence_block}\n\nQuestion: {query}".strip()
 
+    def reset(self, contexts: List[str]) -> None:
+        """Reset agent state for a new question with new contexts."""
+        self.contexts = contexts or []
+        self._evidence_docs = []
+        self.trace = []
+
     # NOTE: We compute evidence once per run to avoid repeated indexing within multi-step loops
     def run(self, query: str, **llm_kwargs: Any) -> Tuple[Optional[str], List[AgentStep]]:
         self._evidence_docs = []

@@ -23,6 +23,11 @@ class ICLAgent(Agent):
         super().__init__(llm=llm, max_steps=max_steps)
         self.contexts = contexts or []
 
+    def reset(self, contexts: List[str]) -> None:
+        """Reset agent state for a new question with new contexts."""
+        self.contexts = contexts or []
+        self.trace = []
+
     def build_prompt(self, query: str) -> str:
         # Build step history (same style as base Agent)
         history = "\n".join(

@@ -83,8 +83,38 @@ def process_single_batch(
     ds = full_dataset.select(range(start_idx, end_idx))
     logger.info("Processing batch %d: indices [%d, %d) => %d examples", batch_number, start_idx, end_idx, len(ds))
     
-    # Instantiate base agent (for db method)
-    agent = Agent(llm=llm, max_steps=args.max_steps)
+    # Instantiate agents once and reuse them (reset state between questions)
+    # This avoids unnecessary object creation overhead
+    agent: Agent
+    match args.method:
+        case "rag":
+            # Guard against unsupported combinations (we only support bm25 + distractor for now)
+            if args.retrieval != "bm25":
+                raise NotImplementedError("Only --retrieval bm25 is supported currently.")
+            if args.setting != "distractor":
+                raise NotImplementedError("Only --setting distractor is supported currently for RAG.")
+            # Create RAG agent with empty contexts (will be reset per question)
+            agent = RAGAgent(
+                llm=llm,
+                retriever_type=args.retrieval,
+                contexts=[],
+                rag_k=args.rag_k,
+                max_steps=args.max_steps,
+            )
+        case "icl":
+            # Guard against unsupported setting
+            if args.dataset == "hotpotqa" and args.setting == "fullwiki":
+                raise NotImplementedError("ICL is not supported for --setting fullwiki.")
+            # Create ICL agent with empty contexts (will be reset per question)
+            agent = ICLAgent(
+                llm=llm,
+                contexts=[],
+                max_steps=args.max_steps,
+            )
+        case "db":
+            agent = Agent(llm=llm, max_steps=args.max_steps)
+        case _:
+            raise NotImplementedError(f"Method '{args.method}' is not implemented.")
     
     # Run predictions
     results: Dict[str, Dict[str, Any]] = {}
@@ -95,57 +125,21 @@ def process_single_batch(
         question = ex["question"]
         query = build_query(question)
 
-        # Switch by method
-        match args.method:
-            case "rag":
-                # Guard against unsupported combinations (we only support bm25 + distractor for now)
-                if args.retrieval != "bm25":
-                    raise NotImplementedError("Only --retrieval bm25 is supported currently.")
-                if args.setting != "distractor":
-                    raise NotImplementedError("Only --setting distractor is supported currently for RAG.")
-
-                # Build per-example agent with provided contexts; RAGAgent initializes retriever internally
-                contexts = ex.get("contexts") or []
-                rag_agent = RAGAgent(
-                    llm=llm,
-                    retriever_type=args.retrieval,
-                    contexts=contexts,
-                    rag_k=args.rag_k,
-                    max_steps=args.max_steps,
-                )
-                answer, trace = rag_agent.run(
-                    query,
-                    temperature=args.temperature,
-                    max_tokens=args.max_tokens,
-                )
-                evidence_docs = getattr(rag_agent, "_evidence_docs", [])
-            case "icl":
-                # Guard against unsupported setting
-                if args.dataset == "hotpotqa" and args.setting == "fullwiki":
-                    raise NotImplementedError("ICL is not supported for --setting fullwiki.")
-                
-                # Build per-example agent with provided contexts
-                contexts = ex.get("contexts") or []
-                icl_agent = ICLAgent(
-                    llm=llm,
-                    contexts=contexts,
-                    max_steps=args.max_steps,
-                )
-                answer, trace = icl_agent.run(
-                    query,
-                    temperature=args.temperature,
-                    max_tokens=args.max_tokens,
-                )
-                evidence_docs = []
-            case "db":
-                answer, trace = agent.run(
-                    query,
-                    temperature=args.temperature,
-                    max_tokens=args.max_tokens,
-                )
-                evidence_docs = []
-            case _:
-                raise NotImplementedError(f"Method '{args.method}' is not implemented.")
+        # Reset agent state for new question (with new contexts if applicable)
+        contexts = ex.get("contexts") or []
+        if args.method in ("rag", "icl"):
+            agent.reset(contexts)  # type: ignore
+        
+        answer, trace = agent.run(
+            query,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+        )
+        
+        # Extract evidence docs for RAG if needed
+        evidence_docs = []
+        if args.method == "rag":
+            evidence_docs = getattr(agent, "_evidence_docs", [])
         logger.debug("Answer: %s", answer)
         logger.debug("Trace: %s", trace)
 
