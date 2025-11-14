@@ -55,13 +55,13 @@ def _safe_join_gold(gold: Any) -> str:
 def _filename_parts_from_path(path: str) -> Tuple[str | None, str | None, str | None, int | None, int | None]:
     """Parse dataset, setting, split, bn, bs from a preds path.
 
-    Expected pattern: type/dataset_setting/model/split_seed{s}_bn={n}_bs={b}.json
+    Expected pattern: type/dataset_setting/model/split_seed={s}_bn={n}_bs={b}.json
     Returns (dataset, setting, split, bn, bs) with None on failure.
     """
     name = os.path.basename(path)
     
-    # Parse filename: split_seed{s}_bn={n}_bs={b}.json
-    m = re.match(r"^(?P<split>[^_]+)_seed\d+_bn=(?P<bn>\d+)_bs=(?P<bs>\d+)\.json$", name)
+    # Parse filename: split_seed={s}_bn={n}_bs={b}.json
+    m = re.match(r"^(?P<split>[^_]+)_seed=(?P<seed>\d+)_bn=(?P<bn>\d+)_bs=(?P<bs>\d+)\.json$", name)
     if not m:
         return None, None, None, None, None
     
