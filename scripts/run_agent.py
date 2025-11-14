@@ -45,9 +45,7 @@ from src.agent.icl_agent import ICLAgent
 
 def build_query(question: str) -> str:
     """Instruction to ensure the Agent emits a FINAL_ANSWER the parser recognizes."""
-    instruction = (
-        "Provide only the final answer prefixed by 'FINAL_ANSWER:' with no extra text."
-    )
+    instruction = "Provide only the final answer prefixed by 'FINAL_ANSWER:' with no extra text."
     return f"{instruction}\n{question}"
 
 
@@ -61,28 +59,34 @@ def process_single_batch(
 ) -> bool:
     """Process a single batch and save immediately. Returns True if successful."""
     logger = logging.getLogger("run_agent")
-    
+
     # Calculate batch indices
     start_idx = (batch_number - 1) * args.batch_size
     end_idx = min(start_idx + args.batch_size, total_examples)
-    
+
     if start_idx >= total_examples:
         return False
-    
+
     # Build output path
     safe_model = args.model.replace("/", "-")
     filename = f"{args.split}_seed={args.seed}_bn={batch_number}_bs={args.batch_size}.json"
     output_path = os.path.join(output_dir, filename)
-    
+
     # Check if already exists (for resume)
     if args.resume and os.path.exists(output_path):
         logger.info("Skipping batch %d (already exists at %s)", batch_number, output_path)
         return True
-    
+
     # Select batch slice
     ds = full_dataset.select(range(start_idx, end_idx))
-    logger.info("Processing batch %d: indices [%d, %d) => %d examples", batch_number, start_idx, end_idx, len(ds))
-    
+    logger.info(
+        "Processing batch %d: indices [%d, %d) => %d examples",
+        batch_number,
+        start_idx,
+        end_idx,
+        len(ds),
+    )
+
     # Instantiate agents once and reuse them (reset state between questions)
     # This avoids unnecessary object creation overhead
     agent: Agent
@@ -92,7 +96,9 @@ def process_single_batch(
             if args.retrieval != "bm25":
                 raise NotImplementedError("Only --retrieval bm25 is supported currently.")
             if args.setting != "distractor":
-                raise NotImplementedError("Only --setting distractor is supported currently for RAG.")
+                raise NotImplementedError(
+                    "Only --setting distractor is supported currently for RAG."
+                )
             # Create RAG agent with empty contexts (will be reset per question)
             agent = RAGAgent(
                 llm=llm,
@@ -115,11 +121,11 @@ def process_single_batch(
             agent = Agent(llm=llm, max_steps=args.max_steps)
         case _:
             raise NotImplementedError(f"Method '{args.method}' is not implemented.")
-    
+
     # Run predictions
     results: Dict[str, Dict[str, Any]] = {}
     batch_size_actual = len(ds)
-    
+
     for ex in ds:
         qid = ex.get("id") or ex.get("_id")
         question = ex["question"]
@@ -129,13 +135,13 @@ def process_single_batch(
         contexts = ex.get("contexts") or []
         if args.method in ("rag", "icl"):
             agent.reset(contexts)  # type: ignore
-        
+
         answer, trace = agent.run(
             query,
             temperature=args.temperature,
             max_tokens=args.max_tokens,
         )
-        
+
         # Extract evidence docs for RAG if needed
         evidence_docs = []
         if args.method == "rag":
@@ -148,7 +154,7 @@ def process_single_batch(
             answer = (trace[-1].answer or "").strip()
         if answer is None:
             answer = ""
-        
+
         # Serialize trace for JSON output
         serialized_trace = [
             {
@@ -161,7 +167,7 @@ def process_single_batch(
             }
             for step in (trace or [])
         ]
-        
+
         results[str(qid)] = {
             "pred": answer,
             "gold_answer": ex["answers"],
@@ -171,7 +177,7 @@ def process_single_batch(
         }
         if args.method == "rag" and args.debug_evidence:
             results[str(qid)]["evidence"] = evidence_docs
-    
+
     # Build final output with deduplicated metadata
     output = {
         "metadata": {
@@ -196,10 +202,10 @@ def process_single_batch(
             "scope": args.setting,
             "k": args.rag_k,
         }
-    
+
     logger.info("Generated %d predictions for batch %d", len(results), batch_number)
     logger.debug("Predictions payload: %s", json.dumps(output, ensure_ascii=False)[:2000])
-    
+
     # Save JSON with deduplicated metadata immediately
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False)
@@ -211,24 +217,58 @@ def process_single_batch(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run agent over a dataset and save predictions.")
     parser.add_argument("--dataset", choices=["hotpotqa", "musique"], help="Dataset name")
-    parser.add_argument("--setting", default="distractor", choices=["distractor", "fullwiki"], help="Dataset setting")
-    parser.add_argument("--split", default="dev", choices=["train", "dev", "validation", "test"], help="Dataset split")
-    parser.add_argument("--method", default="icl", choices=["db", "rag", "icl"], help="Agent method label (for output path)")
+    parser.add_argument(
+        "--setting",
+        default="distractor",
+        choices=["distractor", "fullwiki"],
+        help="Dataset setting",
+    )
+    parser.add_argument(
+        "--split",
+        default="dev",
+        choices=["train", "dev", "validation", "test"],
+        help="Dataset split",
+    )
+    parser.add_argument(
+        "--method",
+        default="icl",
+        choices=["db", "rag", "icl"],
+        help="Agent method label (for output path)",
+    )
     # RAG-related flags
-    parser.add_argument("--retrieval", default="bm25", choices=["bm25"], help="Retrieval backend for --method rag")
+    parser.add_argument(
+        "--retrieval", default="bm25", choices=["bm25"], help="Retrieval backend for --method rag"
+    )
     parser.add_argument("--rag-k", type=int, default=4, help="Top-k documents to retrieve")
-    parser.add_argument("--debug-evidence", action="store_true", help="Include retrieved evidence in saved preds for debugging")
-    
+    parser.add_argument(
+        "--debug-evidence",
+        action="store_true",
+        help="Include retrieved evidence in saved preds for debugging",
+    )
+
     parser.add_argument("--model", default="gpt-4", help="LLM model name")
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
     parser.add_argument("--max-tokens", type=int, default=256, help="Max output tokens")
-    parser.add_argument("--max-steps", type=int, default=5, help="Max reasoning steps for the Agent")
+    parser.add_argument(
+        "--max-steps", type=int, default=5, help="Max reasoning steps for the Agent"
+    )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument("--batch-number", type=int, default=1, help="Batch number index (1-based)")
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
-    parser.add_argument("--num-batches", type=int, default=1, help="Number of batches to process (default: 1). Use -1 to process all batches.")
-    parser.add_argument("--resume", action="store_true", help="Skip batches that already exist (check by file existence)")
-    parser.add_argument("--output-dir", default=None, help="Base output directory (defaults to <repo>/preds)")
+    parser.add_argument(
+        "--num-batches",
+        type=int,
+        default=1,
+        help="Number of batches to process (default: 1). Use -1 to process all batches.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip batches that already exist (check by file existence)",
+    )
+    parser.add_argument(
+        "--output-dir", default=None, help="Base output directory (defaults to <repo>/preds)"
+    )
     args = parser.parse_args()
 
     # Logging
@@ -238,33 +278,28 @@ def main() -> None:
     )
     logger = logging.getLogger("run_agent")
 
-    random.seed(args.seed)
-
     # Instantiate LLM
     llm = get_llm(model_name=args.model)
 
-    # Load full dataset once
-    full_dataset = get_dataset(args.dataset, args.setting, args.split)
+    # Load full dataset once (with seed for deterministic shuffling)
+    full_dataset = get_dataset(args.dataset, args.setting, args.split, seed=args.seed)
     total = len(full_dataset)
 
     # Prepare output location with structure: type/dataset_setting/model/split_seed{s}_bn{n}_bs{b}.json
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
-    
+
     # Sanitize model name (replace / with -)
     safe_model = args.model.replace("/", "-")
-    
+
     # Build directory structure: type/dataset_setting/model/
     output_dir = os.path.join(
-        base_output_dir,
-        args.method,
-        f"{args.dataset}_{args.setting}",
-        safe_model
+        base_output_dir, args.method, f"{args.dataset}_{args.setting}", safe_model
     )
     os.makedirs(output_dir, exist_ok=True)
 
     # Determine batch processing mode
     total_batches = (total + args.batch_size - 1) // args.batch_size
-    
+
     # Process specified number of batches (or all if -1)
     if args.num_batches == -1:
         # Process all remaining batches
@@ -295,13 +330,13 @@ def main() -> None:
             args.batch_size,
             total_batches,
         )
-    
+
     start_batch = args.batch_number
 
     # Process batches with progress tracking
     successful_batches = 0
     failed_batches = 0
-    
+
     with tqdm(total=num_batches_to_process, desc="Processing batches", unit="batch") as pbar:
         for batch_num in range(start_batch, start_batch + num_batches_to_process):
             try:
@@ -318,11 +353,14 @@ def main() -> None:
                     # Re-raise if not in resume mode to fail fast
                     raise
                 pbar.update(1)
-    
-    logger.info("Completed %d/%d batches successfully (%d failed)", successful_batches, num_batches_to_process, failed_batches)
+
+    logger.info(
+        "Completed %d/%d batches successfully (%d failed)",
+        successful_batches,
+        num_batches_to_process,
+        failed_batches,
+    )
 
 
 if __name__ == "__main__":
     main()
-
-

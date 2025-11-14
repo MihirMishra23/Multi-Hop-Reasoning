@@ -1,4 +1,5 @@
 """Llama LLM adapter using transformers library."""
+
 import time
 from typing import Any, Dict, List, Optional
 
@@ -36,7 +37,7 @@ class LlamaLLM(LLM):
         max_retries: int = 2,
         device: Optional[str] = None,
         device_map: Optional[str] = None,
-        torch_dtype: Optional[str] = None,
+        dtype: Optional[str] = None,
     ):
         super().__init__(model_name=model_name, timeout_s=timeout_s, max_retries=max_retries)
 
@@ -55,14 +56,14 @@ class LlamaLLM(LLM):
         self.device = device
 
         # Set default torch dtype
-        if torch_dtype is None:
+        if dtype is None:
             if device == "cuda":
-                torch_dtype = torch.float16
+                dtype = torch.float16
             else:
-                torch_dtype = torch.float32
-        elif isinstance(torch_dtype, str):
-            torch_dtype = getattr(torch, torch_dtype)
-        self.torch_dtype = torch_dtype
+                dtype = torch.float32
+        elif isinstance(dtype, str):
+            dtype = getattr(torch, dtype)
+        self.dtype = dtype
 
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -73,7 +74,7 @@ class LlamaLLM(LLM):
         # Load model
         model_kwargs: Dict[str, Any] = {
             "trust_remote_code": True,
-            "dtype": self.torch_dtype,
+            "dtype": self.dtype,
         }
         if device_map is not None:
             model_kwargs["device_map"] = device_map
@@ -101,7 +102,7 @@ class LlamaLLM(LLM):
         """Generate a response from the Llama model."""
         # Format prompt using chat template for instruct models
         messages = [{"role": "user", "content": prompt}]
-        
+
         # Apply chat template if available
         if hasattr(self.tokenizer, "apply_chat_template") and self.tokenizer.chat_template:
             formatted_prompt = self.tokenizer.apply_chat_template(
@@ -125,14 +126,17 @@ class LlamaLLM(LLM):
 
         # Prepare generation parameters
         generation_kwargs: Dict[str, Any] = {
-            "temperature": temperature if temperature > 0 else 1.0,  # Transformers uses 1.0 for greedy
+            "temperature": (
+                temperature if temperature > 0 else 1.0
+            ),  # Transformers uses 1.0 for greedy
             "top_p": top_p,
             "do_sample": temperature > 0,
+            "pad_token_id": self.tokenizer.eos_token_id,
         }
-        
+
         if max_tokens is not None:
             generation_kwargs["max_new_tokens"] = max_tokens
-        
+
         if stop is not None:
             # For stop sequences, we'll use the stop_strings approach
             # Note: transformers doesn't natively support multi-token stop sequences
@@ -151,8 +155,10 @@ class LlamaLLM(LLM):
                     existing_eos = [existing_eos]
                 elif existing_eos is None:
                     existing_eos = []
-                generation_kwargs["eos_token_id"] = list(set(list(existing_eos) + list(stop_token_ids)))
-        
+                generation_kwargs["eos_token_id"] = list(
+                    set(list(existing_eos) + list(stop_token_ids))
+                )
+
         # Allow extra parameters to override defaults
         if extra:
             generation_kwargs.update(extra)
@@ -161,7 +167,7 @@ class LlamaLLM(LLM):
         for attempt in range(self.max_retries + 1):
             try:
                 start_time = time.time()
-                
+
                 # Generate
                 with torch.no_grad():
                     outputs = self.model.generate(
@@ -182,7 +188,9 @@ class LlamaLLM(LLM):
                 # Check timeout
                 elapsed = time.time() - start_time
                 if elapsed > self.timeout_s:
-                    raise TimeoutError(f"Generation took {elapsed:.2f}s, exceeding timeout of {self.timeout_s}s")
+                    raise TimeoutError(
+                        f"Generation took {elapsed:.2f}s, exceeding timeout of {self.timeout_s}s"
+                    )
 
                 # Determine finish reason
                 finish_reason = "stop"
@@ -202,10 +210,9 @@ class LlamaLLM(LLM):
                 if attempt >= self.max_retries:
                     raise
                 # Exponential backoff with jitter
-                time.sleep((2 ** attempt) * 0.5)
+                time.sleep((2**attempt) * 0.5)
 
         # Should not reach here; if we do, raise the last captured error
         if last_err is not None:
             raise last_err
         raise RuntimeError("LlamaLLM.run failed without an exception")
-

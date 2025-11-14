@@ -14,6 +14,7 @@ Notes:
   We encode each supporting paragraph as `{title: <title>, sentence_id: 0}`.
 """
 
+import random
 from typing import Any, Dict, List, Optional
 
 from datasets import Dataset as HFDataset  # type: ignore
@@ -82,6 +83,7 @@ def load_musique(
     split: str,
     source: str = "auto",
     limit: Optional[int] = None,
+    seed: Optional[int] = None,
 ) -> HFDataset:
     """Load MuSiQue with unified schema.
 
@@ -89,6 +91,7 @@ def load_musique(
         split: "train", "dev"/"validation", or "test" (if available).
         source: "auto" or "hf" (HF only at the moment).
         limit: optional maximum number of rows.
+        seed: optional random seed for shuffling. If provided, dataset will be shuffled deterministically.
     """
     split_norm = _normalize_split(split)
 
@@ -98,13 +101,12 @@ def load_musique(
     try:
         raw = load_dataset("dgslibisey/MuSiQue", split=split_norm)  # type: ignore
     except Exception as e:
-        raise RuntimeError(
-            f"Failed to load MuSiQue from Hugging Face (split={split_norm}): {e}"
-        )
+        raise RuntimeError(f"Failed to load MuSiQue from Hugging Face (split={split_norm}): {e}")
 
     ds = _normalize_hf_dataset(raw)
+    # Shuffle with seed if provided
+    if seed is not None:
+        ds = ds.shuffle(seed=seed)
     if limit is not None:
         ds = ds.select(range(min(limit, len(ds))))
     return ds
-
-
