@@ -60,7 +60,6 @@ class LMLMAgent(Agent):
         self.similarity_threshold = similarity_threshold
 
     def run(self, query : str,  max_tokens = 256, temperature = 0.0):
-        print("The query is :", query)
         count = 0
         prompt = create_prompt_from_query(query)
         while (count < max_tokens):
