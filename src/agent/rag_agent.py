@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.agent.agent import Agent, AgentStep, LLM, LLMResponse, build_query
+from src.agent.agent import Agent, AgentStep, LLM, LLMResponse
 from src.tools.retrieval import BaseRetriever, FlashRAGBM25Retriever
 
 
@@ -57,9 +57,10 @@ class RAGAgent(Agent):
         self._evidence_docs = []
         self.trace = []
 
+
     # NOTE: We compute evidence once per run to avoid repeated indexing within multi-step loops
-    def run(self, query: str, **llm_kwargs: Any) -> Tuple[Optional[str], List[AgentStep]]:
-        query = build_query(query)
+    def run(self, question: str, **llm_kwargs: Any) -> Tuple[Optional[str], List[AgentStep]]:
+        query = self.build_query(question)
         self._evidence_docs = []
         self.gather_evidence(query)
         return super().run(query, **llm_kwargs)
