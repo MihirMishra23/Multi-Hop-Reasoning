@@ -83,6 +83,13 @@ def calculate_question_range(batch_numbers: List[int], batch_size: int) -> Tuple
     return first_question, last_question
 
 
+def extract_metadata_from_pred_file(pred_file: str) -> Dict[str, Any]:
+    """Extract metadata from a pred file."""
+    with open(pred_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data.get("metadata", {})
+
+
 def aggregate_batch_files(batch_files: List[str]) -> Dict[str, Any]:
     """Aggregate multiple batch files into a single data structure."""
     if not batch_files:
@@ -267,6 +274,14 @@ def main() -> None:
         preds_path = tmp_file.name
         tmp_file_path = tmp_file.name
 
+    # Extract dataset and setting from pred file metadata if not provided via args
+    if batch_files:
+        pred_metadata = extract_metadata_from_pred_file(batch_files[0])
+        if args.dataset is None and "dataset" in pred_metadata:
+            args.dataset = pred_metadata["dataset"]
+        if args.setting is None and "setting" in pred_metadata:
+            args.setting = pred_metadata["setting"]
+
     # Evaluate
     results = evaluate_file(
         preds_path,
@@ -279,7 +294,7 @@ def main() -> None:
     # Build timestamp MM-DD-HH
     timestamp = datetime.now().strftime("%m-%d-%H")
 
-    # Override meta fields if provided
+    # Override meta fields if provided (or extracted from pred file)
     meta = results["meta"]
     if args.dataset is not None:
         meta["dataset"] = args.dataset

@@ -182,6 +182,8 @@ def process_single_batch(
     output = {
         "metadata": {
             "model": args.model,
+            "dataset": args.dataset,
+            "setting": args.setting,
             "split": args.split,
             "batch_size": batch_size_actual,
             "batch_number": batch_number,
