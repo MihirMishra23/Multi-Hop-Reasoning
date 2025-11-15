@@ -67,7 +67,7 @@ class QwenLLM(LLM):
         # Load model
         model_kwargs: Dict[str, Any] = {
             "trust_remote_code": True,
-            "torch_dtype": self.dtype,
+            "dtype": self.dtype,
         }
         if device_map is not None:
             model_kwargs["device_map"] = device_map
