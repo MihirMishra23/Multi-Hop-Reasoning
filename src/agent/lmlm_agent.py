@@ -92,8 +92,8 @@ class LMLMAgent(Agent):
             return_value = "unknown"
             try:
                 split = prompt.rsplit(DB_START_TOKEN)
-                query = split[-1]
-                return_value = self.db.retrieve_from_database(DB_START_TOKEN  + query, 0.0) #ignoring the threshold, for now using top1 fallback policy
+                db_query = split[-1]
+                return_value = self.db.retrieve_from_database(DB_START_TOKEN  + db_query, 0.0) #ignoring the threshold, for now using top1 fallback policy
             except Exception as e:
                 print(f"Database lookup failed: {e}")
 
@@ -106,6 +106,15 @@ class LMLMAgent(Agent):
             return answer, trace
         except Exception as e:
             print(f"LMLM was unable to generate a correctly formated answer, receieved error : {e}... Defaulting to empty answer.")
+            print("The query was : " ,query, "\n\n")
             return "", [AgentStep(prompt, "", "generate")]
 
-         
+
+if __name__ == '__main__':
+    #testing script
+    agent = LMLMAgent(model_path = "/home/rtn27/LMLM_develop/training/qwen3-1.7b/checkpoints/_full_ep10_bsz32_new_qa", database_path="/home/rtn27/LMLM/build-database/triplets/hotpotqa_1k_42_dev_triplets.json")
+    for i in range(20):
+        answer, trace = agent.run("What is the first two words of the fifth studio album of Joseph Edgar Foreman?")
+        print("answer: \n\n", answer, "\n\n")
+        print("trace: \n\n", trace, "\n\n")
+    

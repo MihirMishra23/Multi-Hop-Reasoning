@@ -139,7 +139,7 @@ def process_single_batch(
     for ex in ds:
         qid = ex.get("id") or ex.get("_id")
         question = ex["question"]
-        query = build_query(question)
+
 
         # Reset agent state for new question (with new contexts if applicable)
         contexts = ex.get("contexts") or []
@@ -147,7 +147,7 @@ def process_single_batch(
             agent.reset(contexts)  # type: ignore
 
         answer, trace = agent.run(
-            query,
+            question,
             temperature=args.temperature,
             max_tokens=args.max_tokens,
         )
