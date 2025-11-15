@@ -41,6 +41,7 @@ from src.llm import get_llm
 from src.data import get_dataset
 from src.agent.rag_agent import RAGAgent
 from src.agent.icl_agent import ICLAgent
+from src.agent.lmlm_agent import LMLMAgent
 
 
 def build_query(question: str) -> str:
@@ -54,7 +55,6 @@ def process_single_batch(
     batch_number: int,
     total_examples: int,
     output_dir: str,
-    llm: LLM,
     full_dataset,
 ) -> bool:
     """Process a single batch and save immediately. Returns True if successful."""
@@ -92,6 +92,8 @@ def process_single_batch(
     agent: Agent
     match args.method:
         case "rag":
+            # Instantiate LLM
+            llm = get_llm(model_name=args.model)
             # Guard against unsupported combinations (we only support bm25 + distractor for now)
             if args.retrieval != "bm25":
                 raise NotImplementedError("Only --retrieval bm25 is supported currently.")
@@ -108,6 +110,7 @@ def process_single_batch(
                 max_steps=args.max_steps,
             )
         case "icl":
+            llm = get_llm(model_name=args.model)
             # Guard against unsupported setting
             if args.dataset == "hotpotqa" and args.setting == "fullwiki":
                 raise NotImplementedError("ICL is not supported for --setting fullwiki.")
@@ -118,7 +121,14 @@ def process_single_batch(
                 max_steps=args.max_steps,
             )
         case "db":
+            llm = get_llm(model_name=args.model)
             agent = Agent(llm=llm, max_steps=args.max_steps)
+        case "lmlm":
+            if args.model_path is None:
+                raise Exception("You must set a local model path for lmlm setting")
+            if args.database_path is None:
+                raise Exception("You must set a local database path for lmlm setting")
+            agent = LMLMAgent(model_path = args.model_path, database_path=args.database_path)
         case _:
             raise NotImplementedError(f"Method '{args.method}' is not implemented.")
 
@@ -129,7 +139,7 @@ def process_single_batch(
     for ex in ds:
         qid = ex.get("id") or ex.get("_id")
         question = ex["question"]
-        query = build_query(question)
+
 
         # Reset agent state for new question (with new contexts if applicable)
         contexts = ex.get("contexts") or []
@@ -137,7 +147,7 @@ def process_single_batch(
             agent.reset(contexts)  # type: ignore
 
         answer, trace = agent.run(
-            query,
+            question,
             temperature=args.temperature,
             max_tokens=args.max_tokens,
         )
@@ -181,6 +191,8 @@ def process_single_batch(
     # Build final output with deduplicated metadata
     output = {
         "metadata": {
+            "model-path": args.model_path,
+            "database-path" : args.database_path,
             "model": args.model,
             "dataset": args.dataset,
             "setting": args.setting,
@@ -234,8 +246,14 @@ def main() -> None:
     parser.add_argument(
         "--method",
         default="icl",
-        choices=["db", "rag", "icl"],
+        choices=["db", "rag", "icl", "lmlm"],
         help="Agent method label (for output path)",
+    )
+    parser.add_argument(
+        "--model-path", default=None, help="Local model path"
+    )
+    parser.add_argument(
+        "--database-path", default=None, help="Path to database of (entity, relation, value) triplets"
     )
     # RAG-related flags
     parser.add_argument(
@@ -279,9 +297,6 @@ def main() -> None:
         format="%(asctime)s %(levelname)s [run_agent] %(message)s",
     )
     logger = logging.getLogger("run_agent")
-
-    # Instantiate LLM
-    llm = get_llm(model_name=args.model)
 
     # Load full dataset once (with seed for deterministic shuffling)
     full_dataset = get_dataset(args.dataset, args.setting, args.split, seed=args.seed)
@@ -343,7 +358,7 @@ def main() -> None:
         for batch_num in range(start_batch, start_batch + num_batches_to_process):
             try:
                 success = process_single_batch(
-                    args, batch_num, total, output_dir, llm, full_dataset
+                    args, batch_num, total, output_dir, full_dataset
                 )
                 if success:
                     successful_batches += 1

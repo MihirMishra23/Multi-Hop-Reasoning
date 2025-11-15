@@ -57,8 +57,10 @@ class RAGAgent(Agent):
         self._evidence_docs = []
         self.trace = []
 
+
     # NOTE: We compute evidence once per run to avoid repeated indexing within multi-step loops
-    def run(self, query: str, **llm_kwargs: Any) -> Tuple[Optional[str], List[AgentStep]]:
+    def run(self, question: str, **llm_kwargs: Any) -> Tuple[Optional[str], List[AgentStep]]:
+        query = self.build_query(question)
         self._evidence_docs = []
         self.gather_evidence(query)
         return super().run(query, **llm_kwargs)
