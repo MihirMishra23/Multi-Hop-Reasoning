@@ -86,10 +86,12 @@ class Agent:
         final_answer: Optional[str] = None
         for _ in range(self.max_steps):
             step = self.step(query, **llm_kwargs)
-            trace.append(step)
+            # Update self.trace so build_prompt() can access step history
+            self.trace.append(step)
             if step.action == "finish":
                 final_answer = step.answer
                 break
-        return final_answer, trace
+        # Return a copy of the trace for the caller
+        return final_answer, list(self.trace)
 
 

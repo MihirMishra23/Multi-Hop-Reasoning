@@ -1,11 +1,15 @@
 """Utilities to evaluate prediction JSONs produced by scripts/run_agent.py.
 
-Reads a preds JSON (pandas orient="index" style) where each record contains:
-  - pred: model prediction (string)
-  - gold_answer: gold answer (string | list[str])
-  - question: original question (string)
-  - metadata: { model, split, batch_size, batch_number, type }
-  - inference_params: { seed, temperature, max_tokens }
+Expected file structure: preds/{type}/{dataset}_{setting}/{model}/{split}_seed{s}_bn={n}_bs={b}.json
+
+Reads a preds JSON with deduplicated metadata at the top level:
+{
+  "metadata": { model, split, batch_size, batch_number, type, seed, retrieval },
+  "inference_params": { seed, temperature, max_tokens },
+  "results": {
+    "qid": { pred, gold_answer, gold_evidence, question, trace, evidence }
+  }
+}
 
 Computes answer-only metrics (EM, F1, precision, recall) and aggregates.
 This module exposes pure functions so a thin CLI can wrap it.
@@ -49,66 +53,77 @@ def _safe_join_gold(gold: Any) -> str:
 
 
 def _filename_parts_from_path(path: str) -> Tuple[str | None, str | None, str | None, int | None, int | None]:
-    """Parse dataset, setting, split, bn, bs from a preds filename if present.
+    """Parse dataset, setting, split, bn, bs from a preds path.
 
-    Expected pattern: {dataset}_{setting}_{split}_bn={bn}_bs={bs}.json
+    Expected pattern: type/dataset_setting/model/split_seed={s}_bn={n}_bs={b}.json
     Returns (dataset, setting, split, bn, bs) with None on failure.
     """
     name = os.path.basename(path)
-    m = re.match(r"^(?P<dataset>[^_]+)_(?P<setting>[^_]+)_(?P<split>[^_]+)_bn=(?P<bn>\d+)_bs=(?P<bs>\d+)\.json$", name)
+    
+    # Parse filename: split_seed={s}_bn={n}_bs={b}.json
+    m = re.match(r"^(?P<split>[^_]+)_seed=(?P<seed>\d+)_bn=(?P<bn>\d+)_bs=(?P<bs>\d+)\.json$", name)
     if not m:
-        # Fallback: try without _bs=... (older files)
-        m2 = re.match(r"^(?P<dataset>[^_]+)_(?P<setting>[^_]+)_(?P<split>[^_]+)_bn=(?P<bn>\d+)\.json$", name)
-        if not m2:
-            return None, None, None, None, None
-        return (
-            m2.group("dataset"),
-            m2.group("setting"),
-            m2.group("split"),
-            int(m2.group("bn")),
-            None,
-        )
-    return (
-        m.group("dataset"),
-        m.group("setting"),
-        m.group("split"),
-        int(m.group("bn")),
-        int(m.group("bs")),
-    )
+        return None, None, None, None, None
+    
+    # Extract dataset and setting from directory path
+    parts = os.path.normpath(path).split(os.sep)
+    try:
+        idx = parts.index("preds")
+        if len(parts) > idx + 2:
+            # parts[idx+1] is type (icl/rag/db)
+            # parts[idx+2] is dataset_setting
+            dataset_setting = parts[idx + 2]
+            # Split on first underscore to get dataset and setting
+            if "_" in dataset_setting:
+                dataset, setting = dataset_setting.split("_", 1)
+                return (
+                    dataset,
+                    setting,
+                    m.group("split"),
+                    int(m.group("bn")),
+                    int(m.group("bs")),
+                )
+    except (ValueError, IndexError):
+        pass
+    
+    return None, None, None, None, None
 
 
 def _extract_meta(preds: Dict[str, Any], preds_path: str) -> EvalMeta:
-    """Extract metadata from the first record and filename as fallback."""
-    # Grab first record if available
-    first_record: Dict[str, Any] | None = None
-    for _, rec in preds.items():
-        first_record = rec
-        break
-
-    # Defaults
+    """Extract metadata from the top-level metadata field and path as fallback."""
+    # Defaults from path parsing
     dataset, setting, split, bn_from_name, bs_from_name = _filename_parts_from_path(preds_path)
     agent = None
     llm = None
     bn = None
     bs = None
 
-    if first_record is not None:
-        meta = first_record.get("metadata", {}) or {}
+    # Extract from top-level metadata if present
+    meta = preds.get("metadata", {}) or {}
+    if meta:
         agent = meta.get("type")
         llm = meta.get("model")
-        # split is also inside metadata
         split = split or meta.get("split")
         bn = meta.get("batch_number")
         bs = meta.get("batch_size")
 
-    # Path-derived agent if not present: e.g., preds/{agent}/...
+    # Parse directory structure: preds/type/dataset_setting/model/filename.json
+    parts = os.path.normpath(preds_path).split(os.sep)
+    try:
+        idx = parts.index("preds")
+        if len(parts) > idx + 1:
+            # parts[idx+1] is type (icl/rag/db)
+            if agent is None:
+                agent = parts[idx + 1]
+            # parts[idx+3] is model (if using new structure)
+            if len(parts) > idx + 3 and llm is None:
+                llm = parts[idx + 3]
+    except (ValueError, IndexError):
+        pass
+
+    # Fallback: path-derived agent if still not present
     if agent is None:
-        parts = os.path.normpath(preds_path).split(os.sep)
-        try:
-            idx = parts.index("preds")
-            agent = parts[idx + 1]
-        except Exception:
-            agent = "unknown"
+        agent = "unknown"
 
     # Prefer metadata values; fall back to filename
     if bn is None:
@@ -164,7 +179,10 @@ def evaluate_file(
     sum_prec = 0.0
     sum_recall = 0.0
 
-    for _qid, rec in preds.items():
+    # Extract results from new format (with fallback for potential edge cases)
+    results = preds.get("results", preds)
+    
+    for _qid, rec in results.items():
         pred_text = rec.get("pred", "")
 
         # gold key variations for robustness
@@ -211,10 +229,10 @@ def evaluate_file(
 
     metrics = {
         "count": total,
-        "em": (sum_em / total) if total else 0.0,
-        "f1": (sum_f1 / total) if total else 0.0,
-        "precision": (sum_prec / total) if total else 0.0,
-        "recall": (sum_recall / total) if total else 0.0,
+        "em": round(sum_em / total, 4) if total else 0.0,
+        "f1": round(sum_f1 / total, 4) if total else 0.0,
+        "precision": round(sum_prec / total, 4) if total else 0.0,
+        "recall": round(sum_recall / total, 4) if total else 0.0,
     }
 
     return {
@@ -242,7 +260,7 @@ def build_output_filename(dataset: str, agent: str, llm: str, bn: int, bs: int, 
         s = s.replace(" ", "-")
         return s
 
-    return f"{timestamp}_{dataset}_{safe(agent)}_{safe(llm)}_bn{bn}_bs{bs}.json"
+    return f"{timestamp}_{dataset}_{safe(agent)}_{safe(llm)}_bn={bn}_bs={bs}.json"
 
 
 def save_results(results: Dict[str, Any], outdir: str, filename: str) -> str:

@@ -3,3 +3,5 @@ openai>=1.0.0
 pandas>=1.5.0
 tqdm>=4.65.0
 faiss-cpu
+transformers>=4.30.0
+torch>=2.0.0

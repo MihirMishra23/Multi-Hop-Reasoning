@@ -23,27 +23,10 @@ The agent loop maintains a compact trace (limited memory) across steps:
 The base `Agent` supports simple generate/finish behaviors and can be extended to support tool use (e.g., retrieval/search). Evaluation focuses on answer-only metrics and can optionally stream gold labels from datasets for convenience.
 
 ### Key features
-- Agent API: `src/agent/agent.py`
-- LLM adapters: `src/llm/` (`base.py`, `openai.py`)
+- Agent API: `src/agent/` (`agent.py`, `icl_agent.py`, `rag_agent.py`)
+- LLM adapters: `src/llm/` (`base.py`, `openai.py`, `llama.py`)
 - Datasets: `src/data/` (`hotpotqa.py`, `musique.py`, and `get_dataset` dispatcher)
 - Evaluation: `src/eval/` (pure functions) and `scripts/evaluate.py` (CLI)
-- Examples: `examples/` (e.g., HotpotQA/MuSiQue prompting scripts)
-
-### Repository structure (selected)
-
-```
-src/
-  agent/agent.py        # Minimal agent loop with limited memory trace
-  llm/base.py           # Provider-agnostic LLM interface
-  llm/openai.py         # OpenAI Responses API adapter
-  data/                 # Dataset loaders (HotpotQA, MuSiQue)
-  eval/                 # Answer-only metrics and evaluation helpers
-scripts/
-  run_agent.py          # Generate predictions (writes to preds/...)
-  evaluate.py           # Evaluate a preds JSON (writes to results/eval)
-preds/                  # Saved predictions (by agent/setting)
-results/                # Evaluation outputs
-```
 
 ### Installation
 
@@ -80,7 +63,7 @@ export OPENAI_API_KEY="<your-key>"
 # Optional: export OPENAI_BASE_URL="https://api.openai.com/v1"
 ```
 
-5) Generate predictions (writes to `preds/<method>/...`):
+5) Generate predictions (writes to `preds/<method>/<dataset>_<setting>/<model>/...`):
 
 ```bash
 python scripts/run_agent.py \
@@ -88,61 +71,103 @@ python scripts/run_agent.py \
   --setting distractor \
   --split validation \
   --method icl \
+  --model gpt-4 \
   --batch-number 1 \
-  --batch-size 1
+  --batch-size 10
 ```
 
 This will produce a file like:
 
 ```
-preds/icl/hotpotqa_distractor_validation_bn=1_bs=1.json
+preds/icl/hotpotqa_distractor/gpt-4/validation_seed=0_bn=1_bs=10.json
 ```
+
+The script supports batch processing:
+- `--batch-number`: Starting batch number (1-based)
+- `--batch-size`: Number of examples per batch
+- `--num-batches`: Number of batches to process (use `-1` to process all remaining batches)
+- `--resume`: Skip batches that already exist (useful for resuming interrupted runs)
 
 6) Evaluate predictions (writes a timestamped JSON to `results/eval`):
 
+The evaluator supports three modes:
+
+**Single file:**
 ```bash
 python scripts/evaluate.py \
-  --preds preds/icl/hotpotqa_distractor_validation_bn=1_bs=1.json \
+  --preds preds/icl/hotpotqa_distractor/gpt-4/validation_seed=0_bn=1_bs=10.json \
+  --outdir results/eval
+```
+
+**Pattern-based (evaluate multiple batch files):**
+```bash
+python scripts/evaluate.py \
+  --pattern "preds/icl/hotpotqa_distractor/gpt-4/validation_seed=0_bn=*_bs=10.json" \
+  --outdir results/eval
+```
+
+**Directory-based:**
+```bash
+python scripts/evaluate.py \
+  --input-dir preds/icl/hotpotqa_distractor/gpt-4 \
+  --split validation \
+  --seed 0 \
+  --batch-size 10 \
   --outdir results/eval
 ```
 
 ### Unified prediction format (repo-wide)
 
-Predictions saved under `preds/` use a consistent JSON layout across datasets (object keyed by example id). Minimal example:
+Predictions saved under `preds/` use a consistent JSON layout with deduplicated metadata at the top level:
 
 ```json
 {
-  "<qid>": {
-    "pred": "answer string",
-    "gold_answer": ["gold1", "gold2"],
-    "question": "original question",
-    "metadata": {
-      "model": "gpt-4",
-      "split": "validation",
-      "batch_number": 1,
-      "batch_size": 1,
-      "type": "icl"
-    },
-    "inference_params": {
-      "seed": 0,
-      "temperature": 0.0,
-      "max_tokens": 256
+  "metadata": {
+    "model": "gpt-4",
+    "split": "validation",
+    "batch_size": 10,
+    "batch_number": 1,
+    "type": "icl",
+    "seed": 0
+  },
+  "inference_params": {
+    "seed": 0,
+    "temperature": 0.0,
+    "max_tokens": 256
+  },
+  "results": {
+    "<qid>": {
+      "pred": "answer string",
+      "gold_answer": ["gold1", "gold2"],
+      "gold_evidence": [...],
+      "question": "original question",
+      "trace": [...]
     }
   }
 }
 ```
 
 Notes:
-- Additional fields like `trace` or `gold_evidence` may be present depending on the generator.
-- The evaluator looks for `pred` and a gold field (`gold_answer` or `answers`) and computes EM/F1/precision/recall accordingly.
+- Metadata is deduplicated at the top level to reduce file size
+- Additional fields like `trace`, `gold_evidence`, or `evidence` may be present depending on the generator and method
+- The evaluator looks for `pred` and a gold field (`gold_answer` or `answers`) and computes EM/F1/precision/recall accordingly
+- For RAG method, `metadata` may include a `retrieval` field with backend, scope, and k parameters
 
-### HotpotQA evaluation details
+### Evaluation details
 
-Use the provided CLI to evaluate any `preds/...json` file. The evaluator can fetch gold answers from Hugging Face when they are not embedded in the preds file.
+The evaluator supports three input modes:
+
+1. **Single file** (`--preds`): Evaluate one prediction file
+2. **Pattern-based** (`--pattern`): Evaluate multiple batch files matching a glob pattern (e.g., `*_bn=*_bs=10.json`)
+3. **Directory-based** (`--input-dir`): Evaluate all batch files in a directory matching specified split/seed/batch-size
+
+When evaluating multiple files, they are automatically aggregated before evaluation. The output filename includes question ranges for multi-file evaluations (e.g., `01-15_validation_seed=0_bs=10_q1-150_evaluation.json`).
+
+The evaluator can fetch gold answers from Hugging Face when they are not embedded in the preds file:
 
 ```bash
 python scripts/evaluate.py \
-  --preds preds/icl/hotpotqa_distractor_validation_bn=1_bs=1.json \
+  --preds preds/icl/hotpotqa_distractor/gpt-4/validation_seed=0_bn=1_bs=10.json \
   --outdir results/eval \
   --source hf
 ```
@@ -150,10 +175,11 @@ python scripts/evaluate.py \
 Flags:
 - `--dataset/--setting/--split` can override values parsed from filename or metadata
 - `--source` chooses where to fetch gold labels: `hf` (Hugging Face) or `local` if you maintain raw JSONs under `data/raw/hotpotqa`
+- `--agent/--llm` can override agent/model names in metadata
 
 The output JSON written under `results/eval/` includes:
 - `metrics`: `count`, `em`, `f1`, `precision`, `recall`
-- `meta`: run metadata (dataset, agent, llm, bn, bs, split, timestamp)
+- `meta`: run metadata (dataset, agent, llm, bn, bs, split, timestamp, preds_path)
 
 ### Datasets & resources
 

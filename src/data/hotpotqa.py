@@ -20,6 +20,7 @@ No caching is performed here.
 
 import json
 import os
+import random
 from typing import Any, Dict, List, Optional
 
 from datasets import Dataset as HFDataset  # type: ignore
@@ -149,6 +150,7 @@ def load_hotpotqa(
     split: str,
     source: str = "auto",
     limit: Optional[int] = None,
+    seed: Optional[int] = None,
 ) -> HFDataset:
     """Load HotpotQA with unified schema.
 
@@ -157,6 +159,7 @@ def load_hotpotqa(
         split: "train", "dev"/"validation", or "test" (where available).
         source: "auto" (prefer local), "local", or "hf".
         limit: optional max number of rows to return.
+        seed: optional random seed for shuffling. If provided, dataset will be shuffled deterministically.
     """
 
     split_norm = _normalize_split(split)
@@ -168,6 +171,9 @@ def load_hotpotqa(
             with open(local_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 ds = _normalize_examples_pylist(data)
+                # Shuffle with seed if provided
+                if seed is not None:
+                    ds = ds.shuffle(seed=seed)
                 if limit is not None:
                     ds = ds.select(range(min(limit, len(ds))))
                 return ds
@@ -185,6 +191,9 @@ def load_hotpotqa(
             f"Failed to load HotpotQA from Hugging Face (setting={setting}, split={hf_split}): {e}"
         )
     ds = _normalize_hf_dataset(raw)
+    # Shuffle with seed if provided
+    if seed is not None:
+        ds = ds.shuffle(seed=seed)
     if limit is not None:
         ds = ds.select(range(min(limit, len(ds))))
     return ds

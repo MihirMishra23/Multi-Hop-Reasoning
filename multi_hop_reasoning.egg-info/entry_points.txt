@@ -1,3 +1,0 @@
-[console_scripts]
-hotpotqa-evaluate = hotpotqa.evaluate:main
-hotpotqa-predict = hotpotqa.predict:main

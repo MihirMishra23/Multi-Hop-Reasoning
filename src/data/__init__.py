@@ -12,17 +12,16 @@ def get_dataset(
     split: str,
     source: str = "auto",
     limit: Optional[int] = None,
+    seed: Optional[int] = None,
 ) -> HFDataset:
     """Dispatch to dataset-specific loaders and return a unified HF Dataset."""
     name_norm = name.lower()
     if name_norm == "hotpotqa":
-        return load_hotpotqa(setting=setting, split=split, source=source, limit=limit)
+        return load_hotpotqa(setting=setting, split=split, source=source, limit=limit, seed=seed)
     if name_norm == "musique":
         # MuSiQue has no 'setting'; ignore the argument
-        return load_musique(split=split, source=source, limit=limit)
+        return load_musique(split=split, source=source, limit=limit, seed=seed)
     raise ValueError(f"Unsupported dataset: {name}")
 
 
 __all__ = ["get_dataset", "load_hotpotqa", "load_musique"]
-
-
