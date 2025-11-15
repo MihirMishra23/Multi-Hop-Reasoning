@@ -53,7 +53,7 @@ from src.eval.evaluate import (
 
 def extract_batch_info(filename: str) -> Tuple[Optional[int], Optional[int]]:
     """Extract batch number and batch size from filename.
-    
+
     Returns (batch_number, batch_size) or (None, None) if not found.
     """
     pattern = r"_bn=(\d+)_bs=(\d+)\.json$"
@@ -65,21 +65,21 @@ def extract_batch_info(filename: str) -> Tuple[Optional[int], Optional[int]]:
 
 def calculate_question_range(batch_numbers: List[int], batch_size: int) -> Tuple[int, int]:
     """Calculate first and last question numbers from batch numbers and batch size.
-    
+
     Assumes 1-indexed question numbers.
     Batch n with batch_size bs contains questions: (n-1)*bs + 1 to n*bs
     """
     if not batch_numbers:
         raise ValueError("Cannot calculate question range from empty batch list")
-    
+
     first_batch = min(batch_numbers)
     last_batch = max(batch_numbers)
-    
+
     # First question: (first_batch - 1) * batch_size + 1
     first_question = (first_batch - 1) * batch_size + 1
     # Last question: last_batch * batch_size
     last_question = last_batch * batch_size
-    
+
     return first_question, last_question
 
 
@@ -87,23 +87,23 @@ def aggregate_batch_files(batch_files: List[str]) -> Dict[str, Any]:
     """Aggregate multiple batch files into a single data structure."""
     if not batch_files:
         raise ValueError("No batch files provided")
-    
+
     # Load first file to get metadata structure
     with open(batch_files[0], "r", encoding="utf-8") as f:
         first_batch = json.load(f)
-    
+
     # Aggregate results
     all_results: Dict[str, Dict[str, Any]] = {}
     total_examples = 0
-    
+
     for batch_file in batch_files:
         with open(batch_file, "r", encoding="utf-8") as f:
             batch_data = json.load(f)
-        
+
         batch_results = batch_data.get("results", {})
         all_results.update(batch_results)
         total_examples += len(batch_results)
-    
+
     # Create aggregated output
     aggregated = {
         "metadata": {
@@ -114,37 +114,37 @@ def aggregate_batch_files(batch_files: List[str]) -> Dict[str, Any]:
         "inference_params": first_batch["inference_params"],
         "results": all_results,
     }
-    
+
     # Preserve retrieval metadata if present
     if "retrieval" in first_batch.get("metadata", {}):
         aggregated["metadata"]["retrieval"] = first_batch["metadata"]["retrieval"]
-    
+
     return aggregated
 
 
 def infer_evaluation_filename(batch_files: List[str], timestamp: str) -> str:
     """Infer evaluation output filename from batch file names.
-    
+
     Extracts common parts (split, seed, batch_size) and includes first/last question numbers.
     Format: {timestamp}_{split}_seed={seed}_bs={batch_size}_q{first_q}-{last_q}_evaluation.json
     """
     if not batch_files:
         raise ValueError("Cannot infer filename from empty file list")
-    
+
     # Get the first filename to extract the pattern
     first_filename = os.path.basename(batch_files[0])
-    
+
     # Pattern: {split}_seed={seed}_bn={batch_number}_bs={batch_size}.json
     # Extract: split, seed, batch_size
     pattern = r"^(.+?)_seed=(\d+)_bn=\d+_bs=(\d+)\.json$"
     match = re.match(pattern, first_filename)
-    
+
     if not match:
         # Fallback: try to extract what we can and create a generic name
         base_name = os.path.splitext(first_filename)[0]
         # Remove bn=* part if present
         base_name = re.sub(r"_bn=\d+", "", base_name)
-        
+
         # Try to extract batch info and calculate question range
         batch_numbers = []
         batch_size = None
@@ -154,28 +154,28 @@ def infer_evaluation_filename(batch_files: List[str], timestamp: str) -> str:
                 batch_numbers.append(bn)
             if bs is not None and batch_size is None:
                 batch_size = bs
-        
+
         if batch_numbers and batch_size:
             first_q, last_q = calculate_question_range(batch_numbers, batch_size)
             return f"{timestamp}_{base_name}_q{first_q}-{last_q}_evaluation.json"
         return f"{timestamp}_{base_name}_evaluation.json"
-    
+
     split, seed, batch_size_str = match.groups()
     batch_size = int(batch_size_str)
-    
+
     # Extract batch numbers from all files
     batch_numbers = []
     for batch_file in batch_files:
         bn, _ = extract_batch_info(os.path.basename(batch_file))
         if bn is not None:
             batch_numbers.append(bn)
-    
+
     if not batch_numbers:
         return f"{timestamp}_{split}_seed={seed}_bs={batch_size}_evaluation.json"
-    
+
     # Calculate question range
     first_q, last_q = calculate_question_range(batch_numbers, batch_size)
-    
+
     return f"{timestamp}_{split}_seed={seed}_bs={batch_size}_q{first_q}-{last_q}_evaluation.json"
 
 
@@ -183,50 +183,50 @@ def build_pattern_from_args(args: argparse.Namespace) -> str:
     """Build glob pattern from directory and parameters."""
     if not os.path.isdir(args.input_dir):
         raise ValueError(f"Input directory does not exist: {args.input_dir}")
-    
+
     # Build pattern: {split}_seed={seed}_bn=*_bs={batch_size}.json
     pattern = f"{args.split}_seed={args.seed}_bn=*_bs={args.batch_size}.json"
     return os.path.join(args.input_dir, pattern)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate preds JSON and write metrics to results/eval")
-    
+    parser = argparse.ArgumentParser(
+        description="Evaluate preds JSON and write metrics to results/eval"
+    )
+
     # Three modes: single file, pattern-based, or directory-based
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--preds", type=str, help="Path to a single preds JSON file")
     input_group.add_argument(
         "--pattern",
         type=str,
-        help="Glob pattern to match batch files (e.g., 'preds/icl/hotpotqa_distractor/gpt-4/validation_seed=0_bn=*_bs=2.json')"
+        help="Glob pattern to match batch files (e.g., 'preds/icl/hotpotqa_distractor/gpt-4/validation_seed=0_bn=*_bs=2.json')",
     )
-    input_group.add_argument(
-        "--input-dir",
-        type=str,
-        help="Input directory containing batch files"
-    )
-    
+    input_group.add_argument("--input-dir", type=str, help="Input directory containing batch files")
+
     # Required for directory-based mode
     parser.add_argument("--split", type=str, help="Dataset split (required with --input-dir)")
     parser.add_argument("--seed", type=int, help="Random seed (required with --input-dir)")
     parser.add_argument("--batch-size", type=int, help="Batch size (required with --input-dir)")
-    
-    parser.add_argument("--outdir", default=os.path.join(REPO_ROOT, "results", "eval"), help="Output directory")
+
+    parser.add_argument(
+        "--outdir", default=os.path.join(REPO_ROOT, "results", "eval"), help="Output directory"
+    )
     # Optional overrides
     parser.add_argument("--dataset", default=None)
     parser.add_argument("--setting", default=None)
     parser.add_argument("--source", default="hf")
     parser.add_argument("--agent", default=None)
     parser.add_argument("--llm", default=None)
-    
+
     # Logging
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [evaluate] %(message)s",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Determine which files to evaluate
     tmp_file_path = None
     original_preds_path = None  # Store the original input for metadata
@@ -244,7 +244,7 @@ def main() -> None:
         original_preds_path = args.pattern  # Store pattern for metadata
         # Aggregate files into a temporary file
         aggregated_data = aggregate_batch_files(batch_files)
-        tmp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+        tmp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         json.dump(aggregated_data, tmp_file, ensure_ascii=False, indent=2)
         tmp_file.close()
         preds_path = tmp_file.name
@@ -261,7 +261,7 @@ def main() -> None:
         original_preds_path = pattern  # Store pattern for metadata
         # Aggregate files into a temporary file
         aggregated_data = aggregate_batch_files(batch_files)
-        tmp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+        tmp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         json.dump(aggregated_data, tmp_file, ensure_ascii=False, indent=2)
         tmp_file.close()
         preds_path = tmp_file.name
@@ -317,7 +317,7 @@ def main() -> None:
     outpath = save_results(results, args.outdir, filename)
     logging.info(f"Evaluation results saved to: {outpath}")
     print(outpath)
-    
+
     # Clean up temporary file if created
     if tmp_file_path and os.path.exists(tmp_file_path):
         os.unlink(tmp_file_path)
@@ -325,5 +325,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
