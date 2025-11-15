@@ -11,9 +11,6 @@ DB_SEP_TOKEN = "<|db_relationship|>"                # Separates entity and relat
 DB_RETRIEVE_TOKEN = "<|db_return|>"   # Signals insertion point for returned value
 DB_END_TOKEN = "<|db_end|>"
 
-def create_prompt_from_query(query):
-    return f"Question:\n{query}\nAnswer:\n"
-
 def normalize_db_format(text):
         text = re.sub(r'<\|db_entity\|>\s*', DB_START_TOKEN, text)
         text = re.sub(r'<\|db_relationship\|>\s*', DB_SEP_TOKEN, text)
@@ -59,9 +56,12 @@ class LMLMAgent(Agent):
         self.model.to(self.device).eval()
         self.similarity_threshold = similarity_threshold
 
+    def create_prompt_from_query(self, query):
+        return f"Question:\n{query}\nAnswer:\n"
+
     def run(self, query : str,  max_tokens = 256, temperature = 0.0):
         count = 0
-        prompt = create_prompt_from_query(query)
+        prompt = self.create_prompt_from_query(query)
         while (count < max_tokens):
             count += 1
             inputs = self.tok(prompt, return_tensors = "pt").to(self.device)
