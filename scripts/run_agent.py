@@ -149,7 +149,9 @@ def main() -> None:
     # Run predictions
     predictions: Dict[str, Dict[str, Any]] = {}
     batch_size = len(ds)
+    count = 0
     for ex in ds:
+        count += 1
         qid = ex.get("id") or ex.get("_id")
         question = ex["question"]
 
@@ -208,6 +210,15 @@ def main() -> None:
         }
         if args.method == "rag" and args.debug_evidence:
             predictions[str(qid)]["evidence"] = evidence_docs
+
+        if count % 100 == 0:
+            logger.info(f"Generated for batch {count} ")
+            # Save JSON in pandas orient="index" compatible layout
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(predictions, f, ensure_ascii=False, indent = 4)
+
+            logger.info("Saved %d predictions to %s", count, output_path)
+
     
     logger.info("Generated %d predictions", len(predictions))
     logger.debug("Predictions payload: %s", json.dumps(predictions, ensure_ascii=False)[:2000])
