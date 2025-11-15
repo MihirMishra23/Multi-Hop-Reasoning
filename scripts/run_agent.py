@@ -25,6 +25,8 @@ import logging
 from typing import Dict, Any
 from tqdm import tqdm
 
+# Fix OpenMP conflict when multiple libraries link to different OpenMP runtimes
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # Ensure imports work when running directly from repo
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
