@@ -191,6 +191,8 @@ def process_single_batch(
     # Build final output with deduplicated metadata
     output = {
         "metadata": {
+            "model-path": args.model_path,
+            "database-path" : args.database_path,
             "model": args.model,
             "dataset": args.dataset,
             "setting": args.setting,
