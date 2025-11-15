@@ -7,6 +7,13 @@ from src.llm.base import LLM, LLMResponse
 ActionType = Literal["generate", "toolcall", "finish"]
 
 
+def build_query(question: str) -> str:
+    """Instruction to ensure the Agent emits a FINAL_ANSWER the parser recognizes."""
+    instruction = (
+        "Provide only the final answer prefixed by 'FINAL_ANSWER:' with no extra text."
+    )
+    return f"{instruction}\n{question}"
+
 @dataclass
 class AgentStep:
     prompt: str
@@ -74,6 +81,7 @@ class Agent:
         return step
 
     def run(self, query: str, **llm_kwargs: Any) -> Tuple[Optional[str], List[AgentStep]]:
+        query = build_query(query)
         trace = []
         final_answer: Optional[str] = None
         for _ in range(self.max_steps):
