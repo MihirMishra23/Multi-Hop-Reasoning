@@ -222,7 +222,7 @@ def process_single_batch(
 
     # Save JSON with deduplicated metadata immediately
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False)
+        json.dump(output, f, ensure_ascii=False, indent = 4)
 
     logger.info("Saved %d predictions to %s", len(results), output_path)
     return True
