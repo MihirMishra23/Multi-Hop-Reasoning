@@ -11,22 +11,13 @@ DB_SEP_TOKEN = "<|db_relationship|>"                # Separates entity and relat
 DB_RETRIEVE_TOKEN = "<|db_return|>"   # Signals insertion point for returned value
 DB_END_TOKEN = "<|db_end|>"
 
-def normalize_db_format(text):
-        text = re.sub(r'<\|db_entity\|>\s*', DB_START_TOKEN, text)
-        text = re.sub(r'<\|db_relationship\|>\s*', DB_SEP_TOKEN, text)
-        text = re.sub(r'<\|db_return\|>\s*', DB_RETRIEVE_TOKEN, text)
-        text = re.sub(r'<\|db_end\|>\s*', DB_END_TOKEN, text)
-        return text
-
 def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
         output_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
-        output_text = normalize_db_format(output_text)
 
         if input_text in output_text:
             output_text = output_text.split(input_text)[-1]
         else:
             output_text = tokenizer.decode(outputs[0][input_len:], clean_up_tokenization_spaces=True) 
-            output_text = normalize_db_format(output_text)
             # logger.info(f"decode again: {output_text}")
         return output_text  
 
@@ -62,6 +53,7 @@ class LMLMAgent(Agent):
     def run(self, query : str,  max_tokens = 256, temperature = 0.0):
         count = 0
         prompt = self.create_prompt_from_query(query)
+
         while (count < max_tokens):
             count += 1
             inputs = self.tok(prompt, return_tensors = "pt").to(self.device)
@@ -105,8 +97,6 @@ class LMLMAgent(Agent):
             trace = [AgentStep(prompt, answer, "generate")]
             return answer, trace
         except Exception as e:
-            print(f"LMLM was unable to generate a correctly formated answer, receieved error : {e}... Defaulting to empty answer.")
-            print("The query was : " ,query, "\n\n")
             return "", [AgentStep(prompt, "", "generate")]
 
 
@@ -115,6 +105,6 @@ if __name__ == '__main__':
     agent = LMLMAgent(model_path = "/home/rtn27/LMLM_develop/training/qwen3-1.7b/checkpoints/_full_ep10_bsz32_new_qa", database_path="/home/rtn27/LMLM/build-database/triplets/hotpotqa_1k_42_dev_triplets.json")
     for i in range(20):
         answer, trace = agent.run("What is the first two words of the fifth studio album of Joseph Edgar Foreman?")
-        print("answer: \n\n", answer, "\n\n")
-        print("trace: \n\n", trace, "\n\n")
+        # print("answer: \n\n", answer, "\n\n")
+        # print("trace: \n\n", trace, "\n\n")
     
