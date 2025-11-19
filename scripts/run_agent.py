@@ -178,6 +178,15 @@ def process_single_batch(
         json.dump(output, f, ensure_ascii=False, indent=4)
 
     logger.info("Saved %d predictions to %s", len(results), output_path)
+
+    # Force garbage collection and clear GPU cache to prevent memory fragmentation
+    gc.collect()
+    if torch is not None:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
     return True
 
 
