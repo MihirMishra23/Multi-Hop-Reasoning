@@ -22,6 +22,7 @@ import os
 import random
 import sys
 import logging
+import gc
 from typing import Dict, Any
 from tqdm import tqdm
 
@@ -34,16 +35,11 @@ REPO_ROOT = os.path.abspath(os.path.join(THIS_DIR, ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from datasets import load_dataset  # type: ignore
+import torch
 
-from src.agent.agent import Agent
-from src.llm.openai import OpenAILLM
-from src.llm.base import LLM
+from src.agent import get_agent, Agent
 from src.llm import get_llm
 from src.data import get_dataset
-from src.agent.rag_agent import RAGAgent
-from src.agent.icl_agent import ICLAgent
-from src.agent.lmlm_agent import LMLMAgent
 
 
 def build_query(question: str) -> str:
@@ -58,6 +54,7 @@ def process_single_batch(
     total_examples: int,
     output_dir: str,
     full_dataset,
+    agent: Agent,
 ) -> bool:
     """Process a single batch and save immediately. Returns True if successful."""
     logger = logging.getLogger("run_agent")
@@ -89,51 +86,6 @@ def process_single_batch(
         len(ds),
     )
 
-    # Instantiate agents once and reuse them (reset state between questions)
-    # This avoids unnecessary object creation overhead
-    agent: Agent
-    match args.method:
-        case "rag":
-            # Instantiate LLM
-            llm = get_llm(model_name=args.model)
-            # Guard against unsupported combinations (we only support bm25 + distractor for now)
-            if args.retrieval != "bm25":
-                raise NotImplementedError("Only --retrieval bm25 is supported currently.")
-            if args.setting != "distractor":
-                raise NotImplementedError(
-                    "Only --setting distractor is supported currently for RAG."
-                )
-            # Create RAG agent with empty contexts (will be reset per question)
-            agent = RAGAgent(
-                llm=llm,
-                retriever_type=args.retrieval,
-                contexts=[],
-                rag_k=args.rag_k,
-                max_steps=args.max_steps,
-            )
-        case "icl":
-            llm = get_llm(model_name=args.model)
-            # Guard against unsupported setting
-            if args.dataset == "hotpotqa" and args.setting == "fullwiki":
-                raise NotImplementedError("ICL is not supported for --setting fullwiki.")
-            # Create ICL agent with empty contexts (will be reset per question)
-            agent = ICLAgent(
-                llm=llm,
-                contexts=[],
-                max_steps=args.max_steps,
-            )
-        case "db":
-            llm = get_llm(model_name=args.model)
-            agent = Agent(llm=llm, max_steps=args.max_steps)
-        case "lmlm":
-            if args.model_path is None:
-                raise Exception("You must set a local model path for lmlm setting")
-            if args.database_path is None:
-                raise Exception("You must set a local database path for lmlm setting")
-            agent = LMLMAgent(model_path = args.model_path, database_path=args.database_path)
-        case _:
-            raise NotImplementedError(f"Method '{args.method}' is not implemented.")
-
     # Run predictions
     results: Dict[str, Dict[str, Any]] = {}
     batch_size_actual = len(ds)
@@ -141,7 +93,6 @@ def process_single_batch(
     for ex in ds:
         qid = ex.get("id") or ex.get("_id")
         question = ex["question"]
-
 
         # Reset agent state for new question (with new contexts if applicable)
         contexts = ex.get("contexts") or []
@@ -194,7 +145,7 @@ def process_single_batch(
     output = {
         "metadata": {
             "model-path": args.model_path,
-            "database-path" : args.database_path,
+            "database-path": args.database_path,
             "model": args.model,
             "dataset": args.dataset,
             "setting": args.setting,
@@ -224,9 +175,18 @@ def process_single_batch(
 
     # Save JSON with deduplicated metadata immediately
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, indent = 4)
+        json.dump(output, f, ensure_ascii=False, indent=4)
 
     logger.info("Saved %d predictions to %s", len(results), output_path)
+
+    # Force garbage collection and clear GPU cache to prevent memory fragmentation
+    gc.collect()
+    if torch is not None:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
     return True
 
 
@@ -251,11 +211,11 @@ def main() -> None:
         choices=["db", "rag", "icl", "lmlm"],
         help="Agent method label (for output path)",
     )
+    parser.add_argument("--model-path", default=None, help="Local model path")
     parser.add_argument(
-        "--model-path", default=None, help="Local model path"
-    )
-    parser.add_argument(
-        "--database-path", default=None, help="Path to database of (entity, relation, value) triplets"
+        "--database-path",
+        default=None,
+        help="Path to database of (entity, relation, value) triplets",
     )
     # RAG-related flags
     parser.add_argument(
@@ -352,6 +312,27 @@ def main() -> None:
 
     start_batch = args.batch_number
 
+    # Instantiate LLM and Agent once
+    llm = None
+    if args.method != "lmlm":
+        llm = get_llm(model_name=args.model)
+
+    # Build agent_kwargs dictionary
+    agent_kwargs = {
+        "llm": llm,
+        "model": args.model,
+        "dataset": args.dataset,
+        "setting": args.setting,
+        "retrieval": args.retrieval,
+        "rag_k": args.rag_k,
+        "max_steps": args.max_steps,
+        "model_path": args.model_path,
+        "database_path": args.database_path,
+    }
+
+    # Get agent instance using factory function
+    agent: Agent = get_agent(method=args.method, agent_kwargs=agent_kwargs)
+
     # Process batches with progress tracking
     successful_batches = 0
     failed_batches = 0
@@ -360,7 +341,7 @@ def main() -> None:
         for batch_num in range(start_batch, start_batch + num_batches_to_process):
             try:
                 success = process_single_batch(
-                    args, batch_num, total, output_dir, full_dataset
+                    args, batch_num, total, output_dir, full_dataset, agent
                 )
                 if success:
                     successful_batches += 1
