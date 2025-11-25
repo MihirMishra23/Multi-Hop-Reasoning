@@ -2,7 +2,7 @@ from src.agent.agent import Agent, AgentStep
 import re
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from lmlm.database.database_manager import DatabaseManager
+from src.lmlm.database.database_manager import DatabaseManager
 from transformers import LogitsProcessor
 
 
