@@ -4,12 +4,10 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from src.lmlm.database.database_manager import DatabaseManager
 from transformers import LogitsProcessor
-
-
-DB_START_TOKEN = "<|db_entity|>"          # Begins a lookup call
-DB_SEP_TOKEN = "<|db_relationship|>"                # Separates entity and relation in the query
-DB_RETRIEVE_TOKEN = "<|db_return|>"   # Signals insertion point for returned value
-DB_END_TOKEN = "<|db_end|>"
+from src.lmlm.constants import DB_START_TOKEN
+from src.lmlm.constants import DB_SEP_TOKEN
+from src.lmlm.constants import DB_RETRIEVE_TOKEN
+from src.lmlm.constants import DB_END_TOKEN
 
 def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
         output_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
