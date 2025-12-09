@@ -1,8 +1,8 @@
 #!/bin/bash
 
 export WANDB_PROJECT=tofu_ft
-export WANB_NAME=qwen3-1.7B-nov18
-source ./scripts/account/wandb_config.sh
+export WANB_NAME=gemini2kdata-qwen3-1.7B-nov29
+#source ./scripts/account/wandb_config.sh
 
 # Unique port per job
 export MASTER_PORT=$((29501 + RANDOM % 1000))
@@ -19,7 +19,7 @@ export TORCH_USE_CUDA_DSA=1
 
 
 
-OUTPUT_ROOT="training/qwen3-1.7b/nov18/checkpoints"
+OUTPUT_ROOT="training/Qwen3-1.7B/nov29/checkpoints"
 
 # MODEL=llama-1b-warmup
 # MODEL=LMLM-M
@@ -44,10 +44,10 @@ MODEL_NAME_OR_PATH="Qwen/Qwen3-1.7B"
 CKPT_PATH="yes"
 
 
-NUM_TRAIN_EPOCHS=10
+NUM_TRAIN_EPOCHS=5 #change to 5
 NUM_GPUs=1
 PER_DEVICE_TRAIN_BATCH_SIZE=8
-GRADIENT_ACCUMULATION_STEPS=4
+GRADIENT_ACCUMULATION_STEPS=4 #change to 4
 EVAL_ACCUMULATION_STEPS=1 #number of steps before copying metrics to CPU, avoids OOM
 
 
@@ -63,7 +63,7 @@ for DATASPLITE in "${DATASPLITE_LST[@]}"; do
 
         
     if [ "$DATASPLITE" = "full" ]; then
-        DATASET_PATH=./data/lmlm_trajectories_1k_converted.json
+        DATASET_PATH=/home/rtn27/Multi-Hop-Reasoning/synthetic_data/rollouts_6kdb_6k_2317_w_question_reformated.json
     elif [ "$DATASPLITE" = "retain" ]; then
         DATASET_PATH=../unlearning/open-unlearning/data/annotation/tofu-train-retain3.8k_chatgpt_gpt4o-v7.1_qa.json
     fi
@@ -92,8 +92,6 @@ python \
     --per_device_train_batch_size ${PER_DEVICE_TRAIN_BATCH_SIZE} \
     --per_device_eval_batch_size ${PER_DEVICE_TRAIN_BATCH_SIZE} \
     --gradient_accumulation_steps ${GRADIENT_ACCUMULATION_STEPS} \
-    --bf16 \
-    --bf16_full_eval \
     --weight_decay 0.01 \
     --optim paged_adamw_32bit \
     --lr_scheduler_type cosine \
