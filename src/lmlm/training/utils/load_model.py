@@ -34,7 +34,7 @@ def load_model_for_ft_baseline(model_args, resume_from_checkpoint=None, use_spec
     Load a LLaMA3 model and tokenizer. Ensures the pad token is set and embeddings are resized if needed.
     """
     tokenizer = AutoTokenizer.from_pretrained(
-        resume_from_checkpoint,
+        model_args.model_name_or_path,
         trust_remote_code=model_args.trust_remote_code,
         use_fast=True,
     )
@@ -44,7 +44,7 @@ def load_model_for_ft_baseline(model_args, resume_from_checkpoint=None, use_spec
         print(f"vocab_size: {len(tokenizer)}")
 
     model = AutoModelForCausalLM.from_pretrained(
-        resume_from_checkpoint,
+        model_args.model_name_or_path,
         trust_remote_code=model_args.trust_remote_code,
     )
 
