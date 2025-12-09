@@ -225,7 +225,7 @@ def extract_dblookup_masks(
         "return": tokenizer.convert_tokens_to_ids(DB_RETRIEVE_TOKEN),
         "end": tokenizer.convert_tokens_to_ids(DB_END_TOKEN),
         "eos": tokenizer.eos_token_id,
-        "bos": tokenizer.bos_token_id,
+        "bos": tokenizer.bos_token_id if tokenizer.bos_token_id is not None else tokenizer.eos_token_id,
         "pad": tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
     }
 
