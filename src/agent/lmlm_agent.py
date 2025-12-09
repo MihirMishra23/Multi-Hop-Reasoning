@@ -71,7 +71,7 @@ class LMLMAgent(Agent):
 
             prompt += output_text
 
-            if prompt.endswith("<answer/>"):
+            if prompt.endswith("</answer>"):
                 break
 
             # Check if <|db_return|> is present
@@ -91,7 +91,7 @@ class LMLMAgent(Agent):
             #### Step 4: Append retrieved value and db_end token
             prompt += return_value + DB_END_TOKEN
         try:
-            answer = prompt.split("<answer>")[1].split("<answer/>")[0]
+            answer = prompt.split("<answer>")[1].split("</answer>")[0]
             trace = [AgentStep(prompt, answer, "generate")]
             return answer, trace
         except Exception as e:
