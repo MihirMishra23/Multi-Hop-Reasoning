@@ -1,12 +1,15 @@
 
+import os
+from src.data.hotpotqa import load_hotpotqa
 import time
+import asyncio
 from google import genai
 from src.lmlm.database.database_manager import DatabaseManager
-database_path = "/home/rtn27/Multi-Hop-Reasoning/src/database-creation/build-database-gemini/generated_database_train_42_2k.json"
+database_path = "/home/rtn27/Multi-Hop-Reasoning/src/database-creation/build-database-gemini/generated_database_train_42_6000.json"
 from src.lmlm.constants import DB_END_TOKEN, DB_RETRIEVE_TOKEN, DB_SEP_TOKEN, DB_START_TOKEN,ANSWER_START_TOKEN, ANSWER_END_TOKEN
 from openai import OpenAI
-from src.data.hotpotqa import load_hotpotqa
-import os
+from datetime import datetime
+
 from src.eval.metrics import f1_score
 import json
 db = DatabaseManager()
@@ -17,7 +20,7 @@ client = OpenAI(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai"
 )
 
-MODEL="gemini-2.5-pro"
+MODEL="gemini-2.5-flash-lite"
 
 SYSTEM_PROMPT = f"""You are a database lookup expert. Your goal is to answer questions only by using database lookups.
 Here is an example to guide you. For the question:
@@ -44,12 +47,10 @@ Rules:
 - The information following the {DB_END_TOKEN} token must be taken from what is inside the {DB_RETRIEVE_TOKEN} ... {DB_END_TOKEN} span. Do not mention any other information not declared in this span first.
 """
 
-MAX_GENERATIONS=10
+MAX_GENERATIONS=6
 
 
-
-
-def func(prompt):
+def gemini_w_db_lookup(prompt):
     current_gen = 1
     res = ""
     input = [{"role" : "system", "content" : SYSTEM_PROMPT},{"role" : "user" , "content" : prompt}, {"role" : "assistant", "content" : ""}]
@@ -87,38 +88,75 @@ def func(prompt):
         if ANSWER_END_TOKEN in res:
             return res
 
-rollouts = []
-if __name__ == '__main__':
+async def process_example(semaphore, example, idx):
+    async with semaphore:
+        max_retries = 10
+        retry_delay = 60
+        for attempt in range(max_retries):
+            try:
+                print(f"\nProcessing example {idx}...")
+                question = example["question"]
+                prompt = f"Here is the question: {question}"
 
+                # Run the synchronous gemini_w_db_lookup() in a thread pool
+                result = await asyncio.to_thread(gemini_w_db_lookup, prompt)
+
+                if result is None:
+                    return None
+
+                lmlm_answer = result.split(ANSWER_START_TOKEN)[-1].split(ANSWER_END_TOKEN)[0]
+                print(f"\nquestion : {question} \n")
+                answers = example["answers"]
+                print(f"\nAnswers was : {answers} \n")
+                print(f"lmlm answer: ", lmlm_answer, "\n\n")
+
+                score = max([f1_score(lmlm_answer, a)[0] for a in answers])
+                if score > 0.5:
+                    print("Successful answer, adding trajectory: ", result)
+                    return f"Question:\n{question}\nAnswer:\n{result}"
+                else:
+                    print(f"Score {score} <= 0.5, skipping")
+                    return None
+            except Exception as e:
+                print(f"lookup failed with error {e} Retrying, currently at {attempt} retries... ")
+                await asyncio.sleep(retry_delay)
+
+        print("Failed all retries for example : ", example)
+
+async def main():
     # Load questions from HotpotQA train dataset
     dataset = load_hotpotqa(
         setting="distractor",
         split="train",
         source="auto",
-        limit=2000,
+        limit=6000,
         seed=42
     )
-    NB_EXAMPLES = 10
-    count = 0
-    for example in dataset:
-        count += 1
-        if count > NB_EXAMPLES:
-            break
-        question = example["question"]
-        prompt = f"Here is the question: {question}"
-        result = func(prompt)
-        if result is None:
-            continue
-        lmlm_answer = result.split(ANSWER_START_TOKEN)[-1].split(ANSWER_END_TOKEN)[0]
-        print(f"\nquestion : {question} \n")
-        answers = example["answers"]
-        print(f"\nAnswers was : {answers} \n")
-        print(f"lmlm answer: ", lmlm_answer, "\n\n")
-        score = max([f1_score(lmlm_answer, a)[0] for a in answers])
-        if score > 0.5:
-            print("Successful answer, adding trajectory: ", result)
-            rollouts.append(result)
+    NB_EXAMPLES = 1
+    MAX_CONCURRENT = 600  # Control concurrency with semaphore
 
-    print("done!")
-    with open('rollouts.json', 'w') as f:
-        json.dump(rollouts, f, indent=2)
+    # Create semaphore to limit concurrent requests
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+
+    # Create tasks for all examples
+    tasks = []
+    for idx, example in enumerate(dataset):
+        if idx >= NB_EXAMPLES:
+            break
+        tasks.append(process_example(semaphore, example, idx + 1))
+
+    # Run all tasks concurrently
+    results = await asyncio.gather(*tasks)
+
+    # Filter out None values (only keep f1_score > 0.5)
+    rollouts = [r for r in results if r is not None]
+
+    formatted_rollouts = {"examples":  [{"annotated_text" : r} for r in rollouts]}
+
+    output_path = f"{os.path.dirname(os.path.abspath(__file__))}/{datetime.today().strftime('%m-%d')}_rollouts_{len(rollouts)}_examples_{NB_EXAMPLES}.json"
+    print(f"\n\ndone! Collected {len(rollouts)} successful rollouts out of {len(tasks)} examples.")
+    with open(output_path, 'w') as f:
+        json.dump(formatted_rollouts, f, indent=2)
+
+if __name__ == '__main__':
+    asyncio.run(main())
