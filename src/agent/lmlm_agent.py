@@ -1,13 +1,13 @@
-from src.agent.agent import Agent, AgentStep
+from agent.agent import Agent, AgentStep
 import re
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from src.lmlm.database.database_manager import DatabaseManager
+from lmlm.database.database_manager import DatabaseManager
 from transformers import LogitsProcessor
-from src.lmlm.constants import DB_START_TOKEN
-from src.lmlm.constants import DB_SEP_TOKEN
-from src.lmlm.constants import DB_RETRIEVE_TOKEN
-from src.lmlm.constants import DB_END_TOKEN
+from lmlm.constants import DB_START_TOKEN
+from lmlm.constants import DB_SEP_TOKEN
+from lmlm.constants import DB_RETRIEVE_TOKEN
+from lmlm.constants import DB_END_TOKEN
 
 def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
         output_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
@@ -96,7 +96,7 @@ class LMLMAgent(Agent):
             return answer, trace
         except Exception as e:
             return "", [AgentStep(prompt, "", "generate")]
-
+        
 
 if __name__ == '__main__':
     #testing script

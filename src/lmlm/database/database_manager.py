@@ -6,7 +6,7 @@ import logging
 from typing import Dict, List, Optional, Union
 from collections import Counter
 from datasets import DatasetDict
-from src.lmlm.database.topk_retriever import TopkRetriever
+from lmlm.database.topk_retriever import TopkRetriever
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -82,13 +82,12 @@ class DatabaseManager:
 
         if self.topk_retriever is None:
             self.topk_retriever = TopkRetriever(
-                self.database["triplets"], model_name, top_k, default_threshold, database_name=self.database_name
+                self.database["triplets"], model_name, top_k, default_threshold, database_name=self.database_name, use_hf_cache = False,
             )
             logger.info(f"Top-k retriever initialized with {len(self)} triplets and threshold {self.topk_retriever.default_threshold}.")
 
     def retrieve_from_database(self, prompt: str, threshold: Optional[float] = None):
         """Retrieve a single top-1 database result from a prompt containing dblookup. If lookup fails, raise an error."""
-        
         pattern_lst = [
             r"\[dblookup\('((?:[^'\\]|\\.)+)',\s*'((?:[^'\\]|\\.)+)'\)\s*->",
             r"\[dblookup\('(.+?)',\s*'(.+?)'\)\s*->",
@@ -96,7 +95,6 @@ class DatabaseManager:
         ]
 
         matches = {tuple(match) for pattern in pattern_lst for match in re.findall(pattern, prompt)}
-
         if not matches:
             raise DatabaseLookupError(
                 f"[dblookup_fail_5] No valid dblookup pattern found in prompt: {prompt}", 
@@ -108,9 +106,8 @@ class DatabaseManager:
                 f"[dblookup_fail_1] Multiple dblookup matches found: {matches} in prompt: {prompt}", 
                 "multiple_matches"
             )
-
+       
         entity, relationship = matches.pop()
-
         self.init_topk_retriever()
         results = self.topk_retriever.retrieve_top_k(entity, relationship, threshold=threshold)
 
@@ -119,7 +116,6 @@ class DatabaseManager:
                 f"[dblookup_fail_3] No retrieval results for entity='{entity}', relationship='{relationship}'",
                 "no_retrieval_data_found"
             )
-
         return results[0]  # Return top-1 retrieval
 
     def build_database(self, dataset: Union[DatasetDict, List[Dict]], database_name: Optional[str] = None, database_org_file: Optional[str] = None):

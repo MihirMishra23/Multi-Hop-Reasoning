@@ -1,5 +1,5 @@
 MODEL_PATH=/home/rtn27/Multi-Hop-Reasoning/scripts/training/Qwen3-1.7B/nov29/checkpoints/_full_ep5_bsz32_new_qa
-DATABASE_PATH=/home/rtn27/Multi-Hop-Reasoning/src/database-creation/build-database-gemini/generated_database_validation_42_1000.json
+DATABASE_PATH=/home/rtn27/Multi-Hop-Reasoning/src/database-creation/gemini/generated_database_validation_42_1000.json
 METHOD=lmlm
 MAX_TOKENS=512
 BATCH_SIZE=1000

@@ -5,7 +5,7 @@ import pickle
 from dataclasses import dataclass
 from datasets import Dataset as HFDataset
 from datetime import datetime
-from src.lmlm.constants import DATA_DIR
+from lmlm.constants import DATA_DIR
 from typing import Any, Dict, List, Optional
 
 

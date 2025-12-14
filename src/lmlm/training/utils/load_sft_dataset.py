@@ -6,8 +6,8 @@ from typing import Tuple, Dict
 
 from datasets import load_dataset, Dataset
 
-from src.lmlm.constants import PROMPTS_DIR
-from src.lmlm.training.utils.utils_filter import (
+from lmlm.constants import PROMPTS_DIR
+from lmlm.training.utils.utils_filter import (
     convert_to_raw_dataset,
 )
 

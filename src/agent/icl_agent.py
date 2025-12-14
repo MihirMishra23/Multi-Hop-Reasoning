@@ -1,6 +1,6 @@
 from typing import List
 
-from src.agent.agent import Agent, LLM
+from agent.agent import Agent, LLM
 
 
 def _join_evidence(docs: List[str]) -> str:

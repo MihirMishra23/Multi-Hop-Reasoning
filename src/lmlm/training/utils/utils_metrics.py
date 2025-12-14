@@ -14,7 +14,7 @@ from torch.nn import CrossEntropyLoss
 import matplotlib.pyplot as plt
 import wandb
 from transformers import EvalPrediction, AutoTokenizer
-from src.lmlm.training.utils.utils_mask import extract_dblookup_masks, MASK_CATEGORIES
+from lmlm.training.utils.utils_mask import extract_dblookup_masks, MASK_CATEGORIES
 
 
 # --------------------
@@ -342,8 +342,8 @@ def dataset_stats(dataset_name, dataset, tokenizer=None, visualize=False):
         }
 
     try:
-        from src.lmlm.database.database_manager import extract_database
-        from src.lmlm.training.utils.utils_filter import clean_dataset
+        from lmlm.database.database_manager import extract_database
+        from lmlm.training.utils.utils_filter import clean_dataset
 
         subset = extract_database(subset)
         db_calls = [len(e["atomic_knowledge"]) for e in subset]

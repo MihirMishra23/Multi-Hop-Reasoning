@@ -4,11 +4,11 @@ import os
 import warnings
 from tqdm import tqdm
 
-from src.lmlm.annotate.annotators import ChatGPTAnnotator, LlamaAnnotator, LlamaLoraAnnotator
-from src.lmlm.annotate.data_manager import Example, DataManager
-from src.lmlm.annotate.utils import get_save_name
-from src.lmlm.annotate.dataloader import prepare_data
-from src.lmlm.constants import DATA_DIR
+from .annotate.annotators import ChatGPTAnnotator, LlamaAnnotator, LlamaLoraAnnotator
+from e.data_manager import Example, DataManager
+from lmlm.annotate.utils import get_save_name
+from lmlm.annotate.dataloader import prepare_data
+from lmlm.constants import DATA_DIR
 
 
 if __name__=="__main__":

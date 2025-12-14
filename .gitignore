@@ -27,3 +27,8 @@ src/tools/FlashRAG/
 
 # Database cache
 database_cache/
+
+# Sbatch related files
+*.sbatch
+*.err
+*.out
