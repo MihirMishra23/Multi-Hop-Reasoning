@@ -20,15 +20,15 @@ from trl import (
     get_peft_config,
 )
 
-from src.lmlm.training.utils.utils_metrics import (
+from lmlm.training.utils.utils_metrics import (
     compute_loss_func,
     set_wandb,
     set_tokenizer,
     compute_metrics,
     set_use_special_dblookup_tokens,
 )
-from src.lmlm.training.utils.load_model import initialize_model_for_pretraining
-from src.lmlm.training.utils.load_sft_dataset import prepare_pretrain_data
+from lmlm.training.utils.load_model import initialize_model_for_pretraining
+from lmlm.training.utils.load_sft_dataset import prepare_pretrain_data
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)

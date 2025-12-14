@@ -44,7 +44,7 @@ REPO_ROOT = os.path.abspath(os.path.join(THIS_DIR, ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from src.eval.evaluate import (
+from eval.evaluate import (
     evaluate_file,
     build_output_filename,
     save_results,

@@ -12,9 +12,9 @@ import matplotlib.pyplot as plt
 from torch.nn import CrossEntropyLoss
 
 
-from src.lmlm.database.database_manager import DatabaseManager, DatabaseLookupError
-from src.lmlm.training.utils.utils_metrics import indices_to_mask, extract_dblookup_indices, validate_extraction, validate_mask_tokens
-from src.lmlm.constants import DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, DB_END_TOKEN
+from lmlm.database.database_manager import DatabaseManager, DatabaseLookupError
+from lmlm.training.utils.utils_metrics import indices_to_mask, extract_dblookup_indices, validate_extraction, validate_mask_tokens
+from lmlm.constants import DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, DB_END_TOKEN
 
 import re
 import math

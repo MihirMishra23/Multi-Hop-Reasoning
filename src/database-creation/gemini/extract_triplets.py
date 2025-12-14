@@ -5,10 +5,11 @@ import os
 from google import genai
 from pydantic import BaseModel
 from datasets import load_dataset
+from datetime import datetime
 
 client = genai.Client()
 
-SPLIT="validation"
+SPLIT="train"
 EXAMPLES = "For example, for the sentence: 'James Clark is an Australian soccer player with a Austrian wife named Alissa Jordan' would have the triplets: (James Clark, nationality, Australian), (James Clark, occupation, soccer player), (James Clark, wife name, Alissa Jordan), (Alissa Jordan, husband, James Clark), (Alissa Jordan, nationality, Austrian)."
 
 PROMPT = "Extract triplets from the following context. Each triplet must be of the form (entity, relationship, value). " \
@@ -18,9 +19,10 @@ PROMPT = "Extract triplets from the following context. Each triplet must be of t
 "If an entity is described with multiple characteristics in one go, create seperate triplet entries for each of those characteristics." \
 "Example: from the text 'Albert Einstein was a German theoretical physicist best known for developing the theory of relativity.' the triplets are (Albert Einstein, nationality, Germany), (Albert Einstein, occupation, theoretical physicist), (Albert Einstein, best known for, developping the theory of relativity)" \
 " Given these examples, generate explicit and implicit triplets from the following context. \n\n {context}"
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-2.5-pro"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-NB_EXAMPLES = 1000
+NB_EXAMPLES = 6000
+OUTPUT_PATH = f"output_{SPLIT}_42_{NB_EXAMPLES}_date_{datetime.today().strftime('%m-%d')}"
 
 
 # Load HotpotQA dataset directly from HuggingFace
@@ -34,22 +36,30 @@ raw_dataset = raw_dataset.select(range(min(NB_EXAMPLES, len(raw_dataset))))
 
 print(f"Loaded {len(raw_dataset)} examples")
 
-# Extract supporting contexts from each example
-contexts = []
-for idx, example in enumerate(raw_dataset):
-    # Get supporting facts
-    # Format: {'title': ['Title1', 'Title2'], 'sent_id': [0, 1]}
-    sf = example.get('supporting_facts', {})
-    if not sf or 'title' not in sf:
-        continue
 
-    supporting_titles = set(sf['title'])
+class KnowledgeTriplets(BaseModel):
+    triplets: list[tuple[str,str,str]]
+
+
+class ProcessedQuestion(BaseModel):
+    index : int
+    question : str
+    golden_contexts : str
+    knowledge_triplets: KnowledgeTriplets
+
+# Async function to process a single context
+async def process_context(example, idx: int, semaphore: asyncio.Semaphore) -> KnowledgeTriplets:
+    print(example)
+    question = example["question"]
+    supporting_facts = example["supporting_facts"]
+
+    supporting_titles = set(supporting_facts['title'])
 
     # Get contexts
     # Format: {'title': ['Title1', 'Title2', ...], 'sentences': [['sent1', 'sent2'], ['sent3'], ...]}
     context_data = example.get('context', {})
-    if not context_data or 'title' not in context_data or 'sentences' not in context_data:
-        continue
+    # if not context_data or 'title' not in context_data or 'sentences' not in context_data:
+    #     continue
 
     titles = context_data.get('title', [])
     sentences = context_data.get('sentences', [])
@@ -58,27 +68,18 @@ for idx, example in enumerate(raw_dataset):
     supporting_contexts = []
     for i, title in enumerate(titles):
         if title in supporting_titles:
+            print("title: ", title, "\n")
             # Get sentences for this title
             sents = sentences[i] if i < len(sentences) else []
             # Concatenate sentences
             paragraph = f"{title}: " + " ".join(sents).strip()
             supporting_contexts.append(paragraph)
 
-    # Concatenate all supporting contexts for this example
-    if supporting_contexts:
-        combined_context = "\n\n".join(supporting_contexts)
-        contexts.append(combined_context)
+    golden_contexts = "\n\n".join(supporting_contexts)
 
-print(f"Collected {len(contexts)} contexts with supporting facts")
-
-class KnowledgeTriplets(BaseModel):
-    triplets: list[tuple[str,str,str]]
-
-# Async function to process a single context
-async def process_context(paragraph: str, idx: int, semaphore: asyncio.Semaphore) -> KnowledgeTriplets:
     async with semaphore:
-        formatted_prompt = PROMPT.format(context=paragraph)
-        print(f"Sending request {idx + 1}/{len(contexts)}...")
+        formatted_prompt = PROMPT.format(context=golden_contexts)
+        print(f"Sending request {idx + 1}/{len(supporting_facts)}...")
 
         max_retries = 5
         retry_delay = 10  # seconds
@@ -100,8 +101,8 @@ async def process_context(paragraph: str, idx: int, semaphore: asyncio.Semaphore
                 )
 
                 kt = KnowledgeTriplets.model_validate_json(response.text)
-                print(f"Completed request {idx + 1}/{len(contexts)}")
-                return kt
+                print(f"Completed request {idx + 1}/{len(supporting_facts)}")
+                return ProcessedQuestion(index = idx, golden_contexts = golden_contexts, knowledge_triplets = kt, question = question)
 
             except Exception as e:
                 error_msg = str(e).lower()
@@ -130,8 +131,8 @@ async def process_all_contexts():
     semaphore = asyncio.Semaphore(1000)
 
     tasks = [
-        process_context(paragraph, idx, semaphore)
-        for idx, paragraph in enumerate(contexts)
+        process_context(example, idx, semaphore)
+        for idx, example in enumerate(raw_dataset)
     ]
 
     return await asyncio.gather(*tasks)
@@ -146,8 +147,9 @@ lmlm_database = {"entities": [], "relationships" : [], "return_values" : [], "tr
 entities = set()
 relationships = set()
 return_values = set()
-for kt in results:
-    for triplet in kt.triplets:
+for processed_question in results:
+    for triplet in processed_question.knowledge_triplets.triplets:
+        print(triplet)
         entities.add(triplet[0])
         relationships.add(triplet[1])
         return_values.add(triplet[2])
@@ -157,7 +159,19 @@ lmlm_database["entities"]= list(entities)
 lmlm_database["relationships"]= list(relationships)
 lmlm_database["return_values"] = list(return_values)
 
-save_path = f"/home/rtn27/Multi-Hop-Reasoning/src/database-creation/build-database-gemini/generated_database_{SPLIT}_42_{NB_EXAMPLES}.json"
-with open(save_path, "w") as f:
+# Create output directory if it doesn't exist
+output_dir = os.path.join("/home/rtn27/Multi-Hop-Reasoning/src/database-creation/gemini", OUTPUT_PATH)
+os.makedirs(output_dir, exist_ok=True)
+
+# Save database
+database_path = os.path.join(output_dir, "database.json")
+with open(database_path, "w") as f:
     json.dump(lmlm_database, f, indent=4)
-print("saved results to :", save_path)
+print("saved database to:", database_path)
+
+# Save metadata
+metadata_json = [data.model_dump(mode = 'json')["knowledge_triplets"] for data in results]
+metadata_path = os.path.join(output_dir, "metadata.json")
+with open(metadata_path, 'w') as f:
+    json.dump(metadata_json, f, indent=4)
+print("saved metadata to:", metadata_path)

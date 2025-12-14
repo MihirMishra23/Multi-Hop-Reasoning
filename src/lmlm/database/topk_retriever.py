@@ -46,18 +46,19 @@ class TopkRetriever:
 
         self.index = None
         self.id_to_triplet = {}
-
+        print("initializing..")
         if self.cache_dir and not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir, exist_ok=True)
 
         cache_path = os.path.join(self.cache_dir, f"{self.database_name}_{len(self.database)}") if self.cache_dir else None
-
+        
         cached_path = self._get_cached_paths(
             cache_path,
             use_hf_cache=use_hf_cache,
             hf_repo_id=hf_repo_id,
         )
-
+        print("cached path: ", cached_path)
+        print("cache path: ", cache_path)
         if cached_path:
             self._load_from_cache(cached_path)
             logger.info(f"Loaded FAISS index of {len(self.id_to_triplet)} triplets from cache")
@@ -115,11 +116,13 @@ class TopkRetriever:
             self.id_to_triplet = pickle.load(f)
 
     def _build_index(self):
+        print("buijlding index")
         embedding_dim = self.model.get_sentence_embedding_dimension()
+        print("embedding dim")
         self.index = faiss.IndexIDMap(faiss.IndexFlatIP(embedding_dim))
-
+        print("init index")
         texts = [f"{self._normalize_text(ent)} {self._normalize_text(rel)}" for ent, rel, _ in self.database]
-        
+        print('create embeddings')
         logger.info(f"Building FAISS index with {len(texts)} triplets, which takes a long time...")
         embeddings = self.model.encode(
             texts,
@@ -128,9 +131,12 @@ class TopkRetriever:
             normalize_embeddings=True,
             show_progress_bar=False
         )
+        print("arrange stuff")
 
         ids = np.arange(len(self.database))
+        print("adding to index")
         self.index.add_with_ids(embeddings, ids)
+        print("id to triplet or smth")
         self.id_to_triplet = {i: triplet for i, triplet in enumerate(self.database)}
 
     def retrieve_top_k(self, entity: str, relation: str, threshold: Optional[float] = None) -> List[str]:

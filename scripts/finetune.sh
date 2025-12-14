@@ -63,7 +63,7 @@ for DATASPLITE in "${DATASPLITE_LST[@]}"; do
 
         
     if [ "$DATASPLITE" = "full" ]; then
-        DATASET_PATH=/home/rtn27/Multi-Hop-Reasoning/synthetic_data/rollouts_6kdb_6k_2317_w_question_reformated.json
+        DATASET_PATH=/home/rtn27/Multi-Hop-Reasoning/src/database-creation/gemini/output_train_42_6000_date_12-10/database.json
     elif [ "$DATASPLITE" = "retain" ]; then
         DATASET_PATH=../unlearning/open-unlearning/data/annotation/tofu-train-retain3.8k_chatgpt_gpt4o-v7.1_qa.json
     fi

@@ -37,9 +37,9 @@ if REPO_ROOT not in sys.path:
 
 import torch
 
-from src.agent import get_agent, Agent
-from src.llm import get_llm
-from src.data import get_dataset
+from agent import get_agent, Agent
+from llm import get_llm
+from data import get_dataset
 
 
 def build_query(question: str) -> str:
@@ -90,7 +90,12 @@ def process_single_batch(
     results: Dict[str, Dict[str, Any]] = {}
     batch_size_actual = len(ds)
 
+    count = 0
+
     for ex in ds:
+        count += 1
+        if count %10 == 0:
+            print("\ncount: ", count, "\n")
         qid = ex.get("id") or ex.get("_id")
         question = ex["question"]
 

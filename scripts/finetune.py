@@ -22,15 +22,15 @@ from trl import (
 from transformers import DataCollatorWithPadding
 from functools import partial
 
-from src.lmlm.training.utils.utils_metrics import (
+from lmlm.training.utils.utils_metrics import (
     compute_loss_func,
     set_wandb,
     set_tokenizer,
     compute_metrics,
     set_use_special_dblookup_tokens,
 )
-from src.lmlm.training.utils.load_model import initialize_model_for_pretraining, load_model_for_ft_baseline
-from src.lmlm.training.utils.load_sft_dataset import prepare_pretrain_data
+from lmlm.training.utils.load_model import initialize_model_for_pretraining, load_model_for_ft_baseline
+from lmlm.training.utils.load_sft_dataset import prepare_pretrain_data
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)

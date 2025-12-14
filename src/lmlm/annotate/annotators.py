@@ -4,12 +4,12 @@ import re
 from openai import OpenAI
 
 from copy import deepcopy
-from src.lmlm.constants import PROMPTS_DIR, CONFIGS_DIR
+from lmlm.constants import PROMPTS_DIR, CONFIGS_DIR
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 
-from src.lmlm.annotate.utils import truncate_prompt
+from lmlm.annotate.utils import truncate_prompt
 
 
 class Prompt:
