@@ -4,10 +4,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from lmlm.database.database_manager import DatabaseManager
 from transformers import LogitsProcessor
-from lmlm.constants import DB_START_TOKEN
-from lmlm.constants import DB_SEP_TOKEN
-from lmlm.constants import DB_RETRIEVE_TOKEN
-from lmlm.constants import DB_END_TOKEN
+from lmlm.constants import DB_END_TOKEN, ANSWER_START_TOKEN, DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, ANSWER_END_TOKEN
 
 def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
         output_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
@@ -71,7 +68,7 @@ class LMLMAgent(Agent):
 
             prompt += output_text
 
-            if prompt.endswith("</answer>"):
+            if prompt.endswith(ANSWER_END_TOKEN):
                 break
 
             # Check if <|db_return|> is present
@@ -91,7 +88,7 @@ class LMLMAgent(Agent):
             #### Step 4: Append retrieved value and db_end token
             prompt += return_value + DB_END_TOKEN
         try:
-            answer = prompt.split("<answer>")[1].split("</answer>")[0]
+            answer = prompt.split(ANSWER_START_TOKEN)[1].split(ANSWER_END_TOKEN)[0]
             trace = [AgentStep(prompt, answer, "generate")]
             return answer, trace
         except Exception as e:
