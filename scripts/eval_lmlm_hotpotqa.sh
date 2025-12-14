@@ -1,10 +1,10 @@
-MODEL_PATH=/home/rtn27/Multi-Hop-Reasoning/scripts/training/Qwen3-1.7B/nov29/checkpoints/_full_ep5_bsz32_new_qa
-DATABASE_PATH=/home/rtn27/Multi-Hop-Reasoning/src/database-creation/gemini/generated_database_validation_42_1000.json
+MODEL_PATH=/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa
+DATABASE_PATH=/share/j_sun/lmlm_multihop/database/gemini/generated_database_validation_42_1000.json
 METHOD=lmlm
 MAX_TOKENS=512
-BATCH_SIZE=1000
+BATCH_SIZE=1
 NUMB_BATCHES=1
-OUTPUT_DIR=/home/rtn27/Multi-Hop-Reasoning/qwen3-1.7b
+OUTPUT_DIR=results/qwen3-1.7b
 SPLIT=dev
 SETTING=distractor
 DATASET=hotpotqa

@@ -34,7 +34,7 @@ class LogitBiasProcessor(LogitsProcessor):
         return scores
 
 class LMLMAgent(Agent):
-    def __init__(self, model_path = "/home/rtn27/LMLM_develop/training/llama3.2-1b/checkpoints/_full_ep10_bsz128_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6):
+    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6):
         self.model_path = model_path
         self.database_path = database_path
         self.db = DatabaseManager()
@@ -100,7 +100,7 @@ class LMLMAgent(Agent):
 
 if __name__ == '__main__':
     #testing script
-    agent = LMLMAgent(model_path = "/home/rtn27/LMLM_develop/training/qwen3-1.7b/checkpoints/_full_ep10_bsz32_new_qa", database_path="/home/rtn27/LMLM/build-database/triplets/hotpotqa_1k_42_dev_triplets.json")
+    agent = LMLMAgent(model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path="/share/j_sun/lmlm_multihop/database/gemini/generated_database_validation_42_1000.json")
     for i in range(20):
         answer, trace = agent.run("What is the first two words of the fifth studio album of Joseph Edgar Foreman?")
         # print("answer: \n\n", answer, "\n\n")
