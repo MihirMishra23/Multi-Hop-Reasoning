@@ -29,11 +29,7 @@ from tqdm import tqdm
 # Fix OpenMP conflict when multiple libraries link to different OpenMP runtimes
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
-# Ensure imports work when running directly from repo
-THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.abspath(os.path.join(THIS_DIR, ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+from constants import REPO_ROOT
 
 import torch
 
