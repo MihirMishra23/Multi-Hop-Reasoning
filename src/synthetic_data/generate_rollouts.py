@@ -5,7 +5,7 @@ import time
 import asyncio
 from google import genai
 from lmlm.database.database_manager import DatabaseManager
-database_path = "/home/rtn27/Multi-Hop-Reasoning/src/database-creation/build-database-gemini/generated_database_train_42_6000.json"
+database_path = "/home/rtn27/Multi-Hop-Reasoning/src/database-creation/gemini/generated_database_train_42_6000.json"
 from lmlm.constants import DB_END_TOKEN, DB_RETRIEVE_TOKEN, DB_SEP_TOKEN, DB_START_TOKEN,ANSWER_START_TOKEN, ANSWER_END_TOKEN
 from openai import OpenAI
 from datetime import datetime
@@ -154,9 +154,9 @@ async def main():
     formatted_rollouts = {"examples":  [{"annotated_text" : r} for r in rollouts]}
 
     output_path = f"{os.path.dirname(os.path.abspath(__file__))}/{datetime.today().strftime('%m-%d')}_rollouts_{len(rollouts)}_examples_{NB_EXAMPLES}.json"
-    print(f"\n\ndone! Collected {len(rollouts)} successful rollouts out of {len(tasks)} examples.")
+    print(f"\n\ndone! Collected {len(rollouts)} successful rollouts out of {len(tasks)} examples. ")
     with open(output_path, 'w') as f:
-        json.dump(formatted_rollouts, f, indent=2)
-
+        json.dump(formatted_rollouts, f, indent=2)  
+    print("saved results to ", output_path)
 if __name__ == '__main__':
     asyncio.run(main())

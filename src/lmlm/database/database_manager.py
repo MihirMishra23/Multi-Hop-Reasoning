@@ -108,7 +108,6 @@ class DatabaseManager:
             )
        
         entity, relationship = matches.pop()
-        self.init_topk_retriever()
         results = self.topk_retriever.retrieve_top_k(entity, relationship, threshold=threshold)
 
         if not results:
@@ -159,6 +158,8 @@ class DatabaseManager:
         self.database["triplets"].update(tuple(triplet) for triplet in data["triplets"])
 
         logger.info(f"Loaded database from {load_path}.")
+
+        self.init_topk_retriever()
 
     def save_database(self, save_path: str):
         """Save current database to a JSON file."""

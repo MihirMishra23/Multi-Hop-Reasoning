@@ -21,8 +21,7 @@ DB_START_TOKEN = "<|db_entity|>"          # Begins a lookup call
 DB_SEP_TOKEN = "<|db_relationship|>"                # Separates entity and relation in the query
 DB_RETRIEVE_TOKEN = "<|db_return|>"   # Signals insertion point for returned value
 DB_END_TOKEN = "<|db_end|>"            # Marks end of lookup block
-ANSWER_START_TOKEN="<answer>"
-ANSWER_END_TOKEN="</answer>"
+
 
 # --- Legacy format (used for annotation) ---
 LEGACY_DB_START_TOKEN = "[dblookup"
@@ -31,3 +30,9 @@ LEGACY_DB_RETRIEVE_TOKEN = "') -> "
 LEGACY_DB_END_TOKEN = "]"
 
 TINY_LLAMA2_TOKENIZER_PATH = "./tokenizer/tiny-llama2"
+
+#multi-hop tokens
+ANSWER_START_TOKEN="<answer>"
+ANSWER_END_TOKEN="</answer>"
+THINKING_END_TOKEN="</thinking>"
+THINKING_START_TOKEN="<thinking>"

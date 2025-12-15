@@ -6,23 +6,34 @@ import time
 import asyncio
 from google import genai
 from lmlm.database.database_manager import DatabaseManager
+from pydantic import BaseModel
+from lmlm.constants import DB_END_TOKEN, DB_RETRIEVE_TOKEN, DB_SEP_TOKEN, DB_START_TOKEN,ANSWER_START_TOKEN, ANSWER_END_TOKEN, THINKING_START_TOKEN, THINKING_END_TOKEN
+from openai import OpenAI
+from datetime import datetime
+from eval.metrics import f1_score
+import json
+
+
 metadata_path = "/home/rtn27/Multi-Hop-Reasoning/src/database-creation/gemini/output_train_42_6000_date_12-10/metadata.json"
 database_path = "/home/rtn27/Multi-Hop-Reasoning/src/database-creation/gemini/output_train_42_6000_date_12-10/database.json"
-from pydantic import BaseModel
+
+db = DatabaseManager()
+db.load_database(database_path)
 
 with open(metadata_path, "r") as f:
     metadata = json.load(f)
 
-from lmlm.constants import DB_END_TOKEN, DB_RETRIEVE_TOKEN, DB_SEP_TOKEN, DB_START_TOKEN,ANSWER_START_TOKEN, ANSWER_END_TOKEN
-from openai import OpenAI
-from datetime import datetime
 
-from eval.metrics import f1_score
-import json
-db = DatabaseManager()
-db.load_database(database_path)
-
-print(db.retrieve_from_database("<|db_entity|> Peter Wallace Hobbs <|db_relationship|> co-founded <|db_return|>"))
+def assert_valid_rollout(text: str):
+    assert text.count(ANSWER_START_TOKEN) == 1, "Must have exactly one ANSWER_START_TOKEN"
+    assert text.count(ANSWER_END_TOKEN) == 1, "Must have exactly one ANSWER_END_TOKEN"
+    assert text.count(THINKING_START_TOKEN) == 1, f"Must have exactly one {THINKING_START_TOKEN} tag"
+    assert text.count(THINKING_END_TOKEN) == 1, f"Must have exactly one {THINKING_END_TOKEN} tag"
+    assert text.count(DB_START_TOKEN) >= 1, "Must have at least one DB_START_TOKEN"
+    assert text.count(DB_END_TOKEN) >= 1, "Must have at least one DB_END_TOKEN"
+    assert text.count(DB_SEP_TOKEN) >= 1, "Must have at least one DB_SEP_TOKEN"
+    assert text.count(DB_RETRIEVE_TOKEN) >= 1, "Must have at least one DB_RETRIEVE_TOKEN"
+    return True
 
 client = OpenAI(
     api_key=os.getenv("GEMINI_API_KEY"),
@@ -44,14 +55,19 @@ Rules:
 - Your answer must be as short as possible. Directly issue relevant lookoups, as in the provided examples.
 - If unknown or some non-sensical text is inside the {DB_RETRIEVE_TOKEN} ... {DB_END_TOKEN} span, you MUST issue more lookups while the answer is unknown.
 - The information following the {DB_END_TOKEN} token must be taken from what is inside the {DB_RETRIEVE_TOKEN} ... {DB_END_TOKEN} span. Do not mention any other information not declared in this span first.
-- Do NOT mention that you are issuing lookups. Do NOT write out a plan of what you are going to lookup. Issue the lookups directly.
+- To answer the question, first, mention what triplets you plan on using. THEN wrap your rollouts in {THINKING_START_TOKEN} {THINKING_END_TOKEN}. Finally, include your answer by itself in <answer> </answer>.
 
-Here are some examples to guide you:
+Here are some examples, format your response like these below:
 For the question: 'What is the nationality of James henry Miller’s wife?' you would output:
-'<thinking> James Henry Miller was married to {DB_START_TOKEN} James Henry Miller {DB_SEP_TOKEN} spouse{DB_RETRIEVE_TOKEN} June Miller{DB_END_TOKEN} June Miller. June Miller's nationality was {DB_START_TOKEN} June Miller {DB_SEP_TOKEN} nationality{DB_RETRIEVE_TOKEN} American{DB_END_TOKEN} American. </thinking> <answer> American </answer>'.
+
+
+I need to use the '(James Henry Miller, spouse)' lookup, and potentially the (June Miller, nationality) lookup. 
+'{THINKING_START_TOKEN} James Henry Miller was married to {DB_START_TOKEN} James Henry Miller {DB_SEP_TOKEN} spouse{DB_RETRIEVE_TOKEN} June Miller{DB_END_TOKEN} June Miller. June Miller's nationality was {DB_START_TOKEN} June Miller {DB_SEP_TOKEN} nationality{DB_RETRIEVE_TOKEN} American{DB_END_TOKEN} American. {THINKING_END_TOKEN} <answer> American </answer>'.
+
+
 
 For the question: 'What is the birthday of the director of the movie Interstellar?', you would output:
-'<thinking> The director of Interstellar is {DB_START_TOKEN} Interstellar {DB_SEP_TOKEN} directed by {DB_RETRIEVE_TOKEN} unknown {DB_END_TOKEN} unknown, lets try again. {DB_START_TOKEN} Interstellar {DB_SEP_TOKEN} director {DB_RETRIEVE_TOKEN} Christopher Nolan {DB_END_TOKEN} Christopher Nolan. The birthday of Christopher Nolan is {DB_START_TOKEN} Christopher Nolan {DB_RETRIEVE_TOKEN} July 30, 1970 {DB_END_TOKEN} July 30, 1970 </thinking> <answer> July 30, 1970 </answer>'.
+'I need to use the '(Interstallar, director)' lookup, and potentially the (Christopher Nolan, birthday) lookup. {THINKING_START_TOKEN} The director of Interstellar is {DB_START_TOKEN} Interstellar {DB_SEP_TOKEN} directed by {DB_RETRIEVE_TOKEN} unknown {DB_END_TOKEN} unknown, lets try again. {DB_START_TOKEN} Interstellar {DB_SEP_TOKEN} director {DB_RETRIEVE_TOKEN} Christopher Nolan {DB_END_TOKEN} Christopher Nolan. The birthday of Christopher Nolan is {DB_START_TOKEN} Christopher Nolan {DB_SEP_TOKEN} birthday {DB_RETRIEVE_TOKEN} July 30, 1970 {DB_END_TOKEN} July 30, 1970 {THINKING_END_TOKEN} <answer> July 30, 1970 </answer>'.
 """
 MAX_GENERATIONS=6
 
@@ -94,6 +110,7 @@ def gemini_w_db_lookup(prompt):
         
 class RolloutMetadata(BaseModel):
     question : str
+    full_response : str
     annotated_text : str
     triplets : str
     golden_answer : list[str]
@@ -113,7 +130,6 @@ async def process_example(semaphore, example, idx):
                 triplets = metadata[idx]["triplets"]
                 allowed_lookups = "\n".join([f"{DB_START_TOKEN} {triplet[0]} {DB_SEP_TOKEN} {triplet[1]} {DB_RETRIEVE_TOKEN}" for triplet in triplets])
                 prompt = f"Here is the question: {question}\n And here are some lookups you may issue: {allowed_lookups}. Make sure you do not make any explicit references to 'entities' or 'relationships' or the pairs directly"
-                print(prompt)
                 # Run the synchronous gemini_w_db_lookup() in a thread pool
                 result = await asyncio.to_thread(gemini_w_db_lookup, prompt)
 
@@ -124,8 +140,16 @@ async def process_example(semaphore, example, idx):
                 answers = example["answers"]
 
                 score = float(max([f1_score(lmlm_answer, a)[0] for a in answers]))
-                entity_rel_pairs_str = "\n".join([f"{triplet[0]}, {triplet[1]}" for triplet in triplets])
-                return RolloutMetadata(annotated_text = result, triplets = entity_rel_pairs_str, golden_answer = answers, f1_score = score, lmlm_answer = lmlm_answer, question = question)
+                triplets_formatted_str = "\n".join([f"({triplet[0]}, {triplet[1]}, {triplet[2]})" for triplet in triplets])
+
+                assert_valid_rollout(result)
+                parsed_rollout = THINKING_START_TOKEN + result.split(THINKING_START_TOKEN)[1]
+
+                print(f"Completed example {idx}!")
+                return RolloutMetadata(full_response = result, annotated_text = parsed_rollout, triplets = triplets_formatted_str, golden_answer = answers, f1_score = score, lmlm_answer = lmlm_answer, question = question)
+            except AssertionError as e:
+                print(f"Ill formatted response, error {e} retrying, currently at {attempt} retries")
+                await asyncio.sleep(retry_delay)
             except Exception as e:
                 print(f"lookup failed with error {e} Retrying, currently at {attempt} retries... ")
                 await asyncio.sleep(retry_delay)
@@ -141,7 +165,7 @@ async def main():
         limit=6000,
         seed=42
     )
-    NB_EXAMPLES = 2
+    NB_EXAMPLES = 6000
     MAX_CONCURRENT = min(NB_EXAMPLES, 1000)  # Control concurrency with semaphore
 
     # Create semaphore to limit concurrent requests
