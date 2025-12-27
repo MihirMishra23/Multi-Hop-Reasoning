@@ -1,27 +1,46 @@
 import json
-from datasets import load_dataset, Dataset
-    
-input_file = "/home/rtn27/LMLM/build-database/data/hotpot_dev_distractor_v1.json"
-with open(input_file, "r") as f:
-    qa_data = json.load(f)
+from typing import Any, Dict, Iterable, List, Optional
 
-data = [] #list of paragraphs of data to annotate
-for e in qa_data:
+from datasets import Dataset
 
-    context = e["context"]
-    sentences = []
-    for c in context:
-        p =(c[0]) + "\n"
-        p +=  "".join([sentence for sentence in c[1]])
-        sentences.append(p)
 
-    data.append({"paragraphs": sentences})
-    
+def load_qa_json(input_file: str) -> List[Dict[str, Any]]:
+    with open(input_file, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-dataset = Dataset.from_list(data)
-dataset = dataset.shuffle(seed = 42)
 
-# Save to JSON file
-output_file = "/home/rtn27/LMLM/build-database/data/atomic_sentences_hotpotqa_1k_seed_42.json"
-with open(output_file, 'w', encoding='utf-8') as f:
-    json.dump(dataset[:1000], f, indent=2, ensure_ascii=False)
+def build_paragraphs(qa_data: Iterable[Dict[str, Any]]) -> List[List[str]]:
+    paragraphs_by_example: List[List[str]] = []
+    for example in qa_data:
+        context = example["context"]
+        sentences = []
+        for title, sentence_list in context:
+            paragraph = f"{title}\n" + "".join(sentence_list)
+            sentences.append(paragraph)
+        paragraphs_by_example.append(sentences)
+    return paragraphs_by_example
+
+
+def prepare_paragraphs(
+    qa_data: Iterable[Dict[str, Any]],
+    seed: int = 42,
+    limit: Optional[int] = None,
+    flatten: bool = True,
+) -> Dict[str, List[str]]:
+    paragraphs_by_example = build_paragraphs(qa_data)
+    dataset = Dataset.from_list([{"paragraphs": p} for p in paragraphs_by_example])
+    dataset = dataset.shuffle(seed=seed)
+    if limit is not None:
+        dataset = dataset.select(range(min(limit, len(dataset))))
+
+    if flatten:
+        paragraphs = [p for example in dataset for p in example["paragraphs"]]
+    else:
+        paragraphs = [example["paragraphs"] for example in dataset]
+
+    return {"paragraphs": paragraphs}
+
+
+def save_paragraphs(paragraphs: Dict[str, List[str]], output_file: str) -> None:
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(paragraphs, f, indent=2, ensure_ascii=False)
