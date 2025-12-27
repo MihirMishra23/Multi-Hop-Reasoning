@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 from typing import Generator, Iterable, List, Optional, Tuple
 
 import torch
@@ -93,5 +94,6 @@ def annotate_paragraphs(
 
 
 def save_annotations(annotations: List[str], output_path: str) -> None:
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(annotations, f, indent=2)
