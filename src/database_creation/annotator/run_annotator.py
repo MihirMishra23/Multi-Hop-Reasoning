@@ -43,6 +43,8 @@ def iter_annotate_batches(
     model = LlamaForCausalLM.from_pretrained(model_path).to(device)
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+    model.generation_config.pad_token_id = tokenizer.eos_token_id
 
     for i in range(start_index, nb_paragraphs, batch_size):
         paragraphs_text = paragraphs[i : i + batch_size]
