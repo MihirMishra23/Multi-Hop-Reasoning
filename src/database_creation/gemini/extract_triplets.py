@@ -6,7 +6,7 @@ from google import genai
 from pydantic import BaseModel
 from datasets import load_dataset
 from datetime import datetime
-
+from constants import REPO_ROOT
 client = genai.Client()
 
 SPLIT="train"
@@ -161,7 +161,7 @@ lmlm_database["relationships"]= list(relationships)
 lmlm_database["return_values"] = list(return_values)
 
 # Create output directory if it doesn't exist
-output_dir = os.path.join("/home/rtn27/Multi-Hop-Reasoning/src/database-creation/gemini", OUTPUT_PATH)
+output_dir = os.path.join(REPO_ROOT + "src/database-creation/gemini", OUTPUT_PATH)
 os.makedirs(output_dir, exist_ok=True)
 
 # Save database

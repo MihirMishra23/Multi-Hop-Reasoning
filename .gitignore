@@ -32,3 +32,6 @@ database_cache/
 *.sbatch
 *.err
 *.out
+
+# Wandb
+wandb
