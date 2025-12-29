@@ -14,15 +14,14 @@ from eval.metrics import f1_score
 import json
 from utils import RolloutMetadata, assert_valid_rollout
 
-metadata_path = "/home/rtn27/Multi-Hop-Reasoning/src/database-creation/gemini/output_train_42_6000_date_12-10/metadata.json"
-database_path = "/home/rtn27/Multi-Hop-Reasoning/src/database-creation/gemini/output_train_42_6000_date_12-10/database.json"
+metadata_path = "/share/j_sun/rtn27/lmlm_database/output_train_42_6000_date_12-10/metadata.json"
+database_path = "//share/j_sun/rtn27/lmlm_database/output_train_42_6000_date_12-10/database.json"
 
 db = DatabaseManager()
 db.load_database(database_path, 4, 0.6, True)
 
 with open(metadata_path, "r") as f:
     metadata = json.load(f)
-
 
 
 client = OpenAI(
