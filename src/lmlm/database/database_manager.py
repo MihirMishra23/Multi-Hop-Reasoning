@@ -78,15 +78,15 @@ class DatabaseManager:
             f"{len(self.database['return_values'])} return values."
         )
 
-    def init_topk_retriever(self, model_name="sentence-transformers/all-MiniLM-L6-v2", top_k=None, default_threshold=0.6):
+    def init_topk_retriever(self, model_name="sentence-transformers/all-MiniLM-L6-v2", top_k=None, default_threshold=0.6, adaptive : bool = False):
 
         if self.topk_retriever is None:
             self.topk_retriever = TopkRetriever(
-                self.database["triplets"], model_name, top_k, default_threshold, database_name=self.database_name, use_hf_cache = False,
+                self.database["triplets"], model_name, top_k, adaptive, default_threshold, database_name=self.database_name, use_hf_cache = False,
             )
             logger.info(f"Top-k retriever initialized with {len(self)} triplets and threshold {self.topk_retriever.default_threshold}.")
 
-    def retrieve_from_database(self, prompt: str, threshold: Optional[float] = None):
+    def retrieve_from_database(self, prompt: str, threshold: Optional[float] = None, top_k : int  = 4):
         """Retrieve a single top-1 database result from a prompt containing dblookup. If lookup fails, raise an error."""
         pattern_lst = [
             r"\[dblookup\('((?:[^'\\]|\\.)+)',\s*'((?:[^'\\]|\\.)+)'\)\s*->",
@@ -115,7 +115,7 @@ class DatabaseManager:
                 f"[dblookup_fail_3] No retrieval results for entity='{entity}', relationship='{relationship}'",
                 "no_retrieval_data_found"
             )
-        return results[0]  # Return top-1 retrieval
+        return results
 
     def build_database(self, dataset: Union[DatasetDict, List[Dict]], database_name: Optional[str] = None, database_org_file: Optional[str] = None):
         """Build database from atomic knowledge dataset."""
@@ -138,7 +138,7 @@ class DatabaseManager:
 
         logger.info(f"Built database with {len(self)} triplets.")
 
-    def load_database(self, load_path: str):
+    def load_database(self, load_path: str, top_k : int = 4, default_threshold : float = 0.6, adaptive : bool = False):
         """Load database from JSON file."""
         if not os.path.exists(load_path):
             raise FileNotFoundError(f"Database file not found: {load_path}")
@@ -159,7 +159,7 @@ class DatabaseManager:
 
         logger.info(f"Loaded database from {load_path}.")
 
-        self.init_topk_retriever()
+        self.init_topk_retriever(top_k=top_k, default_threshold=default_threshold, adaptive = adaptive)
 
     def save_database(self, save_path: str):
         """Save current database to a JSON file."""

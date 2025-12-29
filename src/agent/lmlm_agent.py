@@ -16,7 +16,6 @@ def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
             # logger.info(f"decode again: {output_text}")
         return output_text  
 
-
 class LogitBiasProcessor(LogitsProcessor):
     def __init__(self, bias_dict: dict):
         """
@@ -31,11 +30,11 @@ class LogitBiasProcessor(LogitsProcessor):
         return scores
 
 class LMLMAgent(Agent):
-    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6):
+    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6, adaptive : bool = False):
         self.model_path = model_path
         self.database_path = database_path
         self.db = DatabaseManager()
-        self.db.load_database(database_path)
+        self.db.load_database(database_path, adaptive= adaptive)
         self.device ="cuda" if torch.cuda.is_available() else "cpu"
         self.tok = AutoTokenizer.from_pretrained(model_path)
         self.model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16 if self.device=="cuda" else None)
@@ -44,6 +43,9 @@ class LMLMAgent(Agent):
 
     def create_prompt_from_query(self, query):
         return f"Question:\n{query}\nAnswer:\n"
+    
+    def create_prompt_from_query_batch(self, queries : list[str]):
+        return [self.create_prompt_from_query(query) for query in queries]
 
     def run(self, query : str,  max_tokens = 256, temperature = 0.0):
         count = 0
@@ -80,7 +82,8 @@ class LMLMAgent(Agent):
             try:
                 split = prompt.rsplit(DB_START_TOKEN)
                 db_query = split[-1]
-                return_value = self.db.retrieve_from_database(DB_START_TOKEN  + db_query, 0.0) #ignoring the threshold, for now using top1 fallback policy
+                return_values = self.db.retrieve_from_database(DB_START_TOKEN  + db_query, 0.6) 
+                return_value = ", ".join(return_values)
             except Exception as e:
                 print(f"Database lookup failed: {e}")
 

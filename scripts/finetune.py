@@ -99,18 +99,11 @@ def main(script_args, training_args, model_args, pretrain_args):
     if accelerator.is_main_process:
         logger.info(f"use_special_dblookup_tokens = {pretrain_args.use_special_dblookup_tokens}")
 
-    if training_args.resume_from_checkpoint:
-        # ft baseline instead of pretraining
-        model, tokenizer = load_model_for_ft_baseline(
-            model_args,
-            resume_from_checkpoint=training_args.resume_from_checkpoint,
-            use_special_dblookup_tokens=pretrain_args.use_special_dblookup_tokens,
-        )
-    else:
-        model, tokenizer = initialize_model_for_pretraining(
-            model_args,
-            use_special_dblookup_tokens=pretrain_args.use_special_dblookup_tokens,
-        )
+    model, tokenizer = load_model_for_ft_baseline(
+        model_args,
+        resume_from_checkpoint=training_args.resume_from_checkpoint,
+        use_special_dblookup_tokens=pretrain_args.use_special_dblookup_tokens,
+    )
 
     tokenizer.pad_token = tokenizer.eos_token
     
