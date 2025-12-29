@@ -15,14 +15,15 @@ EXAMPLES = "For example, for the sentence: 'James Clark is an Australian soccer 
 PROMPT = "Extract triplets from the following context. Each triplet must be of the form (entity, relationship, value). " \
 "Rules: " \
 "- Entities is the subject of a sentence. Do not use pronouns (e.g he, or it) to describe an entity, use the full descriptive name. " \
-"- Relationships refer to any characteristic of an entity. Even if a relationship is not explicity mentioned, you must included it. Relationships can be things that entity was involved in, or any descriptive characterisitc of that entity." \
+"- Relationships refer  to any characteristic of an entity. Even if a relationship is not explicity mentioned, you must included it. Relationships can be things that entity was involved in, or any descriptive characterisitc of that entity." \
 "If an entity is described with multiple characteristics in one go, create seperate triplet entries for each of those characteristics." \
 "Example: from the text 'Albert Einstein was a German theoretical physicist best known for developing the theory of relativity.' the triplets are (Albert Einstein, nationality, Germany), (Albert Einstein, occupation, theoretical physicist), (Albert Einstein, best known for, developping the theory of relativity)" \
 " Given these examples, generate explicit and implicit triplets from the following context. \n\n {context}"
-MODEL = "gemini-2.5-pro"
+MODEL = "gemini-3-pro-preview"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-NB_EXAMPLES = 6000
-OUTPUT_PATH = f"output_{SPLIT}_42_{NB_EXAMPLES}_date_{datetime.today().strftime('%m-%d')}"
+NB_EXAMPLES = 12000
+START_IDX = 5999
+OUTPUT_PATH = f"output_{SPLIT}_42_start_idx_{START_IDX}_{NB_EXAMPLES}_date_{datetime.today().strftime('%m-%d')}"
 
 
 # Load HotpotQA dataset directly from HuggingFace
@@ -82,7 +83,7 @@ async def process_context(example, idx: int, semaphore: asyncio.Semaphore) -> Kn
         print(f"Sending request {idx + 1}/{len(supporting_facts)}...")
 
         max_retries = 5
-        retry_delay = 10  # seconds
+        retry_delay = 60  # seconds
 
         for attempt in range(max_retries):
             try:
@@ -105,6 +106,7 @@ async def process_context(example, idx: int, semaphore: asyncio.Semaphore) -> Kn
                 return ProcessedQuestion(index = idx, golden_contexts = golden_contexts, knowledge_triplets = kt, question = question)
 
             except Exception as e:
+                raise(e)
                 error_msg = str(e).lower()
                 # Check if it's a rate limit error
                 if "rate" in error_msg or "quota" in error_msg or "429" in error_msg:
@@ -128,13 +130,12 @@ async def process_context(example, idx: int, semaphore: asyncio.Semaphore) -> Kn
 # Main async function to process all contexts
 async def process_all_contexts():
     # Limit concurrent requests to avoid rate limiting (adjust as needed)
-    semaphore = asyncio.Semaphore(1000)
+    semaphore = asyncio.Semaphore(251)
 
-    tasks = [
-        process_context(example, idx, semaphore)
-        for idx, example in enumerate(raw_dataset)
-    ]
-
+    tasks = []
+    for idx, example in enumerate(raw_dataset):
+        if idx > START_IDX:
+            tasks.append(process_context(example, idx, semaphore))
     return await asyncio.gather(*tasks)
 
 # Run async processing

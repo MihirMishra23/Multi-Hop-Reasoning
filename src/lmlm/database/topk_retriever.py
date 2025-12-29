@@ -15,6 +15,7 @@ class TopkRetriever:
                  database: List[Tuple[str, str, str]],
                  model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
                  top_k: int = 5,
+                 adaptive : bool = False,
                  threshold: float = 0.6,
                  batch_size: int = 2048,
                  cache_dir: Optional[str] = "./data/database_cache",
@@ -39,7 +40,7 @@ class TopkRetriever:
         self.batch_size = batch_size
         self.cache_dir = cache_dir
         self.database_name = database_name
-
+        self.is_adaptive = adaptive
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = SentenceTransformer(model_name, device=self.device)
         self.model = self.model.half().eval()
@@ -143,7 +144,7 @@ class TopkRetriever:
         query_text = f"{self._normalize_text(entity)} {self._normalize_text(relation)}"
         query_embedding = self.model.encode([query_text], convert_to_numpy=True, normalize_embeddings=True)
 
-        distances, indices = self.index.search(query_embedding, self.top_k)
+        distances, indices = self.index.search(query_embedding, self.top_k + 1)
 
         # Use per-query threshold if passed, otherwise fallback to default
         th = threshold if threshold is not None else self.default_threshold
@@ -155,10 +156,22 @@ class TopkRetriever:
 
                 triplet = self.id_to_triplet[idx]
                 results.append((triplet[0], triplet[1], triplet[2], float(dist)))
-
+        
         results.sort(key=lambda x: x[-1], reverse=True)
+
+        if self.is_adaptive and len(results) > 1:
+            differences = [results[i][-1] - results[i + 1][-1] for i in range(len(results) - 1)]
+            max_diff = 0.0
+            for i in range(len(differences)):
+                if differences[i] >= max_diff:
+                    max_idx = i
+                    max_diff = differences[i]
+            results = results[:max_idx + 1]
+        
+
+
         return_values = [r[2] for r in results]
-        return return_values
+        return return_values[:self.top_k]
 
     @staticmethod
     def _normalize_text(text: str) -> str:
