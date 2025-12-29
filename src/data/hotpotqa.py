@@ -87,8 +87,9 @@ def _build_contexts(context_field: Any) -> List[str]:
 def _build_supporting_facts(sf_field: Any) -> List[Dict[str, Any]]:
     if not sf_field:
         return []
+    titles_and_ids = zip(sf_field['title'], sf_field['sent_id'])
     result: List[Dict[str, Any]] = []
-    for item in sf_field:
+    for item in titles_and_ids:
         if not isinstance(item, (list, tuple)) or len(item) != 2:
             continue
         title, sent_id = item
