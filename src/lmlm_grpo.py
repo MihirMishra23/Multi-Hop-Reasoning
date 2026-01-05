@@ -56,7 +56,7 @@ from transformers import (
 from transformers.trainer_utils import seed_worker
 from transformers.utils import is_datasets_available, is_rich_available
 
-from trl.chat_template_utils import add_response_schema, get_training_chat_template
+from trl.chat_template_utils import add_response_schema, get_training_chat_template, parse_response
 from trl.data_utils import (
     apply_chat_template,
     is_conversational,
@@ -65,7 +65,7 @@ from trl.data_utils import (
 )
 from trl.extras.profiling import profiling_context, profiling_decorator
 from trl.extras.vllm_client import VLLMClient
-from trl.import_utils import is_jmespath_available, is_vllm_available
+from trl.import_utils import is_vllm_available#, is_jmespath_available
 from trl.models import prepare_deepspeed, prepare_fsdp, unwrap_model_for_generation
 from trl.models.utils import disable_gradient_checkpointing
 from trl.trainer.base_trainer import BaseTrainer
@@ -93,49 +93,6 @@ from trl.trainer.utils import (
     unsplit_pixel_values_by_grid,
 )
 
-def parse_response(tokenizer: PreTrainedTokenizer, ids: list[int]) -> dict:
-    r"""
-    Parse a token sequence into structured response dictionaries with fallback handling.
-
-    Attempts to parse the sequence using `tokenizer.parse_response()`. If parsing fails (e.g., due to malformed tool
-    calls like `<tool_call>{"type":"function"</tool_call>`), falls back to decoding as plain text.
-
-    Also removes incorrectly appended EOS tokens from tool call content when present.
-
-    Args:
-        tokenizer (`PreTrainedTokenizer`):
-            Tokenizer with a `parse_response()` method.
-        ids (`list[int]`):
-            List of token sequences.
-
-    Returns:
-        `dict`:
-            Response dictionary.
-
-    Example:
-    ```python
-    >>> from trl.chat_template_utils import parse_response, add_response_schema
-    >>> from transformers import AutoTokenizer
-
-    >>> tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
-    >>> tokenizer = add_response_schema(tokenizer)  # temporary until built-in support
-    >>> text = '<tool_call>\n{"name": "multiply", "arguments": {"a": 3, "b": 4}}\n</tool_call><|im_end|>'
-    >>> ids = tokenizer(text)["input_ids"]
-    >>> parse_response(tokenizer, ids)
-    {'role': 'assistant', 'content': '', 'tool_calls': [{'type': 'function', 'function': {'name': 'multiply', 'arguments': {'a': 3, 'b': 4}}}]}
-    ```
-    """
-    try:
-        parsed = tokenizer.parse_response(ids)
-        # Hotfix: remove incorrectly appended EOS token from tool calls
-        # See https://github.com/huggingface/transformers/issues/42249
-        parsed["content"] = parsed["content"].removesuffix(tokenizer.eos_token)
-    except ValueError:
-        # Fallback: decode as plain text if parsing fails. This happens if the model outputs malformed tool calls.
-        content = tokenizer.decode(ids, skip_special_tokens=True)
-        parsed = {"role": "assistant", "content": content}
-    return parsed
-
 if is_vllm_available():
     from vllm import LLM, SamplingParams
     from vllm.sampling_params import GuidedDecodingParams
@@ -158,7 +115,7 @@ RewardFunc = str | PreTrainedModel | Callable[[list, list], list[float]]
 RolloutFunc = Callable[[list[str], "GRPOTrainer"], dict[str, Any]]
 
 
-class GRPOTrainer(BaseTrainer):
+class LMLMGRPOTrainer(BaseTrainer):
     """
     Trainer for the Group Relative Policy Optimization (GRPO) method. This algorithm was initially proposed in the
     paper [DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language
