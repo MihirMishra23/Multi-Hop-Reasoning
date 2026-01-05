@@ -51,11 +51,12 @@ from transformers import (
     TrainerCallback,
     is_bitsandbytes_available,
     is_wandb_available,
+    PreTrainedTokenizer
 )
 from transformers.trainer_utils import seed_worker
 from transformers.utils import is_datasets_available, is_rich_available
 
-from trl.chat_template_utils import add_response_schema, get_training_chat_template, parse_response
+from trl.chat_template_utils import add_response_schema, get_training_chat_template
 from trl.data_utils import (
     apply_chat_template,
     is_conversational,
@@ -92,6 +93,48 @@ from trl.trainer.utils import (
     unsplit_pixel_values_by_grid,
 )
 
+def parse_response(tokenizer: PreTrainedTokenizer, ids: list[int]) -> dict:
+    r"""
+    Parse a token sequence into structured response dictionaries with fallback handling.
+
+    Attempts to parse the sequence using `tokenizer.parse_response()`. If parsing fails (e.g., due to malformed tool
+    calls like `<tool_call>{"type":"function"</tool_call>`), falls back to decoding as plain text.
+
+    Also removes incorrectly appended EOS tokens from tool call content when present.
+
+    Args:
+        tokenizer (`PreTrainedTokenizer`):
+            Tokenizer with a `parse_response()` method.
+        ids (`list[int]`):
+            List of token sequences.
+
+    Returns:
+        `dict`:
+            Response dictionary.
+
+    Example:
+    ```python
+    >>> from trl.chat_template_utils import parse_response, add_response_schema
+    >>> from transformers import AutoTokenizer
+
+    >>> tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
+    >>> tokenizer = add_response_schema(tokenizer)  # temporary until built-in support
+    >>> text = '<tool_call>\n{"name": "multiply", "arguments": {"a": 3, "b": 4}}\n</tool_call><|im_end|>'
+    >>> ids = tokenizer(text)["input_ids"]
+    >>> parse_response(tokenizer, ids)
+    {'role': 'assistant', 'content': '', 'tool_calls': [{'type': 'function', 'function': {'name': 'multiply', 'arguments': {'a': 3, 'b': 4}}}]}
+    ```
+    """
+    try:
+        parsed = tokenizer.parse_response(ids)
+        # Hotfix: remove incorrectly appended EOS token from tool calls
+        # See https://github.com/huggingface/transformers/issues/42249
+        parsed["content"] = parsed["content"].removesuffix(tokenizer.eos_token)
+    except ValueError:
+        # Fallback: decode as plain text if parsing fails. This happens if the model outputs malformed tool calls.
+        content = tokenizer.decode(ids, skip_special_tokens=True)
+        parsed = {"role": "assistant", "content": content}
+    return parsed
 
 if is_vllm_available():
     from vllm import LLM, SamplingParams
@@ -782,48 +825,6 @@ class GRPOTrainer(BaseTrainer):
             mini_repeat_count=self.num_generations_eval,
             seed=self.args.seed,
         )
-
-    @profiling_decorator
-    def _get_last_hidden_state(
-        self,
-        unwrapped_model,
-        input_ids,
-        attention_mask,
-        logits_to_keep,
-        pixel_values=None,
-        image_grid_thw=None,
-        pixel_attention_mask=None,
-        image_sizes=None,
-    ):
-        # Build model inputs - check if the model supports logits_to_keep (some models and VLMs don't)
-        model_inputs = {"input_ids": input_ids, "attention_mask": attention_mask}
-
-        # For Qwen models:
-        if image_grid_thw is not None and pixel_values is not None:
-            model_inputs["image_grid_thw"] = image_grid_thw
-        # For Gemma, SmolVLM2, LLaVa-Next etc.:
-        if pixel_values is not None:
-            model_inputs["pixel_values"] = pixel_values
-        # For SmolVLM2
-        if pixel_attention_mask is not None:
-            model_inputs["pixel_attention_mask"] = pixel_attention_mask
-        # For LLaVa-Next
-        if image_sizes is not None:
-            model_inputs["image_sizes"] = image_sizes
-
-        # Only add logits_to_keep if the model supports it
-        if "logits_to_keep" in self.model_kwarg_keys:
-            # We add 1 to `logits_to_keep` because the last logits of the sequence is later excluded
-            model_inputs["logits_to_keep"] = logits_to_keep + 1
-
-        model_inputs["use_cache"] = False  # only used in generation; set False to suppress warnings
-
-        last_hidden_state = unwrapped_model.model(**model_inputs).last_hidden_state
-        # Exclude the last value: it corresponds to the next token pred
-        last_hidden_state = last_hidden_state[:, :-1, :]  # (B, L-1, H)
-        # Only keep the last logits_to_keep. For model that support logits_to_keep, this is a no-op.
-        last_hidden_state = last_hidden_state[:, -logits_to_keep:, :]  # (B, logits_to_keep, H)
-        return last_hidden_state
 
     def get_high_entropy_mask(self, entropies: torch.Tensor, mask: torch.Tensor, threshold: float) -> torch.Tensor:
         """
