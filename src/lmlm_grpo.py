@@ -555,7 +555,6 @@ class LMLMGRPOTrainer(BaseTrainer):
         self.num_completions_to_print = args.num_completions_to_print
         # Keep logs sized to the generation batch to record only outputs from the latest model update.
         self._logs = {
-            "images": deque(maxlen=args.generation_batch_size),
             "prompt": deque(maxlen=args.generation_batch_size),
             "completion": deque(maxlen=args.generation_batch_size),
             "rewards": defaultdict(lambda: deque(maxlen=args.generation_batch_size)),
@@ -707,7 +706,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         # and "attention_mask"). In GRPOTrainer, we preprocess data, so using the model's signature columns doesn't
         # work. Instead, we set them to the columns expected by the `training_step` method, hence the override.
         if self._signature_columns is None:
-            self._signature_columns = ["prompt", "image", "images"]
+            self._signature_columns = ["prompt"]
 
     # This method overrides `Trainer.get_train_dataloader` to support our custom batching strategy.
     # Instead of returning a standard per-step batch (i.e., `per_device_batch_size), our dataloader loads an
@@ -840,11 +839,6 @@ class LMLMGRPOTrainer(BaseTrainer):
         logits_to_keep,
         batch_size=None,
         compute_entropy=False,
-        pixel_values=None,
-        image_grid_thw=None,
-        num_images=None,
-        pixel_attention_mask=None,
-        image_sizes=None,
         token_type_ids=None,
     ) -> dict[str, torch.Tensor | None]:
         """Compute log-probs and (optionally) entropies for each token."""
@@ -857,22 +851,6 @@ class LMLMGRPOTrainer(BaseTrainer):
 
             # Build model inputs - check if the model supports logits_to_keep (some models and VLMs don't)
             model_inputs = {"input_ids": input_ids_batch, "attention_mask": attention_mask_batch}
-            if image_grid_thw is not None and pixel_values is not None:
-                rows_per_image = image_grid_thw.prod(dim=-1)
-                rows_per_sample = torch.split(rows_per_image, num_images)
-                rows_per_sample = torch.stack([s.sum() for s in rows_per_sample])
-                cum_rows = torch.cat([torch.tensor([0], device=rows_per_sample.device), rows_per_sample.cumsum(0)])
-                row_start, row_end = cum_rows[start].item(), cum_rows[start + batch_size].item()
-                model_inputs["pixel_values"] = pixel_values[row_start:row_end]
-                cum_imgs = torch.tensor([0] + num_images).cumsum(0)
-                img_start, img_end = cum_imgs[start], cum_imgs[start + batch_size]
-                model_inputs["image_grid_thw"] = image_grid_thw[img_start:img_end]
-            elif pixel_values is not None:
-                model_inputs["pixel_values"] = pixel_values[start : start + batch_size]
-            if pixel_attention_mask is not None:
-                model_inputs["pixel_attention_mask"] = pixel_attention_mask[start : start + batch_size]
-            if image_sizes is not None:
-                model_inputs["image_sizes"] = image_sizes[start : start + batch_size]
             if token_type_ids is not None:
                 model_inputs["token_type_ids"] = token_type_ids[start : start + batch_size]
 
@@ -1357,22 +1335,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             extra_fields = {}  # No extra fields for paged mode
 
         else:
-            # Regular generation path
-            if is_conversational({"prompt": prompts[0]}):
-                generate_inputs = self.processing_class.apply_chat_template(
-                    conversation=prompts,
-                    tools=self.tools,
-                    chat_template=self.chat_template,
-                    add_generation_prompt=True,
-                    tokenize=True,
-                    padding=True,
-                    padding_side="left",
-                    return_tensors="pt",
-                    return_dict=True,
-                    **self.chat_template_kwargs,
-                )
-            else:
-                generate_inputs = self.processing_class(
+            generate_inputs = self.processing_class(
                     text=prompts, padding=True, padding_side="left", return_tensors="pt"
                 )
             generate_inputs = super()._prepare_inputs(generate_inputs)
@@ -1645,25 +1608,6 @@ class LMLMGRPOTrainer(BaseTrainer):
 
         prompts = [x["prompt"] for x in inputs]
 
-        if "images" in inputs[0]:
-            images = [example.get("images") for example in inputs]
-        elif "image" in inputs[0]:
-            images = [[example.get("image")] if example.get("image") is not None else None for example in inputs]
-        else:
-            images = None
-        # Transformers requires at least one image in the batch, otherwise it throws an error
-        if images is not None and all(img_list == [] for img_list in images):
-            images = None
-
-        # If the prompts are conversational and the inputs contain images, we need to convert the prompts from
-        # [{"role": "user", "content": "What color is the sky?"}] to
-        # [{"role": "user", "content": [{"type": "image", "image": <Image>}, {"type": "text", "text": "What color is the sky?"}]}]
-        if images is not None:
-            prompts = [
-                prepare_multimodal_messages(prompt, image_list)
-                for prompt, image_list in zip(prompts, images, strict=True)
-            ]
-
         (
             prompt_ids_list,
             completion_ids_list,
@@ -1705,21 +1649,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         logits_to_keep = completion_ids.size(1)  # we only need to compute the logits for the completion tokens
         batch_size = self.args.per_device_train_batch_size if mode == "train" else self.args.per_device_eval_batch_size
 
-        num_images = [len(img_list) for img_list in images] if images is not None else None
-
-        # Get forward_kwargs for models with multimodal inputs
-        if images is not None:
-            prompts_text = [
-                apply_chat_template(
-                    {"prompt": prompt}, self.processing_class, tools=self.tools, **self.chat_template_kwargs
-                )["prompt"]
-                for prompt in prompts
-            ]
-            prompt_inputs = self.processing_class(images=images, text=prompts_text, padding=True, return_tensors="pt")
-            prompt_inputs = super()._prepare_inputs(prompt_inputs)
-            forward_kwargs = {k: v for k, v in prompt_inputs.items() if k not in ["input_ids", "attention_mask"]}
-        else:
-            forward_kwargs = {}
+        forward_kwargs = {}
 
         # If token_type_ids are used, extend them with zeros for the completion part
         if "token_type_ids" in forward_kwargs:
@@ -1749,8 +1679,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                     attention_mask,
                     logits_to_keep,
                     batch_size,
-                    num_images=num_images,
-                    **forward_kwargs,  # may contain pixel_values, image_grid_thw, pixel_attention_mask and image_sizes
+                    **forward_kwargs,
                 )
             else:
                 old_per_token_logps = None
@@ -1795,8 +1724,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                         attention_mask,
                         logits_to_keep,
                         batch_size=batch_size,
-                        num_images=num_images,
-                        **forward_kwargs,  # may contain pixel_values, image_grid_thw, pixel_attention_mask and image_sizes
+                        **forward_kwargs,  
                     )
                 else:
                     with self.accelerator.unwrap_model(self.model).disable_adapter():
@@ -1806,8 +1734,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                             attention_mask,
                             logits_to_keep,
                             batch_size=batch_size,
-                            num_images=num_images,
-                            **forward_kwargs,  # may contain pixel_values, image_grid_thw, pixel_attention_mask and image_sizes
+                            **forward_kwargs,  
                         )
             else:
                 ref_per_token_logps = None
@@ -1888,9 +1815,6 @@ class LMLMGRPOTrainer(BaseTrainer):
             self._logs["rewards"][name].extend(rewards_per_func[:, i].tolist())
         self._logs["advantages"].extend(all_process_advantages.tolist())
 
-        if images is not None:
-            self._logs["images"].extend(gather_object(images))
-
         if self.use_vllm and self.vllm_importance_sampling_correction:
             delta = torch.abs(old_per_token_logps - sampling_per_token_logps)
             mask = completion_mask.bool() if not self.tools else (completion_mask * tool_mask).bool()
@@ -1944,16 +1868,8 @@ class LMLMGRPOTrainer(BaseTrainer):
             output["ref_per_token_logps"] = ref_per_token_logps
         if "pixel_values" in forward_kwargs:
             output["pixel_values"] = forward_kwargs["pixel_values"]
-        if "image_grid_thw" in forward_kwargs:
-            output["image_grid_thw"] = forward_kwargs["image_grid_thw"]
-        if "pixel_attention_mask" in forward_kwargs:
-            output["pixel_attention_mask"] = forward_kwargs["pixel_attention_mask"]
-        if "image_sizes" in forward_kwargs:
-            output["image_sizes"] = forward_kwargs["image_sizes"]
         if "token_type_ids" in forward_kwargs:
             output["token_type_ids"] = forward_kwargs["token_type_ids"]
-        if images is not None:
-            output["num_images"] = num_images
         if self.tools:
             output["tool_mask"] = tool_mask
         return output
@@ -1986,11 +1902,6 @@ class LMLMGRPOTrainer(BaseTrainer):
             attention_mask,
             logits_to_keep,
             compute_entropy=True,
-            pixel_values=inputs.get("pixel_values"),
-            image_grid_thw=inputs.get("image_grid_thw"),
-            num_images=inputs.get("num_images"),
-            pixel_attention_mask=inputs.get("pixel_attention_mask"),
-            image_sizes=inputs.get("image_sizes"),
             token_type_ids=inputs.get("token_type_ids"),
         )
 
@@ -2180,20 +2091,9 @@ class LMLMGRPOTrainer(BaseTrainer):
             }
 
             df_base = pd.DataFrame(table)
-            images_raw = self._logs["images"] or []
 
             for logging_backend in logging_backends:
-                if images_raw:
-                    images = []
-                    for image_list in self._logs["images"]:
-                        images.append([logging_backend.Image(image) for image in image_list])
-                    df = pd.concat(
-                        [df_base, pd.Series(images, name="image")],
-                        axis=1,
-                        copy=False,
-                    )
-                else:
-                    df = df_base
+                df = df_base
 
                 if self.log_unique_prompts:
                     df = df.drop_duplicates(subset=["prompt"])
