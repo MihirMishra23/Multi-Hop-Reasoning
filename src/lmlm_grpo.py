@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Any
 
 import datasets
+from lmlm.database.database_manager import DatabaseManager
+from lmlm.constants import DB_START_TOKEN, DB_END_TOKEN, DB_RETRIEVE_TOKEN
 import pandas as pd
 import torch
 import torch.utils.data
@@ -95,7 +97,6 @@ from trl.trainer.utils import (
 
 if is_vllm_available():
     from vllm import LLM, SamplingParams
-    from vllm.sampling_params import GuidedDecodingParams
 
 if is_wandb_available():
     import wandb
@@ -103,6 +104,12 @@ if is_wandb_available():
 if is_bitsandbytes_available():
     import bitsandbytes as bnb
 
+def extract_db_lookup(text : str) -> str | None:
+    #Used in _tool_call_loop 
+    if DB_START_TOKEN in text and DB_RETRIEVE_TOKEN in text:
+        return DB_START_TOKEN + text.split(DB_START_TOKEN)[1].split(DB_END_TOKEN)[0] + DB_RETRIEVE_TOKEN
+    else:
+        return None
 logger = get_logger(__name__)
 
 # What we call a reward function is a callable that takes a list of prompts and completions and returns a list of
@@ -242,6 +249,8 @@ class LMLMGRPOTrainer(BaseTrainer):
         self,
         model: str | PreTrainedModel,
         reward_funcs: RewardFunc | list[RewardFunc],
+        lmlm_database_path  : str,
+        adaptive_k : bool = False,
         args: GRPOConfig | None = None,
         train_dataset: Dataset | IterableDataset | None = None,
         eval_dataset: Dataset | IterableDataset | dict[str, Dataset | IterableDataset] | None = None,
@@ -252,6 +261,10 @@ class LMLMGRPOTrainer(BaseTrainer):
         tools: list[Callable] | None = None,
         rollout_func: RolloutFunc | None = None,
     ):
+        #LMLM db initialization
+        self.db = DatabaseManager()
+        self.db.load_database(lmlm_database_path, adaptive= adaptive_k)
+
         # Args
         if args is None:
             model_name = model if isinstance(model, str) else get_config_model_id(model.config)
@@ -299,6 +312,11 @@ class LMLMGRPOTrainer(BaseTrainer):
         self.pad_token = tokenizer.pad_token
         self.pad_token_id = tokenizer.pad_token_id
         self.eos_token_id = tokenizer.eos_token_id
+
+        self.stop_token_ids = [tokenizer.eos_token_id, tokenizer.encode(DB_RETRIEVE_TOKEN)[0]]
+
+        self.db_retrieve_token_id = tokenizer.encode(DB_RETRIEVE_TOKEN)
+        self.db_end_token_id = tokenizer.encode(DB_END_TOKEN)
 
         # Non-quantized models do not have the `is_loaded_in_{8,4}bit` attributes, whereas quantized models do
         if getattr(model, "is_loaded_in_4bit", False) or getattr(model, "is_loaded_in_8bit", False):
@@ -383,32 +401,24 @@ class LMLMGRPOTrainer(BaseTrainer):
         self.rollout_func = rollout_func
 
         # Tools
-        if tools:
-            if not Version(transformers.__version__) >= Version("5.0.0.dev0"):
-                raise ImportError(
-                    "Using tools with GRPOTrainer requires transformers version 5.0.0 or higher. Please use "
-                    "transformers with `pip install --pre transformers` to use this feature."
-                )
-            if not is_jmespath_available():
-                raise ImportError(
-                    "Using tools with GRPOTrainer requires the jmespath library for response parsing. Please install "
-                    "it with `pip install jmespath` to use this feature."
-                )
+        # if tools:
+        #     if not Version(transformers.__version__) >= Version("5.0.0.dev0"):
+        #         raise ImportError(
+        #             "Using tools with GRPOTrainer requires transformers version 5.0.0 or higher. Please use "
+        #             "transformers with `pip install --pre transformers` to use this feature."
+        #         )
+        #     if not is_jmespath_available():
+        #         raise ImportError(
+        #             "Using tools with GRPOTrainer requires the jmespath library for response parsing. Please install "
+        #             "it with `pip install jmespath` to use this feature."
+        #         )
         self.tools = tools
-        if self.tools:
-            self._tool_dict = {tool.__name__: tool for tool in self.tools}
         # At the time of initial implementation, most tokenizers do not have built-in support for response schemas.
         # While waiting for broader adoption, we provide this utility function to manually set the response schema for
         # known chat templates.
         # We need `getattr`` until the base class sets a default None value for response_schema
-        if tools and not getattr(processing_class, "response_schema", None):
-            processing_class = add_response_schema(processing_class)
         # In multi-turn training, the chat template *must* be prefix-preserving. If the tokenizer's original template
         # isn't, we replace it at initialization with a training-safe, prefix-preserving template.
-        if tools:
-            self.chat_template = get_training_chat_template(processing_class)
-        else:
-            self.chat_template = None
 
         # Training arguments
         self.max_completion_length = args.max_completion_length  # = |o_i| in the GRPO paper
@@ -648,7 +658,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                 "do_sample": True,
                 "pad_token_id": tokenizer.pad_token_id,
                 "bos_token_id": tokenizer.bos_token_id,
-                "eos_token_id": tokenizer.eos_token_id,
+                "eos_token_id": self.stop_token_ids,
                 "temperature": self.temperature,
                 "top_p": self.top_p,
                 "top_k": self.top_k,
@@ -1231,10 +1241,10 @@ class LMLMGRPOTrainer(BaseTrainer):
                     completion_ids = output["completion_ids"]
                     logprobs = output["logprobs"]
                 else:
-                    if self.guided_decoding_regex:
-                        guided_decoding = GuidedDecodingParams(regex=self.guided_decoding_regex)
-                    else:
-                        guided_decoding = None
+                    # if self.guided_decoding_regex:
+                    #     guided_decoding = GuidedDecodingParams(regex=self.guided_decoding_regex)
+                    # else:
+                    guided_decoding = None
 
                     generation_kwargs = {
                         "n": 1,  # vLLM on each GPU generates only 1 in colocate mode
@@ -1246,6 +1256,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                         "max_tokens": self.max_completion_length,
                         "guided_decoding": guided_decoding,
                         "logprobs": 0,  # enable returning log probabilities; 0 means for the sampled tokens only
+                        "stop_token_ids" : self.stop_token_ids
                     }
                     if self.args.generation_kwargs is not None:
                         generation_kwargs.update(self.args.generation_kwargs)
@@ -1380,6 +1391,13 @@ class LMLMGRPOTrainer(BaseTrainer):
                 prompt_completion_ids = unwrapped_model.generate(
                     **generate_inputs, generation_config=self.generation_config, disable_compile=True
                 )
+            
+            # #trim prompt completion ids until first db lookup
+            # print("prompt completion ids :", prompt_completion_ids)
+
+            # prompt_completion_ids = [trim_until_first_lookup(ids) for ids in prompt_completion_ids]
+
+
             # Compute prompt length and extract completion ids
             prompt_ids, prompt_mask = generate_inputs["input_ids"], generate_inputs["attention_mask"]
             prompt_length = prompt_ids.size(1)
@@ -1400,10 +1418,11 @@ class LMLMGRPOTrainer(BaseTrainer):
 
     def _tool_call_loop(self, prompts, prompt_ids, completion_ids, completions, logprobs):
         # Tool execution loop: execute tools, then regenerate completions with tool results appended to the prompt
-        tool_calls = [completion[0].get("tool_calls") for completion in completions]
+        tool_calls = [extract_db_lookup(completion) for completion in completions]
         idxs_with_tool = [idx for idx, tool_call in enumerate(tool_calls) if tool_call]
+
+        #trim completions, completion ids, logprobs, based on the first tool call
         tool_calls = [tool_calls[idx] for idx in idxs_with_tool]
-        tool_mask = [[1] * len(ids) for ids in completion_ids]  # 0 for tool result tokens, 1 elsewhere
         tool_call_count = 0
         tool_failure_count = 0
 
@@ -1413,38 +1432,30 @@ class LMLMGRPOTrainer(BaseTrainer):
             # Call the tools, and build the new prompt for generation
             for idx in range(len(idxs_with_tool)):
                 idx_with_tool = idxs_with_tool[idx]
-                tool_call_list = tool_calls[idx]
-                prompt_completion_tool = prompt_completion_tools[idx]
+                tool_call = tool_calls[idx]
+                # print("prompt completion tool :", prompt_completion_tools[idx])
+                # print("completions at idx with tool ", completions[idx_with_tool])
                 # Append the last assistant message (which triggered tool_calls) to the prompt
-                prompt_completion_tool.append(completions[idx_with_tool][-1])
-                for tool_call in tool_call_list:
-                    tool_call_count += 1
-                    if tool_call["type"] == "function":
-                        function = tool_call["function"]
-                        name = function["name"]
-                        try:
-                            result = self._tool_dict[name](**function["arguments"])
-                        except Exception as e:
-                            tool_failure_count += 1
-                            result = {"error": str(e)}
-                    else:
-                        tool_failure_count += 1
-                        name = tool_call.get("name", "unknown")
-                        result = {"error": f"Unsupported tool call type: {tool_call['type']}"}
-                    tool_message = {"role": "tool", "name": name, "content": str(result)}
-                    prompt_completion_tool.append(tool_message)
-                    completions[idx_with_tool].append(tool_message)
+                prompt_completion_tools[idx] += completions[idx_with_tool]
+                tool_call_count += 1
+                try:
+                    result = ", ".join(self.db.retrieve_from_database(tool_call)) + DB_END_TOKEN
+                except Exception as e:
+                    print("db lookup failed :", str(e))
+                    tool_failure_count += 1
+                    result = "unkown" + DB_END_TOKEN
+                prompt_completion_tools[idx] += result
+                logprobs[idx_with_tool] += [0.0] * len(self.processing_class(result, add_special_tokens = False)["input_ids"])
+
+                # print("\nAFTER STUFF \nprompt completion tool :", prompt_completion_tools[idx])
+                # print("completions at idx with tool ", completions[idx_with_tool])
 
             # Tokenize and filter samples whose length exceeds max allowed length. This is important, because both
             # vLLM and transformers will error out if the input is longer than the model's max length.
-            pct_ids = self.processing_class.apply_chat_template(
-                prompt_completion_tools,
-                tools=self.tools,
-                tokenize=True,
-                add_generation_prompt=True,
-                chat_template=self.chat_template,
-                **self.chat_template_kwargs,
+            pct_ids = self.processing_class(
+                prompt_completion_tools
             )["input_ids"]
+            
             if self.use_vllm and self.vllm_mode == "colocate":
                 max_model_len = self.llm.llm_engine.model_config.max_model_len
             elif not self.use_vllm:
@@ -1460,9 +1471,8 @@ class LMLMGRPOTrainer(BaseTrainer):
                     prompt_length = len(prompt_ids[idx_with_tool])
                     ct = pct_ids[idx][prompt_length : prompt_length + self.max_completion_length]
                     completion_ids[idx_with_tool] = ct
-                    tool_mask[idx_with_tool] += [1] * (len(ct) - len(tool_mask[idx_with_tool]))
                     if logprobs is not None:
-                        logprobs[idx_with_tool] += [0.0] * (len(ct) - len(logprobs[idx_with_tool]))
+                        logprobs[idx_with_tool] = logprobs[idx_with_tool][:len(ct)]
             # Keep only non-overlong items for further processing
             idxs_with_tool = [idx for idx, o in zip(idxs_with_tool, overlong, strict=True) if not o]
             prompt_completion_tools = [pct for pct, o in zip(prompt_completion_tools, overlong, strict=True) if not o]
@@ -1503,14 +1513,8 @@ class LMLMGRPOTrainer(BaseTrainer):
             # Update tool_mask: the tool result should be 0 and the post-tool 1
             for idx in range(len(idxs_with_tool)):
                 idx_with_tool = idxs_with_tool[idx]
-                prompt_completion_tool_length = len(prompt_completion_tool_ids[idx])
-                prompt_length = len(prompt_ids[idx_with_tool])
-                completion_length = len(completion_ids[idx_with_tool])
-                post_tool_length = len(post_tool_ids[idx])
-                tool_length = prompt_completion_tool_length - prompt_length - completion_length
-                tool_mask[idx_with_tool] += [0] * tool_length + [1] * post_tool_length
                 if logprobs is not None:
-                    logprobs[idx_with_tool] += [0.0] * tool_length + post_tool_logprobs[idx]
+                    logprobs[idx_with_tool] += post_tool_logprobs[idx]
 
             # Update completion_ids with the new completions (after tool execution)
             for idx in range(len(idxs_with_tool)):
@@ -1521,20 +1525,40 @@ class LMLMGRPOTrainer(BaseTrainer):
 
             # Decode post-tool completions
             post_tool_completions = [
-                parse_response(self.processing_class, ids) if ids else {} for ids in post_tool_ids
+                self.processing_class.decode(ids) if ids else "" for ids in post_tool_ids
             ]
 
             # Add post-tool completions to the existing completions
             for idx in range(len(idxs_with_tool)):
                 idx_with_tool = idxs_with_tool[idx]
                 if post_tool_completions[idx]:  # {} if post-tool completions completely truncated
-                    completions[idx_with_tool].append(post_tool_completions[idx])
+                    completions[idx_with_tool] += (post_tool_completions[idx])
+
+                if logprobs is not None:
+                    logprobs[idx_with_tool] = logprobs[idx_with_tool][:len(completion_ids[idx_with_tool])]
 
             # Check for further tool calls
-            tool_calls = [completion.get("tool_calls") for completion in post_tool_completions]
+            tool_calls = [extract_db_lookup(completion) for completion in post_tool_completions]
             idxs_with_tool = [idx for idx, tool_call in zip(idxs_with_tool, tool_calls, strict=True) if tool_call]
             tool_calls = [tool_call for tool_call in tool_calls if tool_call]
 
+        
+        # mask anything in between retrieve tokens and end tokens
+        tool_mask = [[] for _ in range(len(completion_ids))]
+
+        for j in range(len(completion_ids)):
+            mask_val = 1
+            for i in completion_ids[j]:
+                if i == self.db_retrieve_token_id:
+                    mask_val = 0
+                    tool_mask[j].append(1)
+                    continue
+                if i == self.db_end_token_id:
+                    mask_val = 1
+                    tool_mask[j].append(0)
+                    continue
+                tool_mask[j].append(mask_val)
+            
         return tool_mask, completions, completion_ids, logprobs, tool_call_count, tool_failure_count
 
     def _generate(self, prompts: list):
@@ -1546,21 +1570,7 @@ class LMLMGRPOTrainer(BaseTrainer):
 
         prompt_ids, completion_ids, logprobs, extra_fields = self._generate_single_turn(prompts)
 
-        # Decode completions. It's important to use `parse_response` when possible, because it handles tool calls.
-        if is_conversational({"prompt": prompts[0]}):
-            if (
-                Version(transformers.__version__) >= Version("5.0.0.dev0")  # parse_response added in v5
-                and isinstance(self.processing_class, PreTrainedTokenizerBase)  # doesn't work with processors
-                and hasattr(self.processing_class, "response_schema")  # attribute not set by default for now
-                and self.processing_class.response_schema is not None  # only works if the tokenizer has a schema
-            ):
-                completions = [[parse_response(self.processing_class, ids)] for ids in completion_ids]
-            else:
-                contents = self.processing_class.batch_decode(completion_ids, skip_special_tokens=True)
-                completions = [[{"role": "assistant", "content": content}] for content in contents]
-        else:
-            completions = self.processing_class.batch_decode(completion_ids, skip_special_tokens=True)
-
+        completions = self.processing_class.batch_decode(completion_ids, skip_special_tokens=False)
         # Extract tool calls from the completions and (possibly) execute them
         if self.tools:
             (
@@ -1804,7 +1814,7 @@ class LMLMGRPOTrainer(BaseTrainer):
 
         # Decode
         prompts_text = self.processing_class.batch_decode(prompt_ids, skip_special_tokens=True)
-        completions_text = self.processing_class.batch_decode(completion_ids, skip_special_tokens=True)
+        completions_text = self.processing_class.batch_decode(completion_ids, skip_special_tokens=False)
 
         # Merge extra_fields from rollout_func into inputs for reward functions
         if extra_fields:
