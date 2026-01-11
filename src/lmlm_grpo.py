@@ -1406,7 +1406,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                 except Exception as e:
                     print("db lookup failed :", str(e))
                     tool_failure_count += 1
-                    result = "unkown" + DB_END_TOKEN
+                    result = "unknown" + DB_END_TOKEN
                 prompt_completion_tools[idx] += result
                 completions[idx_with_tool] += result
                 logprobs[idx_with_tool] += [0.0] * len(self.processing_class(result, add_special_tokens = False)["input_ids"])
@@ -1437,6 +1437,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             for idx in range(len(idxs_with_tool)):
                 idx_with_tool = idxs_with_tool[idx]
                 if overlong[idx]:
+                    raise Exception("test exception")
                     prompt_length = len(prompt_ids[idx_with_tool])
                     ct = pct_ids[idx][prompt_length : prompt_length + self.max_completion_length]
                     completion_ids[idx_with_tool] = ct
