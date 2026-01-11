@@ -1408,6 +1408,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                     tool_failure_count += 1
                     result = "unkown" + DB_END_TOKEN
                 prompt_completion_tools[idx] += result
+                completions[idx_with_tool] += result
                 logprobs[idx_with_tool] += [0.0] * len(self.processing_class(result, add_special_tokens = False)["input_ids"])
 
                 # print("\nAFTER STUFF \nprompt completion tool :", prompt_completion_tools[idx])
@@ -1418,6 +1419,11 @@ class LMLMGRPOTrainer(BaseTrainer):
             pct_ids = self.processing_class(
                 prompt_completion_tools
             )["input_ids"]
+
+            for i in range(len(pct_ids)):
+                abs_idx = idxs_with_tool[i]
+                print("length of log probs :", len(logprobs[abs_idx]))
+                print("length of pct_ids: ", len(pct_ids[i]))
             
             if self.use_vllm and self.vllm_mode == "colocate":
                 max_model_len = self.llm.llm_engine.model_config.max_model_len
