@@ -36,8 +36,7 @@ export OUTPUT_DIR="${OUTPUT_ROOT}/sft_ep${NUM_TRAIN_EPOCHS}_bsz${EFFECTIVE_BATCH
 pwd
 echo "Running finetune..."
 bash scripts/finetune_w_args.sh \
-    Qwen/Qwen3-1.7B \
-    /home/rtn27/Multi-Hop-Reasoning/src/synthetic_data/12-19_rollouts_combined_12k_5743_examples_6000_triplets_filtered.json \
+    /share/j_sun/lmlm_multihop/sft_data/12-19_rollouts_combined_12k_5743_examples_6000_triplets_filtered.json \
     qwen3-1.7b-gemini_sft_v1.3_5743
 
 echo "Finetune complete!"
