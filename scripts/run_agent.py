@@ -64,7 +64,7 @@ def process_single_batch(
         return False
 
     # Build output path
-    filename = f"{args.split}_seed={args.seed}_bn={batch_number}_bs={args.batch_size}_{datetime.now().strftime('%Y-%m-%d_%H_%M')}.json"
+    filename = f"{args.dataset}_{args.split}_seed={args.seed}_bn={batch_number}_bs={args.batch_size}_{datetime.now().strftime('%Y-%m-%d_%H_%M')}.json"
     output_path = os.path.join(output_dir, filename)
 
     # Check if already exists (for resume)
