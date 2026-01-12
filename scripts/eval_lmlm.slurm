@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=eval_hotpot_qwen-2-7b
+#SBATCH --job-name=grpo_1.7b
 #SBATCH --nodes=1
 #SBATCH -p jjs533
 #SBATCH --ntasks=1
@@ -36,8 +36,8 @@ else
 fi
 
 
-MODEL_PATH="/share/j_sun/rtn27/checkpoints/qwen2-7B_sft_v1.4_3949/sft_ep5_bsz32_new_qa_25-12-24_04-54"
-OUTPUT_DIR="/share/j_sun/rtn27/preds/qwen2-7B_sft_v1.4_3949"
+MODEL_PATH="/share/j_sun/rtn27/checkpoints/qwen3-1.7B_sft_v1.3_5743/sft_ep5_bsz32_new_qa_26-01-06_04-44/-GRPO/checkpoint-375"
+OUTPUT_DIR="/share/j_sun/rtn27/preds/qwen3-4B_sft_v1.3_5743_grpo_v0"
 METHOD=lmlm
 MAX_TOKENS=2048
 NUMB_BATCHES=1
