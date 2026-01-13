@@ -23,7 +23,7 @@ import random
 import sys
 import logging
 import gc
-from typing import Dict, Any
+from typing import Dict, Any, List
 from tqdm import tqdm
 
 # Fix OpenMP conflict when multiple libraries link to different OpenMP runtimes
@@ -41,11 +41,64 @@ from src.agent import get_agent, Agent
 from src.llm import get_llm
 from src.data import get_dataset
 
+DEFAULT_FULLWIKI_CORPUS_PATH = "/share/j_sun/lmlm_multihop/datasets/hotpot_dev_fullwiki_v1.json"
+
 
 def build_query(question: str) -> str:
     """Instruction to ensure the Agent emits a FINAL_ANSWER the parser recognizes."""
     instruction = "Provide only the final answer prefixed by 'FINAL_ANSWER:' with no extra text."
     return f"{instruction}\n{question}"
+
+
+def _build_hotpotqa_contexts_from_raw(examples: List[Dict[str, Any]]) -> List[str]:
+    contexts: List[str] = []
+    for ex in examples:
+        context_field = ex.get("context")
+        if not isinstance(context_field, dict):
+            continue
+        titles = context_field.get("title")
+        sentences = context_field.get("sentences")
+        if not isinstance(titles, list) or not isinstance(sentences, list):
+            continue
+        for i, title in enumerate(titles):
+            sents_i = sentences[i] if i < len(sentences) else []
+            sent_list = [s for s in (sents_i or [])]
+            paragraph = f"{title}: " + " ".join(sent_list).strip()
+            paragraph = paragraph.strip()
+            if paragraph:
+                contexts.append(paragraph)
+    return contexts
+
+
+def _load_hotpotqa_contexts_from_path(path: str) -> List[str]:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict) and "data" in data:
+        data = data["data"]
+    if not isinstance(data, list):
+        raise ValueError(f"Unexpected HotpotQA JSON format at {path}")
+    return _build_hotpotqa_contexts_from_raw(data)
+
+
+def _dedupe_nonempty(paragraphs: List[str]) -> List[str]:
+    seen = set()
+    output: List[str] = []
+    for paragraph in paragraphs:
+        text = str(paragraph).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        output.append(text)
+    return output
+
+
+def _infer_rag_scope(rag_corpus_path: str) -> str:
+    lower_name = os.path.basename(rag_corpus_path).lower()
+    if "fullwiki" in lower_name:
+        return "fullwiki"
+    if "distractor" in lower_name:
+        return "distractor"
+    return "custom"
 
 
 def process_single_batch(
@@ -166,7 +219,7 @@ def process_single_batch(
     if args.method == "rag":
         output["metadata"]["retrieval"] = {
             "backend": args.retrieval,
-            "scope": args.setting,
+            "scope": args.rag_scope,
             "k": args.rag_k,
         }
 
@@ -227,6 +280,11 @@ def main() -> None:
         action="store_true",
         help="Include retrieved evidence in saved preds for debugging",
     )
+    parser.add_argument(
+        "--rag-corpus-path",
+        default=None,
+        help="Optional path to a HotpotQA JSON file to build a global RAG corpus.",
+    )
 
     parser.add_argument("--model", default="gpt-4", help="LLM model name")
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
@@ -259,6 +317,26 @@ def main() -> None:
         format="%(asctime)s %(levelname)s [run_agent] %(message)s",
     )
     logger = logging.getLogger("run_agent")
+
+    if (
+        args.method == "rag"
+        and args.dataset == "hotpotqa"
+        and args.setting == "fullwiki"
+        and not args.rag_corpus_path
+    ):
+        args.rag_corpus_path = DEFAULT_FULLWIKI_CORPUS_PATH
+
+    rag_corpus = None
+    if args.method == "rag" and args.dataset == "hotpotqa" and args.rag_corpus_path:
+        logger.info("Loading RAG corpus from %s", args.rag_corpus_path)
+        rag_corpus = _dedupe_nonempty(_load_hotpotqa_contexts_from_path(args.rag_corpus_path))
+        logger.info("Loaded %d unique RAG paragraphs", len(rag_corpus))
+
+    args.rag_scope = (
+        _infer_rag_scope(args.rag_corpus_path)
+        if args.method == "rag" and args.rag_corpus_path
+        else args.setting
+    )
 
     # Load full dataset once (with seed for deterministic shuffling)
     full_dataset = get_dataset(args.dataset, args.setting, args.split, seed=args.seed)
@@ -325,6 +403,7 @@ def main() -> None:
         "setting": args.setting,
         "retrieval": args.retrieval,
         "rag_k": args.rag_k,
+        "rag_corpus": rag_corpus,
         "max_steps": args.max_steps,
         "model_path": args.model_path,
         "database_path": args.database_path,
