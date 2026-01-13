@@ -19,10 +19,10 @@ from trl import (
     ScriptArguments,
 )
 
-from lmlm.constants import DATA_DIR
-from lmlm.training.utils.load_model import load_lora_model, load_tiny_llama2_tokenizer
-from lmlm.training.utils.load_sft_dataset import prepare_pretrain_data
-from lmlm.training.utils.utils_metrics import (
+from multi_lmlm.constants import DATA_DIR
+from multi_lmlm.training.utils.load_model import load_lora_model, load_tiny_llama2_tokenizer
+from multi_lmlm.training.utils.load_sft_dataset import prepare_pretrain_data
+from multi_lmlm.training.utils.utils_metrics import (
     set_tokenizer,
     dataset_stats,
     set_wandb,
@@ -32,7 +32,7 @@ from lmlm.training.utils.utils_metrics import (
     compute_metrics,
     preprocess_logits_for_metrics,
 )
-from lmlm.training.utils.utils_filter import (
+from multi_lmlm.training.utils.utils_filter import (
     clean_high_loss_triplets,
     filter_length,
     convert_to_raw_dataset,

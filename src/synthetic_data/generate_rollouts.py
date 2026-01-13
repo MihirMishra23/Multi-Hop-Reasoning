@@ -4,9 +4,9 @@ from data.hotpotqa import load_hotpotqa
 import time
 import asyncio
 from google import genai
-from lmlm.database.database_manager import DatabaseManager
+from multi_lmlm.database.database_manager import DatabaseManager
 from synthetic_data.utils import  RolloutMetadata, assert_valid_rollout
-from lmlm.constants import DB_END_TOKEN, DB_RETRIEVE_TOKEN, DB_SEP_TOKEN, DB_START_TOKEN,ANSWER_START_TOKEN, ANSWER_END_TOKEN
+from multi_lmlm.constants import DB_END_TOKEN, DB_RETRIEVE_TOKEN, DB_SEP_TOKEN, DB_START_TOKEN,ANSWER_START_TOKEN, ANSWER_END_TOKEN
 from openai import OpenAI
 from datetime import datetime
 
