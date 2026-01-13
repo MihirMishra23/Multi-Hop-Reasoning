@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.agent.agent import Agent, AgentStep, LLM, LLMResponse
-from src.tools.retrieval import BaseRetriever, FlashRAGBM25Retriever
+from src.tools.retrieval import BaseRetriever, FlashRAGBM25Retriever, FlashRAGBM25CorpusRetriever
 
 
 def _join_evidence(docs: List[str]) -> str:
@@ -20,6 +20,7 @@ class RAGAgent(Agent):
         llm: LLM,
         retriever_type: str,
         contexts: List[str],
+        corpus: Optional[List[str]] = None,
         rag_k: int = 4,
         max_steps: int = 8,
     ) -> None:
@@ -27,10 +28,14 @@ class RAGAgent(Agent):
         # Initialize retriever by type
         match (retriever_type or "").lower():
             case "bm25":
-                self.retriever: BaseRetriever = FlashRAGBM25Retriever()
+                if corpus:
+                    self.retriever = FlashRAGBM25CorpusRetriever(corpus)
+                else:
+                    self.retriever = FlashRAGBM25Retriever()
             case _:
                 raise NotImplementedError(f"Retriever type '{retriever_type}' is not implemented.")
         self.contexts = contexts or []
+        self._corpus = corpus or []
         self.rag_k = rag_k
         self._evidence_docs: List[str] = []
 
@@ -38,7 +43,12 @@ class RAGAgent(Agent):
         """ Note that this is only computed once"""
         if self._evidence_docs:
             return
-        self._evidence_docs = self.retriever.retrieve(query=query, documents=self.contexts, top_k=self.rag_k)
+        documents = self._corpus if self._corpus else self.contexts
+        self._evidence_docs = self.retriever.retrieve(
+            query=query,
+            documents=documents,
+            top_k=self.rag_k,
+        )
 
     def build_prompt(self, query: str) -> str:
         # Build step history (same style as base Agent)
@@ -53,7 +63,8 @@ class RAGAgent(Agent):
 
     def reset(self, contexts: List[str]) -> None:
         """Reset agent state for a new question with new contexts."""
-        self.contexts = contexts or []
+        if not self._corpus:
+            self.contexts = contexts or []
         self._evidence_docs = []
         self.trace = []
 
@@ -64,5 +75,4 @@ class RAGAgent(Agent):
         self._evidence_docs = []
         self.gather_evidence(query)
         return super().run(query, **llm_kwargs)
-
 
