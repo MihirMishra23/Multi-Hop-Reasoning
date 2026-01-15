@@ -29,8 +29,8 @@ from pathlib import Path
 from typing import Any
 
 import datasets
-from lmlm.database.database_manager import DatabaseManager
-from lmlm.constants import DB_START_TOKEN, DB_END_TOKEN, DB_RETRIEVE_TOKEN
+from multi_lmlm.database.database_manager import DatabaseManager
+from multi_lmlm.constants import DB_START_TOKEN, DB_END_TOKEN, DB_RETRIEVE_TOKEN
 import pandas as pd
 import torch
 import torch.utils.data
@@ -88,12 +88,14 @@ from trl.trainer.utils import (
     print_prompt_completions_sample,
     selective_log_softmax,
     shuffle_sequence_dict,
-    shutdown_event_loop_in_daemon,
+    # shutdown_event_loop_in_daemon,
     split_pixel_values_by_grid,
     split_tensor_dict,
-    start_event_loop_in_daemon,
+    # start_event_loop_in_daemon,
     unsplit_pixel_values_by_grid,
 )
+from multi_lmlm.training.utils.utils_metrics import compute_pretrain_mask, set_tokenizer, set_use_special_dblookup_tokens
+set_use_special_dblookup_tokens(True)
 
 if is_vllm_available():
     from vllm import LLM, SamplingParams
@@ -104,12 +106,15 @@ if is_wandb_available():
 if is_bitsandbytes_available():
     import bitsandbytes as bnb
 
-def extract_db_lookup(text : str) -> str | None:
+def extract_db_lookup_last(text : str) -> str | None:
+    # BUG: does it need to extract all the db_lookup or the last one?
     #Used in _tool_call_loop 
     if DB_START_TOKEN in text and DB_RETRIEVE_TOKEN in text:
-        return DB_START_TOKEN + text.split(DB_START_TOKEN)[1].split(DB_END_TOKEN)[0] + DB_RETRIEVE_TOKEN
+        return DB_START_TOKEN + text.split(DB_START_TOKEN)[1].split(DB_RETRIEVE_TOKEN)[0] + DB_RETRIEVE_TOKEN # BUG
+        # return DB_START_TOKEN + text.split(DB_START_TOKEN)[1].split(DB_END_TOKEN)[0] + DB_RETRIEVE_TOKEN # BUG
     else:
         return None
+
 logger = get_logger(__name__)
 
 # What we call a reward function is a callable that takes a list of prompts and completions and returns a list of
@@ -274,8 +279,8 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Model
         if isinstance(model, str):
             model_init_kwargs = args.model_init_kwargs or {}
-            # Special case for DeepSpeed: requires device_map=None ("auto" fails)
-            if args.distributed_state.distributed_type == "DEEPSPEED":
+            # Distributed training requires device_map=None ("auto" fails)
+            if args.distributed_state.distributed_type in ["MULTI_GPU", "DEEPSPEED"]:
                 model_init_kwargs["device_map"] = None
             model = create_model_from_path(model, **model_init_kwargs)
         else:
@@ -315,8 +320,10 @@ class LMLMGRPOTrainer(BaseTrainer):
 
         self.stop_token_ids = [tokenizer.eos_token_id, tokenizer.encode(DB_RETRIEVE_TOKEN)[0]]
 
-        self.db_retrieve_token_id = tokenizer.encode(DB_RETRIEVE_TOKEN)
-        self.db_end_token_id = tokenizer.encode(DB_END_TOKEN)
+        # fix BUG
+        self.db_retrieve_token_id = tokenizer.encode(DB_RETRIEVE_TOKEN)[0]
+        self.db_end_token_id = tokenizer.encode(DB_END_TOKEN)[0]
+        set_tokenizer(tokenizer)
 
         # Non-quantized models do not have the `is_loaded_in_{8,4}bit` attributes, whereas quantized models do
         if getattr(model, "is_loaded_in_4bit", False) or getattr(model, "is_loaded_in_8bit", False):
@@ -508,7 +515,8 @@ class LMLMGRPOTrainer(BaseTrainer):
             # For deepspeed, fsdp or non-distributed models, create a reference model from scratch
             model_init_kwargs = args.model_init_kwargs or {}
             # Special case for DeepSpeed: requires device_map=None ("auto" fails)
-            if self.args.distributed_state.distributed_type == "DEEPSPEED":
+            # fix BUG: multi-GPU
+            if args.distributed_state.distributed_type in ["MULTI_GPU", "DEEPSPEED"]:
                 model_init_kwargs["device_map"] = None
             self.ref_model = create_model_from_path(get_config_model_id(self.model.config), **model_init_kwargs)
 
@@ -622,9 +630,11 @@ class LMLMGRPOTrainer(BaseTrainer):
                     model=model.name_or_path,
                     tensor_parallel_size=args.vllm_tensor_parallel_size,
                     gpu_memory_utilization=self.vllm_gpu_memory_utilization,
+                    # BUG: vllm random issue
                     max_num_seqs=self.args.per_device_train_batch_size
                     * self.vllm_tensor_parallel_size
                     * self.args.steps_per_generation,
+                    # max_num_seqs=self.args.per_device_train_batch_size + 8,
                     max_model_len=self.args.vllm_max_model_length,
                     distributed_executor_backend="external_launcher",
                     # Feed identical seed for tp groups to ensure sampling results are the same across workers
@@ -636,6 +646,10 @@ class LMLMGRPOTrainer(BaseTrainer):
                     # Important so temperature scaling/logit tweaking affects the TIS log probs
                     logprobs_mode="processed_logprobs",
                     quantization=vllm_quantization,
+                    ## BUG: illegal memory access
+                    # enforce_eager=True,
+                    # enable_prefix_caching=False, # serving feature; off for RL
+                    ##
                 )
                 if self.args.vllm_enable_sleep_mode:
                     self.llm.sleep(level=2)
@@ -1380,8 +1394,11 @@ class LMLMGRPOTrainer(BaseTrainer):
         return prompt_ids, completion_ids, logprobs, extra_fields
 
     def _tool_call_loop(self, prompts, prompt_ids, completion_ids, completions, logprobs):
+        # BUG: potential issue of chat template.
+        print(f">>> tool call loop {len(prompts)}")
         # Tool execution loop: execute tools, then regenerate completions with tool results appended to the prompt
-        tool_calls = [extract_db_lookup(completion) for completion in completions]
+        tool_calls = [extract_db_lookup_last(completion) for completion in completions]
+        # idx list with tool calls
         idxs_with_tool = [idx for idx, tool_call in enumerate(tool_calls) if tool_call]
 
         #trim completions, completion ids, logprobs, based on the first tool call
@@ -1392,12 +1409,13 @@ class LMLMGRPOTrainer(BaseTrainer):
         while idxs_with_tool:
             prompt_completion_tools = [prompts[i] for i in idxs_with_tool]  # select only prompts that need tool calls
 
+            ## Stage 1
             # Call the tools, and build the new prompt for generation
             for idx in range(len(idxs_with_tool)):
                 idx_with_tool = idxs_with_tool[idx]
                 tool_call = tool_calls[idx]
-                # print("prompt completion tool :", prompt_completion_tools[idx])
-                # print("completions at idx with tool ", completions[idx_with_tool])
+
+                ## NOTE: p = prompt + query1, c = query1, completion_ids = query1, logprobs = query1
                 # Append the last assistant message (which triggered tool_calls) to the prompt
                 prompt_completion_tools[idx] += completions[idx_with_tool]
                 tool_call_count += 1
@@ -1407,24 +1425,19 @@ class LMLMGRPOTrainer(BaseTrainer):
                     print("db lookup failed :", str(e))
                     tool_failure_count += 1
                     result = "unknown" + DB_END_TOKEN
+
+                ## NOTE: p = prompt + query1 + value1, c = query1 + value1, cids = query1, logprobs = query1 + value1
                 prompt_completion_tools[idx] += result
                 completions[idx_with_tool] += result
-                logprobs[idx_with_tool] += [0.0] * len(self.processing_class(result, add_special_tokens = False)["input_ids"])
-
-                # print("\nAFTER STUFF \nprompt completion tool :", prompt_completion_tools[idx])
-                # print("completions at idx with tool ", completions[idx_with_tool])
+                value_ids = self.processing_class(result, add_special_tokens = False)["input_ids"]
+                completion_ids[idx_with_tool] += value_ids
+                if logprobs is not None:
+                    logprobs[idx_with_tool] += [0.0] * len(value_ids)
 
             # Tokenize and filter samples whose length exceeds max allowed length. This is important, because both
             # vLLM and transformers will error out if the input is longer than the model's max length.
-            pct_ids = self.processing_class(
-                prompt_completion_tools
-            )["input_ids"]
-
-            for i in range(len(pct_ids)):
-                abs_idx = idxs_with_tool[i]
-                print("length of log probs :", len(logprobs[abs_idx]))
-                print("length of pct_ids: ", len(pct_ids[i]))
             
+            ## TODO: for debug. comment out
             if self.use_vllm and self.vllm_mode == "colocate":
                 max_model_len = self.llm.llm_engine.model_config.max_model_len
             elif not self.use_vllm:
@@ -1433,82 +1446,133 @@ class LMLMGRPOTrainer(BaseTrainer):
                 raise NotImplementedError(
                     f"Unsupported mode detected: use_vllm={self.use_vllm}, vllm_mode={self.vllm_mode}"
                 )
-            overlong = [len(pct) >= max_model_len for pct in pct_ids]
+
+            # check if prompt_completion_tools is overlong
+            # pct_ids = self.processing_class(
+            #     prompt_completion_tools
+            # )["input_ids"]
+            overlong = [len(prompt_ids[idx]) + len(completion_ids[idx]) >= max_model_len or len(completion_ids[idx]) >= self.max_completion_length for idx in idxs_with_tool]
+            assert len(overlong) == len(prompt_completion_tools), f"overlong of length {len(overlong)} and prompt_completion_tools of length {len(prompt_completion_tools)} are not the same length"
+            
             for idx in range(len(idxs_with_tool)):
                 idx_with_tool = idxs_with_tool[idx]
                 if overlong[idx]:
-                    raise Exception("test exception")
                     prompt_length = len(prompt_ids[idx_with_tool])
-                    ct = pct_ids[idx][prompt_length : prompt_length + self.max_completion_length]
-                    completion_ids[idx_with_tool] = ct
+                    # NOTE: very brutal truncation.
+                    # ct = pct_ids[idx][prompt_length : prompt_length + self.max_completion_length]
+                    per_max_completion_length = min(self.max_completion_length, max_model_len - prompt_length)
+                    completion_ids[idx_with_tool] = completion_ids[idx_with_tool][:per_max_completion_length]
                     if logprobs is not None:
-                        logprobs[idx_with_tool] = logprobs[idx_with_tool][:len(ct)]
+                        logprobs[idx_with_tool] = logprobs[idx_with_tool][:per_max_completion_length]
             # Keep only non-overlong items for further processing
             idxs_with_tool = [idx for idx, o in zip(idxs_with_tool, overlong, strict=True) if not o]
             prompt_completion_tools = [pct for pct, o in zip(prompt_completion_tools, overlong, strict=True) if not o]
             if not idxs_with_tool:
+                print("all overlong, exit tool loop")
                 break  # all overlong, exit tool loop
-
+            
+            ## Stage 2
             # Generate new completions after tool execution
+            # BUG: prompt_completion_tool_ids has been compressed.
+            ## NOTE: p = prompt + query1 + value1, c = query1 + value1, cids = query1 + value1, lp = query1 + value1, prompt_completion_tool_ids = prompt + query1 + value1 + query2. post_tool_ids = query2
             prompt_completion_tool_ids, post_tool_ids, post_tool_logprobs, _ = self._generate_single_turn(
                 prompt_completion_tools
             )
 
-            # Sanity check: from experience, this is useful to catch bugs in the chat template
-            for idx in range(len(idxs_with_tool)):
-                idx_with_tool = idxs_with_tool[idx]
-                pct = prompt_completion_tool_ids[idx]  # = prompt-completion-tool
-                if prompt_ids[idx_with_tool] != pct[: len(prompt_ids[idx_with_tool])]:
-                    raise ValueError(
-                        "The chat template is not prefix-preserving. Please update it to use a prefix-preserving "
-                        "format."
-                    )
+            for i in range(len(post_tool_logprobs)):
+                assert len(post_tool_ids[i]) == len(post_tool_logprobs[i]), f"prompt_completion_tool_ids of length {len(prompt_completion_tool_ids[i])} and post_tool_ids of length {len(post_tool_ids[i])} are not the same length"
 
-            # Truncate so that pct[len(prompt_ids[idx]) :] + post_tool does not exceed max_completion_length
-            for idx in range(len(idxs_with_tool)):
-                idx_with_tool = idxs_with_tool[idx]
-                prompt_len = len(prompt_ids[idx_with_tool])
-                completion_tool_ids = prompt_completion_tool_ids[idx][prompt_len:]
-                excess_length = len(completion_tool_ids) + len(post_tool_ids[idx]) - self.max_completion_length
-                if excess_length > 0:
-                    # If exceeding max length, truncate post_tool_ids
-                    post_tool_ids[idx] = post_tool_ids[idx][:-excess_length]
-                    if logprobs is not None:
-                        post_tool_logprobs[idx] = post_tool_logprobs[idx][:-excess_length]
-                    excess_length = len(completion_tool_ids) + len(post_tool_ids[idx]) - self.max_completion_length
-                    if excess_length > 0:
-                        # If still exceeding max length, truncate completion_tool_ids as well
-                        prompt_completion_tool_ids[idx] = prompt_completion_tool_ids[idx][:-excess_length]
+            # Sanity check: from experience, this is useful to catch bugs in the chat template
+            ## TODO: for debug. comment out
+            # for idx in range(len(idxs_with_tool)):
+            #     idx_with_tool = idxs_with_tool[idx]
+            #     pct = prompt_completion_tool_ids[idx]  # = prompt-completion-tool
+            #     if prompt_ids[idx_with_tool] != pct[: len(prompt_ids[idx_with_tool])]:
+            #         raise ValueError(
+            #             "The chat template is not prefix-preserving. Please update it to use a prefix-preserving "
+            #             "format."
+            #         )
+            ## TODO: for debug. comment out
+
+            # # Truncate so that pct[len(prompt_ids[idx]) :] + post_tool does not exceed max_completion_length
+            # # NOTE: shit coding logit. move it after update completion_ids with the new completions
+            # for idx in range(len(idxs_with_tool)):
+            #     idx_with_tool = idxs_with_tool[idx]
+            #     prompt_len = len(prompt_ids[idx_with_tool])
+            #     # completion_tool_ids = prompt_completion_tool_ids[idx][prompt_len:]
+            #     # BUG: protentially mess up the idx and idx_with_tool
+            #     excess_length = len(completion_ids[idx_with_tool]) + len(post_tool_ids[idx]) - self.max_completion_length
+            #                global                         +      WRONG: post_tool_ids is local-sized
+            #     if excess_length > 0:
+            #         # If exceeding max length, truncate post_tool_ids
+            #         post_tool_ids[idx] = post_tool_ids[idx][:-excess_length]
+            #         if logprobs is not None:
+            #             post_tool_logprobs[idx] = post_tool_logprobs[idx][:-excess_length]
+            #         excess_length = len(completion_ids[idx_with_tool]) + len(post_tool_ids[idx]) - self.max_completion_length
+            #         if excess_length > 0:
+            #             # If still exceeding max length, truncate completion_tool_ids as well
+                    #     prompt_completion_tool_ids[idx_with_tool] = prompt_completion_tool_ids[idx_with_tool][:-excess_length]
 
             # Update tool_mask: the tool result should be 0 and the post-tool 1
-            for idx in range(len(idxs_with_tool)):
-                idx_with_tool = idxs_with_tool[idx]
-                if logprobs is not None:
-                    logprobs[idx_with_tool] += post_tool_logprobs[idx]
+            # for idx in range(len(idxs_with_tool)):
+            #     idx_with_tool = idxs_with_tool[idx]
+                # if logprobs is not None:
+                #     logprobs[idx_with_tool] += post_tool_logprobs[idx]
 
             # Update completion_ids with the new completions (after tool execution)
+            ## NOTE: prompt_ids = prompt. prompt_completion_tool_ids = prompt + query1 + value1 + query2. post_tool_ids = query2
             for idx in range(len(idxs_with_tool)):
                 idx_with_tool = idxs_with_tool[idx]
-                prompt_length = len(prompt_ids[idx_with_tool])
-                pct = prompt_completion_tool_ids[idx]  # = prompt-completion-tool
-                completion_ids[idx_with_tool] = pct[prompt_length:] + post_tool_ids[idx]
-
-            # Decode post-tool completions
-            post_tool_completions = [
-                self.processing_class.decode(ids) if ids else "" for ids in post_tool_ids
-            ]
-
-            # Add post-tool completions to the existing completions
-            for idx in range(len(idxs_with_tool)):
-                idx_with_tool = idxs_with_tool[idx]
-                if post_tool_completions[idx]:  # {} if post-tool completions completely truncated
-                    completions[idx_with_tool] += (post_tool_completions[idx])
-
+                # prompt_length = len(prompt_ids[idx_with_tool])
+                ## NOTE: completion_ids = query1 + value1 + query2
+                # completion_ids[idx_with_tool] = prompt_completion_tool_ids[idx][prompt_length:] + post_tool_ids[idx] # BUG: this is wrong due to different tokenization
+                completion_ids[idx_with_tool] += post_tool_ids[idx]
                 if logprobs is not None:
-                    logprobs[idx_with_tool] = logprobs[idx_with_tool][:len(completion_ids[idx_with_tool])]
+                    ## NOTE: logprobs = query1 + value1 + query2
+                    logprobs[idx_with_tool] += post_tool_logprobs[idx]
+                    assert len(logprobs[idx_with_tool]) == len(completion_ids[idx_with_tool]), f"logprobs of length {len(logprobs[idx_with_tool])} and completion_ids of length {len(completion_ids[idx_with_tool])} are not the same length"
+                
+                # truncate
+                if len(completion_ids[idx_with_tool]) > self.max_completion_length:
+                    completion_ids[idx_with_tool] = completion_ids[idx_with_tool][:self.max_completion_length]            
+
+                    if logprobs is not None:
+                        logprobs[idx_with_tool] = logprobs[idx_with_tool][:self.max_completion_length]
+
+                    truncate_length = len(completion_ids[idx_with_tool]) - self.max_completion_length
+                    if truncate_length > 0:
+                        if truncate_length >= len(post_tool_ids[idx]):
+                            post_tool_ids[idx] = []
+                            if post_tool_logprobs is not None:
+                                post_tool_logprobs[idx] = []
+                        else:
+                            post_tool_ids[idx] = post_tool_ids[idx][:-truncate_length]
+                            if post_tool_logprobs is not None:
+                                post_tool_logprobs[idx] = post_tool_logprobs[idx][:-truncate_length]
+                    if post_tool_logprobs is not None:
+                        assert len(post_tool_ids[idx]) == len(post_tool_logprobs[idx]), f"post_tool_ids of length {len(post_tool_ids[idx])} and post_tool_logprobs of length {len(post_tool_logprobs[idx])} are not the same length"
+
+
+            
+            debug_example(completion_ids, completions, logprobs, "after tool call loop")
+
+            # # Decode post-tool completions
+            # post_tool_completions = [
+            #     self.processing_class.decode(ids) if ids else "" for ids in post_tool_ids
+            # ]
+            # decode all completions from completion_ids
+            completions = [self.processing_class.decode(completion_ids[idx], skip_special_tokens=False) for idx in range(len(completion_ids))]
+            post_tool_completions = [self.processing_class.decode(post_tool_ids[idx], skip_special_tokens=False) if len(post_tool_ids[idx]) > 0 else "" for idx in range(len(post_tool_ids))]
+
+            # # Add post-tool completions to the existing completions
+            # for idx in range(len(idxs_with_tool)):
+            #     idx_with_tool = idxs_with_tool[idx]
+            #     if post_tool_completions[idx]:  # {} if post-tool completions completely truncated
+            #         ## NOTE: completions = query1 + value1 + query2
+            #         completions[idx_with_tool] += (post_tool_completions[idx])
 
             # Check for further tool calls
-            tool_calls = [extract_db_lookup(completion) for completion in post_tool_completions]
+            tool_calls = [extract_db_lookup_last(completion) for completion in post_tool_completions]
             idxs_with_tool = [idx for idx, tool_call in zip(idxs_with_tool, tool_calls, strict=True) if tool_call]
             tool_calls = [tool_call for tool_call in tool_calls if tool_call]
 
@@ -1516,19 +1580,39 @@ class LMLMGRPOTrainer(BaseTrainer):
         # mask anything in between retrieve tokens and end tokens
         tool_mask = [[] for _ in range(len(completion_ids))]
 
-        for j in range(len(completion_ids)):
-            mask_val = 1
-            for i in completion_ids[j]:
-                if i == self.db_retrieve_token_id:
-                    mask_val = 0
-                    tool_mask[j].append(1)
-                    continue
-                if i == self.db_end_token_id:
-                    mask_val = 1
-                    tool_mask[j].append(0)
-                    continue
-                tool_mask[j].append(mask_val)
-            
+        # for j in range(len(completion_ids)):
+        #     mask_val = 1
+        #     for i in completion_ids[j]:
+        #         if i == self.db_retrieve_token_id:
+        #             mask_val = 0
+        #             tool_mask[j].append(1)
+        #             continue
+        #         if i == self.db_end_token_id:
+        #             mask_val = 1
+        #             tool_mask[j].append(0)
+        #             continue
+        #         tool_mask[j].append(mask_val)
+
+        # a faster way to do this
+        # completion_ids_tensor = torch.tensor(completion_ids)
+
+        # is_ret = completion_ids_tensor == self.db_retrieve_token_id
+        # is_end = completion_ids_tensor == self.db_end_token_id
+
+        # delta = is_ret.int() - is_end.int()
+        # state = torch.cumsum(delta, dim=1)
+
+        # tool_mask = (state == 0)
+
+        # TODO: need to check if this is correct
+        for i in range(len(completion_ids)):
+            tool_mask[i] = compute_pretrain_mask(torch.tensor(completion_ids[i]).unsqueeze(0), include_eos=True).squeeze(0).tolist()
+
+        debug_example(completion_ids, completions, logprobs, "after mask")
+        
+        if logprobs is not None:
+            for i in range(len(completion_ids)):
+                assert len(logprobs[i]) == len(completion_ids[i]), f"logprobs of length {len(logprobs[i])} and completion_ids of length {len(completion_ids[i])} are not the same length"
         return tool_mask, completions, completion_ids, logprobs, tool_call_count, tool_failure_count
 
     def _generate(self, prompts: list):
@@ -1541,6 +1625,13 @@ class LMLMGRPOTrainer(BaseTrainer):
         prompt_ids, completion_ids, logprobs, extra_fields = self._generate_single_turn(prompts)
 
         completions = self.processing_class.batch_decode(completion_ids, skip_special_tokens=False)
+
+        debug_example(completion_ids, completions, logprobs, "in _generate")
+        # for i in range(len(completion_ids)):
+        #     self.check_length(completion_ids, logprobs, i)
+            # assert len(logprobs[i]) == len(completion_ids[i]), f"logprobs of length {len(logprobs[i])} and completion_ids of length {len(completion_ids[i])} are not the same length"
+
+
         # Extract tool calls from the completions and (possibly) execute them
         if self.tools:
             (
@@ -1748,6 +1839,7 @@ class LMLMGRPOTrainer(BaseTrainer):
 
         # Decode
         prompts_text = self.processing_class.batch_decode(prompt_ids, skip_special_tokens=True)
+        # NOTE: only affect the logging
         completions_text = self.processing_class.batch_decode(completion_ids, skip_special_tokens=False)
 
         # Merge extra_fields from rollout_func into inputs for reward functions
@@ -1880,6 +1972,23 @@ class LMLMGRPOTrainer(BaseTrainer):
         if self.tools:
             output["tool_mask"] = tool_mask
         return output
+
+    def check_length(self, completions, logprobs, idx):
+        if isinstance(completions[0], str):
+            encoded_prompt_completion_tools = self.processing_class(completions[idx], add_special_tokens = False)["input_ids"]
+            if len(encoded_prompt_completion_tools) != len(logprobs[idx]):
+                print(f"encoded_prompt_completion_tools of length {len(encoded_prompt_completion_tools)} and logprobs of length {len(logprobs[idx])} are not the same length")
+        elif isinstance(completions[0], list) and isinstance(completions[0][0], int):
+            encoded_prompt_completion_tools = completions[idx]
+            if len(encoded_prompt_completion_tools) != len(logprobs[idx]):
+                print(f"completion_ids of length {len(encoded_prompt_completion_tools)} and logprobs of length {len(logprobs[idx])} are not the same length")
+            if abs(len(encoded_prompt_completion_tools) - len(logprobs[idx])) >= 5:
+                import pdb; pdb.set_trace()
+            # import pdb; pdb.set_trace()
+        else:
+            pass
+            # print("encoded_prompt_completion_tools and logprobs are the same length")
+
 
     @profiling_decorator
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
@@ -2115,3 +2224,11 @@ class LMLMGRPOTrainer(BaseTrainer):
             model_name = self.args.hub_model_id.split("/")[-1]
         self.create_model_card(model_name=model_name)
         super()._save_checkpoint(model, trial)
+
+def debug_example(completion_ids, completions, logprobs, message=""):
+    for i in range(len(completions)):
+        if "vocalist" in completions[i] and len(completion_ids[i]) != len(logprobs[i]):
+            print(f">>> debug example {i} {message}")
+            print(f"completion_ids != logprobs: {len(completion_ids[i])} != {len(logprobs[i])}")
+            import pdb; pdb.set_trace()
+            print(f"completions: {completions[i]}")

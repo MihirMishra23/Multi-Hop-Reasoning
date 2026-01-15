@@ -35,3 +35,11 @@ database_cache/
 
 # Wandb
 wandb
+
+# Test scripts
+src/test/
+
+# Account scripts
+scripts/account/
+
+mlruns/
