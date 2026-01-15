@@ -16,3 +16,30 @@ data/raw/
 
 # FlashRAG
 src/tools/FlashRAG/
+
+# Index and mapping files
+*.index
+*.mapping
+*.faiss
+
+# numpy files
+*.npy
+
+# Database cache
+database_cache/
+
+# Sbatch related files
+*.sbatch
+*.err
+*.out
+
+# Wandb
+wandb
+
+# Test scripts
+src/test/
+
+# Account scripts
+scripts/account/
+
+mlruns/

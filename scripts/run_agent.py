@@ -25,21 +25,18 @@ import logging
 import gc
 from typing import Dict, Any
 from tqdm import tqdm
+from datetime import datetime
 
 # Fix OpenMP conflict when multiple libraries link to different OpenMP runtimes
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
-# Ensure imports work when running directly from repo
-THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.abspath(os.path.join(THIS_DIR, ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+from constants import REPO_ROOT
 
 import torch
 
-from src.agent import get_agent, Agent
-from src.llm import get_llm
-from src.data import get_dataset
+from agent import get_agent, Agent
+from llm import get_llm
+from data import get_dataset
 
 
 def build_query(question: str) -> str:
@@ -67,8 +64,7 @@ def process_single_batch(
         return False
 
     # Build output path
-    safe_model = args.model.replace("/", "-")
-    filename = f"{args.split}_seed={args.seed}_bn={batch_number}_bs={args.batch_size}.json"
+    filename = f"{args.split}_seed={args.seed}_bn={batch_number}_bs={args.batch_size}_{datetime.now().strftime('%Y-%m-%d_%H_%M')}.json"
     output_path = os.path.join(output_dir, filename)
 
     # Check if already exists (for resume)
@@ -90,7 +86,11 @@ def process_single_batch(
     results: Dict[str, Dict[str, Any]] = {}
     batch_size_actual = len(ds)
 
+    count = 0
     for ex in ds:
+        count += 1
+        if (count %10 == 0):
+            print(f"\n\ncount : {count} \n\n")
         qid = ex.get("id") or ex.get("_id")
         question = ex["question"]
 
@@ -217,6 +217,11 @@ def main() -> None:
         default=None,
         help="Path to database of (entity, relation, value) triplets",
     )
+    parser.add_argument(
+        "--adaptive-k",
+        default=False,
+        help="Whether to use adaptive k for lmlm retreival",
+    )
     # RAG-related flags
     parser.add_argument(
         "--retrieval", default="bm25", choices=["bm25"], help="Retrieval backend for --method rag"
@@ -228,7 +233,7 @@ def main() -> None:
         help="Include retrieved evidence in saved preds for debugging",
     )
 
-    parser.add_argument("--model", default="gpt-4", help="LLM model name")
+    parser.add_argument("--model", default=None, help="LLM model name")
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
     parser.add_argument("--max-tokens", type=int, default=256, help="Max output tokens")
     parser.add_argument(
@@ -267,13 +272,9 @@ def main() -> None:
     # Prepare output location with structure: type/dataset_setting/model/split_seed{s}_bn{n}_bs{b}.json
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
 
-    # Sanitize model name (replace / with -)
-    safe_model = args.model.replace("/", "-")
-
     # Build directory structure: type/dataset_setting/model/
-    output_dir = os.path.join(
-        base_output_dir, args.method, f"{args.dataset}_{args.setting}", safe_model
-    )
+    output_dir = base_output_dir
+
     os.makedirs(output_dir, exist_ok=True)
 
     # Determine batch processing mode
