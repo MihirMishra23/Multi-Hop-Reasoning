@@ -37,10 +37,10 @@ if REPO_ROOT not in sys.path:
 
 import torch
 
-from src.agent import get_agent, Agent
-from src.llm import get_llm
-from src.data import get_dataset
-from src.data.hotpotqa import load_hotpotqa_rag_corpus
+from agent import get_agent, Agent
+from llm import get_llm
+from data import get_dataset
+from data.hotpotqa import load_hotpotqa_rag_corpus
 
 DEFAULT_FULLWIKI_CORPUS_PATH = "/share/j_sun/lmlm_multihop/datasets/hotpot_dev_fullwiki_v1.json"
 
