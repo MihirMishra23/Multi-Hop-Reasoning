@@ -49,7 +49,7 @@ def process_single_batch(
     args: argparse.Namespace,
     batch_number: int,
     total_examples: int,
-    output_dir: str,
+    save_path: str,
     full_dataset,
     agent: Agent,
 ) -> bool:
@@ -68,8 +68,8 @@ def process_single_batch(
     output_path = os.path.join(output_dir, filename)
 
     # Check if already exists (for resume)
-    if args.resume and os.path.exists(output_path):
-        logger.info("Skipping batch %d (already exists at %s)", batch_number, output_path)
+    if args.resume and os.path.exists(save_path):
+        logger.info("Skipping batch %d (already exists at %s)", batch_number, save_path)
         return True
 
     # Select batch slice
@@ -177,10 +177,10 @@ def process_single_batch(
     logger.debug("Predictions payload: %s", json.dumps(output, ensure_ascii=False)[:2000])
 
     # Save JSON with deduplicated metadata immediately
-    with open(output_path, "w", encoding="utf-8") as f:
+    with open(save_path, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=4)
 
-    logger.info("Saved %d predictions to %s", len(results), output_path)
+    logger.info("Saved %d predictions to %s", len(results), save_path)
 
     # Force garbage collection and clear GPU cache to prevent memory fragmentation
     gc.collect()
@@ -282,12 +282,14 @@ def main() -> None:
     # Load full dataset once (with seed for deterministic shuffling)
     full_dataset = get_dataset(args.dataset, args.setting, args.split, seed=args.seed)
     total = len(full_dataset)
-
+    print(f"total: {total}")
+    
     # Prepare output location with structure: type/dataset_setting/model/split_seed{s}_bn{n}_bs{b}.json
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
 
     # Build directory structure: type/dataset_setting/model/
     output_dir = base_output_dir
+    save_path = os.path.join(output_dir, f"{args.model_path.split('/')[-1]}_{args.split}_seed={args.seed}_bn={args.batch_number}_bs={args.batch_size}_{datetime.now().strftime('%Y-%m-%d_%H_%M')}.json")
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -357,7 +359,7 @@ def main() -> None:
         for batch_num in range(start_batch, start_batch + num_batches_to_process):
             try:
                 success = process_single_batch(
-                    args, batch_num, total, output_dir, full_dataset, agent
+                    args, batch_num, total, save_path, full_dataset, agent
                 )
                 if success:
                     successful_batches += 1

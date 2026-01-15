@@ -19,7 +19,7 @@ from trl import (
     SFTConfig,
     get_peft_config,
 )
-from transformers import DataCollatorWithPadding
+from transformers import DataCollatorWithPadding, default_data_collator
 from functools import partial
 
 from multi_lmlm.training.utils.utils_metrics import (
@@ -41,7 +41,7 @@ class PretrainConfig:
     use_special_dblookup_tokens: bool = False
     plain_baseline: bool = False
     eval_only: bool = False
-    max_seq_length: int = 512
+    max_seq_length: int = 2048
 
 
 def set_random_seed(seed: int):
@@ -50,8 +50,7 @@ def set_random_seed(seed: int):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+
 
 
 def make_parser(subparsers: argparse._SubParsersAction = None):
@@ -70,7 +69,7 @@ def check(data, collator, tokenizer):
         labels = batch['labels'][i]
         attention_mask = batch['attention_mask'][i]
 
-        logger.info("shape", input_ids.shape, labels.shape, attention_mask.shape)
+        logger.info(f"shape: {input_ids.shape} {labels.shape} {attention_mask.shape}")
 
         logger.info("=== Input ===")
         logger.info(tokenizer.decode(input_ids, skip_special_tokens=False))
@@ -101,11 +100,11 @@ def main(script_args, training_args, model_args, pretrain_args):
 
     model, tokenizer = load_model_for_ft_baseline(
         model_args,
-        resume_from_checkpoint=training_args.resume_from_checkpoint,
+        resume_from_checkpoint=training_args.resume_from_checkpoint, # HACK: this is a hack to load the model from the checkpoint
         use_special_dblookup_tokens=pretrain_args.use_special_dblookup_tokens,
     )
 
-    tokenizer.pad_token = tokenizer.eos_token
+    # tokenizer.pad_token = tokenizer.eos_token
     
     ################
     # Dataset
@@ -117,14 +116,14 @@ def main(script_args, training_args, model_args, pretrain_args):
             example["annotated_text"],          # or whatever your input field is
             truncation=True,
             padding="max_length",               # or "longest" for dynamic padding
-            max_length=512,                     # or whatever your fine-tune max_len is
+            max_length=pretrain_args.max_seq_length,                     # or whatever your fine-tune max_len is
         )
 
         tokenized["labels"] = tokenized["input_ids"].copy()
         tokenized["labels"] = [-100 if token == tokenizer.pad_token_id else token for token in tokenized["labels"]] 
         return tokenized
 
-    def tokenize_fn(example, max_length = 512):
+    def tokenize_fn(example, max_length = 2048):
 
         # Prepare prompt
         # prompt = "Question:\n" + example["question"] + "\nAnswer:\n"
@@ -182,7 +181,7 @@ def main(script_args, training_args, model_args, pretrain_args):
         training_args.do_eval = False
         eval_dataset = None
     else:
-        eval_dataset = {key: ds.map(tokenize_fn_raw, batched=False, remove_columns=["annotated_text"]) for key, ds in eval_dataset.items()}
+        eval_dataset = {key: ds.map(tokenize_fn, batched=False, remove_columns=["annotated_text"], fn_kwargs={"max_length" : pretrain_args.max_seq_length}) for key, ds in eval_dataset.items()}
         eval_dataset = {
             k: ds.remove_columns([col for col in ds.column_names if col not in keep_keys])
             for k, ds in eval_dataset.items()
@@ -199,6 +198,7 @@ def main(script_args, training_args, model_args, pretrain_args):
 
     training_args.compute_loss_func=partial(compute_loss_func, include_eos=True) # pretrain weighted loss
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+    # data_collator = default_data_collator
 
     assert tokenizer.eos_token_id in train_dataset[0]["input_ids"], "Eos token not in input_ids"
     check(train_dataset, data_collator, tokenizer)
@@ -213,7 +213,6 @@ def main(script_args, training_args, model_args, pretrain_args):
         train_dataset=train_dataset,
         eval_dataset=eval_dataset if training_args.eval_strategy != "no" else None,
         processing_class=tokenizer,
-        peft_config=get_peft_config(model_args),
         compute_metrics=compute_metrics,
         data_collator=data_collator, # important to set this to the tokenizer
         compute_loss_func=partial(compute_loss_func, include_eos=True), # include eos token in loss computation, since we want to train the model to generate eos token
