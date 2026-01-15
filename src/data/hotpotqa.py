@@ -124,6 +124,62 @@ def _normalize_examples_pylist(examples: List[Dict[str, Any]]) -> HFDataset:
     return HFDataset.from_list(rows)
 
 
+def _build_hotpotqa_rag_contexts_from_raw(examples: List[Dict[str, Any]]) -> List[str]:
+    """Build a global RAG corpus from raw HotpotQA JSON examples."""
+    contexts: List[str] = []
+    for ex in examples:
+        context_field = ex.get("context")
+        if isinstance(context_field, dict):
+            titles = context_field.get("title")
+            sentences = context_field.get("sentences")
+            if not isinstance(titles, list) or not isinstance(sentences, list):
+                continue
+            for i, title in enumerate(titles):
+                sents_i = sentences[i] if i < len(sentences) else []
+                sent_list = [s for s in (sents_i or [])]
+                paragraph = f"{title}: " + " ".join(sent_list).strip()
+                paragraph = paragraph.strip()
+                if paragraph:
+                    contexts.append(paragraph)
+            continue
+        if isinstance(context_field, list):
+            for item in context_field:
+                if not isinstance(item, (list, tuple)) or len(item) != 2:
+                    continue
+                title, sents_i = item
+                if not isinstance(sents_i, list):
+                    continue
+                sent_list = [s for s in (sents_i or [])]
+                paragraph = f"{title}: " + " ".join(sent_list).strip()
+                paragraph = paragraph.strip()
+                if paragraph:
+                    contexts.append(paragraph)
+    return contexts
+
+
+def _dedupe_nonempty_paragraphs(paragraphs: List[str]) -> List[str]:
+    seen = set()
+    output: List[str] = []
+    for paragraph in paragraphs:
+        text = str(paragraph).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        output.append(text)
+    return output
+
+
+def load_hotpotqa_rag_corpus(path: str) -> List[str]:
+    """Load and build a deduplicated HotpotQA RAG corpus from a JSON file."""
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict) and "data" in data:
+        data = data["data"]
+    if not isinstance(data, list):
+        raise ValueError(f"Unexpected HotpotQA JSON format at {path}")
+    return _dedupe_nonempty_paragraphs(_build_hotpotqa_rag_contexts_from_raw(data))
+
+
 def _normalize_hf_dataset(ds: HFDataset) -> HFDataset:
     def _map(ex: Dict[str, Any]) -> Dict[str, Any]:
         ex_id = ex.get("_id") or ex.get("id") or ""
