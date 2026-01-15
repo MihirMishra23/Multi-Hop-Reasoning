@@ -115,12 +115,21 @@ fi
 # output_dir = script_args.model_path.split('/')[-1]+'-'+str(grpo_config.loss_type)+'-g'+str(grpo_config.num_generations)+'-bs'+str(grpo_config.per_device_train_batch_size)+'-s'+str(grpo_config.gradient_accumulation_steps)+'-b'+str(grpo_config.beta)+'-ep'+str(grpo_config.num_train_epochs)+'-n'+str(script_args.train_size)
 OUTPUT_DIR="${SAVE_DIR}/${MODEL_PATH##*/}-${LOSS_TYPE}-g${NUM_GENERATIONS}-bs${PER_DEVICE_TRAIN_BATCH_SIZE}-s${GRADIENT_ACCUMULATION_STEPS}-b${BETA}-ep${NUM_TRAIN_EPOCHS}-n${TRAIN_SIZE}"
 
+# Use it in training
+LAST_CKPT=$(ls -d $OUTPUT_DIR/checkpoint-* 2>/dev/null | sort -V | tail -n 1)
+if [ -n "$LAST_CKPT" ]; then
+    RESUME_FROM_CHECKPOINT="--resume_from_checkpoint=${LAST_CKPT}"
+else
+    RESUME_FROM_CHECKPOINT=""
+fi
+
 echo "Starting GRPO training with:"
 echo "  Model: ${MODEL_PATH}"
 echo "  Database: ${DATABASE_PATH}"
 echo "  Output: ${OUTPUT_DIR}"
 echo "  GPUs: ${NUM_GPUS}"
 echo "  GPU Type: ${GPU_TYPE}"
+echo "  Resume from checkpoint: ${RESUME_FROM_CHECKPOINT}"
 
 accelerate launch \
   --num_processes=${NUM_GPUS} \
@@ -158,7 +167,8 @@ accelerate launch \
   --top_k=${TOP_K} \
   --num_train_epochs=${NUM_TRAIN_EPOCHS} \
   --save_strategy=steps \
-  --save_total_limit=4 \
-  --save_steps=0.25
+  --save_total_limit=5 \
+  --save_steps=0.2 \
+  ${RESUME_FROM_CHECKPOINT}
 
 echo "Training completed!"
