@@ -25,7 +25,6 @@ import logging
 import gc
 from typing import Dict, Any, List
 from tqdm import tqdm
-from datetime import datetime
 
 # Fix OpenMP conflict when multiple libraries link to different OpenMP runtimes
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -76,7 +75,7 @@ def process_single_batch(
         return False
 
     # Build output path
-    filename = f"{args.split}_seed={args.seed}_bn={batch_number}_bs={args.batch_size}_{datetime.now().strftime('%Y-%m-%d_%H_%M')}.json"
+    filename = f"{args.split}_seed={args.seed}_bn={batch_number}_bs={args.batch_size}.json"
     output_path = os.path.join(output_dir, filename)
 
     # Check if already exists (for resume)
@@ -315,7 +314,9 @@ def main() -> None:
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
 
     # Build directory structure: type/dataset_setting/model/
-    output_dir = base_output_dir
+    dataset_setting = f"{args.dataset}_{args.setting}"
+    model_name = args.model or "unknown-model"
+    output_dir = os.path.join(base_output_dir, args.method, dataset_setting, model_name)
 
     os.makedirs(output_dir, exist_ok=True)
 
