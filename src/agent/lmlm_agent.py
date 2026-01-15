@@ -1,13 +1,10 @@
-from src.agent.agent import Agent, AgentStep
+from agent.agent import Agent, AgentStep
 import re
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from src.lmlm.database.database_manager import DatabaseManager
+from multi_lmlm.database.database_manager import DatabaseManager
 from transformers import LogitsProcessor
-from src.lmlm.constants import DB_START_TOKEN
-from src.lmlm.constants import DB_SEP_TOKEN
-from src.lmlm.constants import DB_RETRIEVE_TOKEN
-from src.lmlm.constants import DB_END_TOKEN
+from multi_lmlm.constants import DB_END_TOKEN, ANSWER_START_TOKEN, DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, ANSWER_END_TOKEN
 
 def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
         output_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
@@ -18,7 +15,6 @@ def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
             output_text = tokenizer.decode(outputs[0][input_len:], clean_up_tokenization_spaces=True) 
             # logger.info(f"decode again: {output_text}")
         return output_text  
-
 
 class LogitBiasProcessor(LogitsProcessor):
     def __init__(self, bias_dict: dict):
@@ -34,11 +30,11 @@ class LogitBiasProcessor(LogitsProcessor):
         return scores
 
 class LMLMAgent(Agent):
-    def __init__(self, model_path = "/home/rtn27/LMLM_develop/training/llama3.2-1b/checkpoints/_full_ep10_bsz128_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6):
+    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6, adaptive : bool = False):
         self.model_path = model_path
         self.database_path = database_path
         self.db = DatabaseManager()
-        self.db.load_database(database_path)
+        self.db.load_database(database_path, adaptive= adaptive)
         self.device ="cuda" if torch.cuda.is_available() else "cpu"
         self.tok = AutoTokenizer.from_pretrained(model_path)
         self.model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16 if self.device=="cuda" else None)
@@ -47,6 +43,9 @@ class LMLMAgent(Agent):
 
     def create_prompt_from_query(self, query):
         return f"Question:\n{query}\nAnswer:\n"
+    
+    def create_prompt_from_query_batch(self, queries : list[str]):
+        return [self.create_prompt_from_query(query) for query in queries]
 
     def run(self, query : str,  max_tokens = 256, temperature = 0.0):
         count = 0
@@ -71,7 +70,7 @@ class LMLMAgent(Agent):
 
             prompt += output_text
 
-            if prompt.endswith("<answer/>"):
+            if prompt.endswith(ANSWER_END_TOKEN):
                 break
 
             # Check if <|db_return|> is present
@@ -83,7 +82,8 @@ class LMLMAgent(Agent):
             try:
                 split = prompt.rsplit(DB_START_TOKEN)
                 db_query = split[-1]
-                return_value = self.db.retrieve_from_database(DB_START_TOKEN  + db_query, 0.0) #ignoring the threshold, for now using top1 fallback policy
+                return_values = self.db.retrieve_from_database(DB_START_TOKEN  + db_query, 0.6) 
+                return_value = ", ".join(return_values)
             except Exception as e:
                 print(f"Database lookup failed: {e}")
 
@@ -91,16 +91,16 @@ class LMLMAgent(Agent):
             #### Step 4: Append retrieved value and db_end token
             prompt += return_value + DB_END_TOKEN
         try:
-            answer = prompt.split("<answer>")[1].split("<answer/>")[0]
+            answer = prompt.split(ANSWER_START_TOKEN)[1].split(ANSWER_END_TOKEN)[0]
             trace = [AgentStep(prompt, answer, "generate")]
             return answer, trace
         except Exception as e:
             return "", [AgentStep(prompt, "", "generate")]
-
+        
 
 if __name__ == '__main__':
     #testing script
-    agent = LMLMAgent(model_path = "/home/rtn27/LMLM_develop/training/qwen3-1.7b/checkpoints/_full_ep10_bsz32_new_qa", database_path="/home/rtn27/LMLM/build-database/triplets/hotpotqa_1k_42_dev_triplets.json")
+    agent = LMLMAgent(model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path="/share/j_sun/lmlm_multihop/database/gemini/generated_database_validation_42_1000.json")
     for i in range(20):
         answer, trace = agent.run("What is the first two words of the fifth studio album of Joseph Edgar Foreman?")
         # print("answer: \n\n", answer, "\n\n")

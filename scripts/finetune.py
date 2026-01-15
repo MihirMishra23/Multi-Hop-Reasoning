@@ -22,15 +22,15 @@ from trl import (
 from transformers import DataCollatorWithPadding
 from functools import partial
 
-from lmlm.training.utils.utils_metrics import (
+from multi_lmlm.training.utils.utils_metrics import (
     compute_loss_func,
     set_wandb,
     set_tokenizer,
     compute_metrics,
     set_use_special_dblookup_tokens,
 )
-from lmlm.training.utils.load_model import initialize_model_for_pretraining, load_model_for_ft_baseline
-from lmlm.training.utils.load_sft_dataset import prepare_pretrain_data
+from multi_lmlm.training.utils.load_model import initialize_model_for_pretraining, load_model_for_ft_baseline
+from multi_lmlm.training.utils.load_sft_dataset import prepare_pretrain_data
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +41,7 @@ class PretrainConfig:
     use_special_dblookup_tokens: bool = False
     plain_baseline: bool = False
     eval_only: bool = False
+    max_seq_length: int = 512
 
 
 def set_random_seed(seed: int):
@@ -98,18 +99,11 @@ def main(script_args, training_args, model_args, pretrain_args):
     if accelerator.is_main_process:
         logger.info(f"use_special_dblookup_tokens = {pretrain_args.use_special_dblookup_tokens}")
 
-    if training_args.resume_from_checkpoint:
-        # ft baseline instead of pretraining
-        model, tokenizer = load_model_for_ft_baseline(
-            model_args,
-            resume_from_checkpoint=training_args.resume_from_checkpoint,
-            use_special_dblookup_tokens=pretrain_args.use_special_dblookup_tokens,
-        )
-    else:
-        model, tokenizer = initialize_model_for_pretraining(
-            model_args,
-            use_special_dblookup_tokens=pretrain_args.use_special_dblookup_tokens,
-        )
+    model, tokenizer = load_model_for_ft_baseline(
+        model_args,
+        resume_from_checkpoint=training_args.resume_from_checkpoint,
+        use_special_dblookup_tokens=pretrain_args.use_special_dblookup_tokens,
+    )
 
     tokenizer.pad_token = tokenizer.eos_token
     
@@ -177,7 +171,7 @@ def main(script_args, training_args, model_args, pretrain_args):
             "labels": labels,
         }
 
-    train_dataset = train_dataset.map(tokenize_fn, batched=False, remove_columns=["annotated_text"], fn_kwargs={"max_length" : training_args.max_seq_length })
+    train_dataset = train_dataset.map(tokenize_fn, batched=False, remove_columns=["annotated_text"], fn_kwargs={"max_length" : pretrain_args.max_seq_length })
 
     keep_keys = ["input_ids", "attention_mask", "labels"]
     train_dataset = train_dataset.remove_columns([col for col in train_dataset.column_names if col not in keep_keys])
@@ -228,8 +222,9 @@ def main(script_args, training_args, model_args, pretrain_args):
 
     # don't resume training that is the case for tofu ft. only load the model weights
     trainer.train()
-    eval_results = trainer.evaluate()
-    logger.info("Evaluation results:\n" + json.dumps(eval_results, indent=4))
+    if eval_dataset:
+        eval_results = trainer.evaluate()
+        logger.info("Evaluation results:\n" + json.dumps(eval_results, indent=4))
 
     logger.info(f"Saving model to: {training_args.output_dir}")
     trainer.save_model(training_args.output_dir)

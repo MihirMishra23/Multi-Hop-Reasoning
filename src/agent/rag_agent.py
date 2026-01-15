@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.agent.agent import Agent, AgentStep, LLM, LLMResponse
-from src.tools.retrieval import BaseRetriever, FlashRAGBM25Retriever, FlashRAGBM25CorpusRetriever
+from agent.agent import Agent, AgentStep, LLM, LLMResponse
+from tools.retrieval import BaseRetriever, FlashRAGBM25Retriever, FlashRAGBM25CorpusRetriever
 
 
 def _join_evidence(docs: List[str]) -> str:
