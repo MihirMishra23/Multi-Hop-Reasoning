@@ -5,14 +5,15 @@ export CUDA_LAUNCH_BLOCKING=1
 export TORCH_USE_CUDA_DSA=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-export WANDB_PROJECT=lmlm_multi_hop
+export WANDB_ENTITY=ryan-noonan-cornell-university
+export WANDB_PROJECT=LMLM-Multihop
 
 # DEBUG
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN   # or TRITON
 export VLLM_USE_FLASHINFER=0
 
 
-# bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/grpo_train.sh --gpu_type B200
+# bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/grpo_train.sh --gpu_type H100
 # Default values
 GPU_TYPE="B200"
 # MODEL_PATH="Qwen/Qwen3-1.7B"
@@ -86,9 +87,9 @@ if [ "$GPU_TYPE" == "B200" ]; then
 elif [ "$GPU_TYPE" == "H100" ]; then
     # H100 debug
     NUM_GPUS=2
-    NUM_GENERATIONS=4
-    PER_DEVICE_TRAIN_BATCH_SIZE=4
-    GRADIENT_ACCUMULATION_STEPS=1
+    NUM_GENERATIONS=8
+    PER_DEVICE_TRAIN_BATCH_SIZE=8
+    GRADIENT_ACCUMULATION_STEPS=16
     VLLM_GPU_MEMORY_UTILIZATION=0.2
 fi
 
