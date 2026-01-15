@@ -5,4 +5,4 @@ tqdm>=4.65.0
 faiss-cpu
 transformers>=4.30.0
 torch>=2.0.0
-sentence-transformers==5.1.2
+sentence-transformers>=5.1.2

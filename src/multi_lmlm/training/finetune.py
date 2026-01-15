@@ -16,9 +16,9 @@ from trl import (
     DataCollatorForCompletionOnlyLM,
 )
 
-from lmlm.training.utils.load_model import load_llama3_for_instruction_tuning
-from lmlm.training.utils.load_sft_dataset import prepare_instruction_tuning_data
-from lmlm.training.utils.utils_metrics import (
+from multi_lmlm.training.utils.load_model import load_llama3_for_instruction_tuning
+from multi_lmlm.training.utils.load_sft_dataset import prepare_instruction_tuning_data
+from multi_lmlm.training.utils.utils_metrics import (
     set_wandb,
     set_tokenizer,
     preprocess_logits_for_metrics,

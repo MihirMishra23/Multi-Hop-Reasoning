@@ -1,8 +1,8 @@
 import argparse
 import os
 from datasets import load_dataset
-from lmlm.database.database_manager import DatabaseManager
-from lmlm.training.utils.utils_filter import filter_invalid_dblookups
+from multi_lmlm.database.database_manager import DatabaseManager
+from multi_lmlm.training.utils.utils_filter import filter_invalid_dblookups
 
 
 def load_args():

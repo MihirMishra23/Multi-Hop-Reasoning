@@ -6,9 +6,9 @@ from tqdm import tqdm
 
 from .annotate.annotators import ChatGPTAnnotator, LlamaAnnotator, LlamaLoraAnnotator
 from e.data_manager import Example, DataManager
-from lmlm.annotate.utils import get_save_name
-from lmlm.annotate.dataloader import prepare_data
-from lmlm.constants import DATA_DIR
+from multi_lmlm.annotate.utils import get_save_name
+from multi_lmlm.annotate.dataloader import prepare_data
+from multi_lmlm.constants import DATA_DIR
 
 
 if __name__=="__main__":

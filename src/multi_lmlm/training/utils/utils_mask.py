@@ -4,7 +4,7 @@ from itertools import chain
 import torch
 import numpy as np
 from transformers import PreTrainedTokenizer
-from lmlm.constants import DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, DB_END_TOKEN
+from multi_lmlm.constants import DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, DB_END_TOKEN
 
 MASK_CATEGORIES = ["entity", "relationship", "value", "org", "pretrain"]
 USE_SPECIAL_DBLOOKUP_TOKENS = True  # Set to True if using special tokens for dblookup
