@@ -48,10 +48,11 @@ class LMLMGRPOTrainer(GRPOTrainer):
             reward_processing_classes=reward_processing_classes,
             callbacks=callbacks,
             optimizers=optimizers,
-            tools=tools,
+            tools=None,  # <-- Pass None to skip parent's tool initialization
             rollout_func=rollout_func,
         )
-        
+        self.tools = tools
+
         # Override stop_token_ids to include DB_RETRIEVE_TOKEN
         self.stop_token_ids = [
             self.processing_class.eos_token_id,
