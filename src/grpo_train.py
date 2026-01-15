@@ -129,7 +129,7 @@ def main():
     
     # Start training
     print("Starting training...")
-    trainer.train()
+    trainer.train(resume_from_checkpoint=grpo_config.resume_from_checkpoint)
     print("Training completed!")
 
 
