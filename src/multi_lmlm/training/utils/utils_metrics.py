@@ -39,6 +39,7 @@ def set_wandb():
         wandb.init(
             project=os.getenv("WANDB_PROJECT"),
             entity=os.getenv("WANDB_ENTITY"),
+            name=os.getenv("WANDB_NAME")
         )
 
 
