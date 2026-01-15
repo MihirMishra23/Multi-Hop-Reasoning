@@ -94,6 +94,8 @@ from trl.trainer.utils import (
     # start_event_loop_in_daemon,
     unsplit_pixel_values_by_grid,
 )
+from multi_lmlm.training.utils.utils_metrics import compute_pretrain_mask, set_tokenizer, set_use_special_dblookup_tokens
+set_use_special_dblookup_tokens(True)
 
 if is_vllm_available():
     from vllm import LLM, SamplingParams
@@ -104,7 +106,7 @@ if is_wandb_available():
 if is_bitsandbytes_available():
     import bitsandbytes as bnb
 
-def extract_db_lookup(text : str) -> str | None:
+def extract_db_lookup_last(text : str) -> str | None:
     # BUG: does it need to extract all the db_lookup or the last one?
     #Used in _tool_call_loop 
     if DB_START_TOKEN in text and DB_RETRIEVE_TOKEN in text:
@@ -112,6 +114,7 @@ def extract_db_lookup(text : str) -> str | None:
         # return DB_START_TOKEN + text.split(DB_START_TOKEN)[1].split(DB_END_TOKEN)[0] + DB_RETRIEVE_TOKEN # BUG
     else:
         return None
+
 logger = get_logger(__name__)
 
 # What we call a reward function is a callable that takes a list of prompts and completions and returns a list of
@@ -276,8 +279,8 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Model
         if isinstance(model, str):
             model_init_kwargs = args.model_init_kwargs or {}
-            # Special case for DeepSpeed: requires device_map=None ("auto" fails)
-            if args.distributed_state.distributed_type == "DEEPSPEED":
+            # Distributed training requires device_map=None ("auto" fails)
+            if args.distributed_state.distributed_type in ["MULTI_GPU", "DEEPSPEED"]:
                 model_init_kwargs["device_map"] = None
             model = create_model_from_path(model, **model_init_kwargs)
         else:
@@ -320,6 +323,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         # fix BUG
         self.db_retrieve_token_id = tokenizer.encode(DB_RETRIEVE_TOKEN)[0]
         self.db_end_token_id = tokenizer.encode(DB_END_TOKEN)[0]
+        set_tokenizer(tokenizer)
 
         # Non-quantized models do not have the `is_loaded_in_{8,4}bit` attributes, whereas quantized models do
         if getattr(model, "is_loaded_in_4bit", False) or getattr(model, "is_loaded_in_8bit", False):
@@ -511,7 +515,8 @@ class LMLMGRPOTrainer(BaseTrainer):
             # For deepspeed, fsdp or non-distributed models, create a reference model from scratch
             model_init_kwargs = args.model_init_kwargs or {}
             # Special case for DeepSpeed: requires device_map=None ("auto" fails)
-            if self.args.distributed_state.distributed_type == "DEEPSPEED":
+            # fix BUG: multi-GPU
+            if args.distributed_state.distributed_type in ["MULTI_GPU", "DEEPSPEED"]:
                 model_init_kwargs["device_map"] = None
             self.ref_model = create_model_from_path(get_config_model_id(self.model.config), **model_init_kwargs)
 
@@ -641,6 +646,10 @@ class LMLMGRPOTrainer(BaseTrainer):
                     # Important so temperature scaling/logit tweaking affects the TIS log probs
                     logprobs_mode="processed_logprobs",
                     quantization=vllm_quantization,
+                    ## BUG: illegal memory access
+                    # enforce_eager=True,
+                    # enable_prefix_caching=False, # serving feature; off for RL
+                    ##
                 )
                 if self.args.vllm_enable_sleep_mode:
                     self.llm.sleep(level=2)
@@ -1385,9 +1394,10 @@ class LMLMGRPOTrainer(BaseTrainer):
         return prompt_ids, completion_ids, logprobs, extra_fields
 
     def _tool_call_loop(self, prompts, prompt_ids, completion_ids, completions, logprobs):
-
+        # BUG: potential issue of chat template.
+        print(f">>> tool call loop {len(prompts)}")
         # Tool execution loop: execute tools, then regenerate completions with tool results appended to the prompt
-        tool_calls = [extract_db_lookup(completion) for completion in completions]
+        tool_calls = [extract_db_lookup_last(completion) for completion in completions]
         # idx list with tool calls
         idxs_with_tool = [idx for idx, tool_call in enumerate(tool_calls) if tool_call]
 
@@ -1399,6 +1409,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         while idxs_with_tool:
             prompt_completion_tools = [prompts[i] for i in idxs_with_tool]  # select only prompts that need tool calls
 
+            ## Stage 1
             # Call the tools, and build the new prompt for generation
             for idx in range(len(idxs_with_tool)):
                 idx_with_tool = idxs_with_tool[idx]
@@ -1420,43 +1431,47 @@ class LMLMGRPOTrainer(BaseTrainer):
                 completions[idx_with_tool] += result
                 value_ids = self.processing_class(result, add_special_tokens = False)["input_ids"]
                 completion_ids[idx_with_tool] += value_ids
-                logprobs[idx_with_tool] += [0.0] * len(value_ids)
+                if logprobs is not None:
+                    logprobs[idx_with_tool] += [0.0] * len(value_ids)
 
             # Tokenize and filter samples whose length exceeds max allowed length. This is important, because both
             # vLLM and transformers will error out if the input is longer than the model's max length.
             
             ## TODO: for debug. comment out
+            if self.use_vllm and self.vllm_mode == "colocate":
+                max_model_len = self.llm.llm_engine.model_config.max_model_len
+            elif not self.use_vllm:
+                max_model_len = self.model.config.max_position_embeddings
+            else:
+                raise NotImplementedError(
+                    f"Unsupported mode detected: use_vllm={self.use_vllm}, vllm_mode={self.vllm_mode}"
+                )
+
+            # check if prompt_completion_tools is overlong
             # pct_ids = self.processing_class(
             #     prompt_completion_tools
             # )["input_ids"]
-            # if self.use_vllm and self.vllm_mode == "colocate":
-            #     max_model_len = self.llm.llm_engine.model_config.max_model_len
-            # elif not self.use_vllm:
-            #     max_model_len = self.model.config.max_position_embeddings
-            # else:
-            #     raise NotImplementedError(
-            #         f"Unsupported mode detected: use_vllm={self.use_vllm}, vllm_mode={self.vllm_mode}"
-            #     )
-            # overlong = [len(pct) >= max_model_len for pct in pct_ids]
-            # for idx in range(len(idxs_with_tool)):
-            #     idx_with_tool = idxs_with_tool[idx]
-            #     if overlong[idx]:
-            #         raise Exception("test exception")
-            #         prompt_length = len(prompt_ids[idx_with_tool])
-            #         ct = pct_ids[idx][prompt_length : prompt_length + self.max_completion_length]
-            #         completion_ids[idx_with_tool] = ct
-            #         if logprobs is not None:
-            #             logprobs[idx_with_tool] = logprobs[idx_with_tool][:len(ct)]
-            # # Keep only non-overlong items for further processing
-            # idxs_with_tool = [idx for idx, o in zip(idxs_with_tool, overlong, strict=True) if not o]
-            # prompt_completion_tools = [pct for pct, o in zip(prompt_completion_tools, overlong, strict=True) if not o]
-            # if not idxs_with_tool:
-            #     print("all overlong, exit tool loop")
-            #     import pdb; pdb.set_trace()
-            #     print("prompt_completion_tools :", prompt_completion_tools)
-            #     break  # all overlong, exit tool loop
-            ## TODO: for debug. comment out
-
+            overlong = [len(prompt_ids[idx]) + len(completion_ids[idx]) >= max_model_len or len(completion_ids[idx]) >= self.max_completion_length for idx in idxs_with_tool]
+            assert len(overlong) == len(prompt_completion_tools), f"overlong of length {len(overlong)} and prompt_completion_tools of length {len(prompt_completion_tools)} are not the same length"
+            
+            for idx in range(len(idxs_with_tool)):
+                idx_with_tool = idxs_with_tool[idx]
+                if overlong[idx]:
+                    prompt_length = len(prompt_ids[idx_with_tool])
+                    # NOTE: very brutal truncation.
+                    # ct = pct_ids[idx][prompt_length : prompt_length + self.max_completion_length]
+                    per_max_completion_length = min(self.max_completion_length, max_model_len - prompt_length)
+                    completion_ids[idx_with_tool] = completion_ids[idx_with_tool][:per_max_completion_length]
+                    if logprobs is not None:
+                        logprobs[idx_with_tool] = logprobs[idx_with_tool][:per_max_completion_length]
+            # Keep only non-overlong items for further processing
+            idxs_with_tool = [idx for idx, o in zip(idxs_with_tool, overlong, strict=True) if not o]
+            prompt_completion_tools = [pct for pct, o in zip(prompt_completion_tools, overlong, strict=True) if not o]
+            if not idxs_with_tool:
+                print("all overlong, exit tool loop")
+                break  # all overlong, exit tool loop
+            
+            ## Stage 2
             # Generate new completions after tool execution
             # BUG: prompt_completion_tool_ids has been compressed.
             ## NOTE: p = prompt + query1 + value1, c = query1 + value1, cids = query1 + value1, lp = query1 + value1, prompt_completion_tool_ids = prompt + query1 + value1 + query2. post_tool_ids = query2
@@ -1466,14 +1481,6 @@ class LMLMGRPOTrainer(BaseTrainer):
 
             for i in range(len(post_tool_logprobs)):
                 assert len(post_tool_ids[i]) == len(post_tool_logprobs[i]), f"prompt_completion_tool_ids of length {len(prompt_completion_tool_ids[i])} and post_tool_ids of length {len(post_tool_ids[i])} are not the same length"
-            # print("prompt_completion_tool_ids :", prompt_completion_tool_ids)
-            # print("post_tool_ids :", post_tool_ids)
-            # print("post_tool_logprobs :", post_tool_logprobs)
-            # # decode 
-            # print("prompt_completion_tool_ids :", self.processing_class.convert_ids_to_tokens(completion_ids[0], skip_special_tokens=False))
-            # print("post_tool_ids :", self.processing_class.decode(post_tool_ids[0], skip_special_tokens=False))
-            # assert len(post_tool_ids[0]) == len(post_tool_logprobs[0]), f"post_tool_ids of length {len(post_tool_ids[0])} and post_tool_logprobs of length {len(post_tool_logprobs[0])} are not the same length"
-            # import pdb; pdb.set_trace()
 
             # Sanity check: from experience, this is useful to catch bugs in the chat template
             ## TODO: for debug. comment out
@@ -1487,23 +1494,24 @@ class LMLMGRPOTrainer(BaseTrainer):
             #         )
             ## TODO: for debug. comment out
 
-            # Truncate so that pct[len(prompt_ids[idx]) :] + post_tool does not exceed max_completion_length
-            ## TODO: for debug. comment out
+            # # Truncate so that pct[len(prompt_ids[idx]) :] + post_tool does not exceed max_completion_length
+            # # NOTE: shit coding logit. move it after update completion_ids with the new completions
             # for idx in range(len(idxs_with_tool)):
             #     idx_with_tool = idxs_with_tool[idx]
-                # prompt_len = len(prompt_ids[idx_with_tool])
-                # completion_tool_ids = prompt_completion_tool_ids[idx][prompt_len:]
-                # excess_length = len(completion_tool_ids) + len(post_tool_ids[idx]) - self.max_completion_length
-                # if excess_length > 0:
-                #     # If exceeding max length, truncate post_tool_ids
-                #     post_tool_ids[idx] = post_tool_ids[idx][:-excess_length]
-                #     if logprobs is not None:
-                #         post_tool_logprobs[idx] = post_tool_logprobs[idx][:-excess_length]
-                #     excess_length = len(completion_tool_ids) + len(post_tool_ids[idx]) - self.max_completion_length
-                #     if excess_length > 0:
-                #         # If still exceeding max length, truncate completion_tool_ids as well
-                #         prompt_completion_tool_ids[idx] = prompt_completion_tool_ids[idx][:-excess_length]
-            ## TODO: for debug. comment out
+            #     prompt_len = len(prompt_ids[idx_with_tool])
+            #     # completion_tool_ids = prompt_completion_tool_ids[idx][prompt_len:]
+            #     # BUG: protentially mess up the idx and idx_with_tool
+            #     excess_length = len(completion_ids[idx_with_tool]) + len(post_tool_ids[idx]) - self.max_completion_length
+            #                global                         +      WRONG: post_tool_ids is local-sized
+            #     if excess_length > 0:
+            #         # If exceeding max length, truncate post_tool_ids
+            #         post_tool_ids[idx] = post_tool_ids[idx][:-excess_length]
+            #         if logprobs is not None:
+            #             post_tool_logprobs[idx] = post_tool_logprobs[idx][:-excess_length]
+            #         excess_length = len(completion_ids[idx_with_tool]) + len(post_tool_ids[idx]) - self.max_completion_length
+            #         if excess_length > 0:
+            #             # If still exceeding max length, truncate completion_tool_ids as well
+                    #     prompt_completion_tool_ids[idx_with_tool] = prompt_completion_tool_ids[idx_with_tool][:-excess_length]
 
             # Update tool_mask: the tool result should be 0 and the post-tool 1
             # for idx in range(len(idxs_with_tool)):
@@ -1523,23 +1531,48 @@ class LMLMGRPOTrainer(BaseTrainer):
                     ## NOTE: logprobs = query1 + value1 + query2
                     logprobs[idx_with_tool] += post_tool_logprobs[idx]
                     assert len(logprobs[idx_with_tool]) == len(completion_ids[idx_with_tool]), f"logprobs of length {len(logprobs[idx_with_tool])} and completion_ids of length {len(completion_ids[idx_with_tool])} are not the same length"
+                
+                # truncate
+                if len(completion_ids[idx_with_tool]) > self.max_completion_length:
+                    completion_ids[idx_with_tool] = completion_ids[idx_with_tool][:self.max_completion_length]            
+
+                    if logprobs is not None:
+                        logprobs[idx_with_tool] = logprobs[idx_with_tool][:self.max_completion_length]
+
+                    truncate_length = len(completion_ids[idx_with_tool]) - self.max_completion_length
+                    if truncate_length > 0:
+                        if truncate_length >= len(post_tool_ids[idx]):
+                            post_tool_ids[idx] = []
+                            if post_tool_logprobs is not None:
+                                post_tool_logprobs[idx] = []
+                        else:
+                            post_tool_ids[idx] = post_tool_ids[idx][:-truncate_length]
+                            if post_tool_logprobs is not None:
+                                post_tool_logprobs[idx] = post_tool_logprobs[idx][:-truncate_length]
+                    if post_tool_logprobs is not None:
+                        assert len(post_tool_ids[idx]) == len(post_tool_logprobs[idx]), f"post_tool_ids of length {len(post_tool_ids[idx])} and post_tool_logprobs of length {len(post_tool_logprobs[idx])} are not the same length"
+
+
             
             debug_example(completion_ids, completions, logprobs, "after tool call loop")
 
-            # Decode post-tool completions
-            post_tool_completions = [
-                self.processing_class.decode(ids) if ids else "" for ids in post_tool_ids
-            ]
+            # # Decode post-tool completions
+            # post_tool_completions = [
+            #     self.processing_class.decode(ids) if ids else "" for ids in post_tool_ids
+            # ]
+            # decode all completions from completion_ids
+            completions = [self.processing_class.decode(completion_ids[idx], skip_special_tokens=False) for idx in range(len(completion_ids))]
+            post_tool_completions = [self.processing_class.decode(post_tool_ids[idx], skip_special_tokens=False) if len(post_tool_ids[idx]) > 0 else "" for idx in range(len(post_tool_ids))]
 
-            # Add post-tool completions to the existing completions
-            for idx in range(len(idxs_with_tool)):
-                idx_with_tool = idxs_with_tool[idx]
-                if post_tool_completions[idx]:  # {} if post-tool completions completely truncated
-                    ## NOTE: completions = query1 + value1 + query2
-                    completions[idx_with_tool] += (post_tool_completions[idx])
+            # # Add post-tool completions to the existing completions
+            # for idx in range(len(idxs_with_tool)):
+            #     idx_with_tool = idxs_with_tool[idx]
+            #     if post_tool_completions[idx]:  # {} if post-tool completions completely truncated
+            #         ## NOTE: completions = query1 + value1 + query2
+            #         completions[idx_with_tool] += (post_tool_completions[idx])
 
             # Check for further tool calls
-            tool_calls = [extract_db_lookup(completion) for completion in post_tool_completions]
+            tool_calls = [extract_db_lookup_last(completion) for completion in post_tool_completions]
             idxs_with_tool = [idx for idx, tool_call in zip(idxs_with_tool, tool_calls, strict=True) if tool_call]
             tool_calls = [tool_call for tool_call in tool_calls if tool_call]
 
@@ -1547,23 +1580,39 @@ class LMLMGRPOTrainer(BaseTrainer):
         # mask anything in between retrieve tokens and end tokens
         tool_mask = [[] for _ in range(len(completion_ids))]
 
-        for j in range(len(completion_ids)):
-            mask_val = 1
-            for i in completion_ids[j]:
-                if i == self.db_retrieve_token_id:
-                    mask_val = 0
-                    tool_mask[j].append(1)
-                    continue
-                if i == self.db_end_token_id:
-                    mask_val = 1
-                    tool_mask[j].append(0)
-                    continue
-                tool_mask[j].append(mask_val)
+        # for j in range(len(completion_ids)):
+        #     mask_val = 1
+        #     for i in completion_ids[j]:
+        #         if i == self.db_retrieve_token_id:
+        #             mask_val = 0
+        #             tool_mask[j].append(1)
+        #             continue
+        #         if i == self.db_end_token_id:
+        #             mask_val = 1
+        #             tool_mask[j].append(0)
+        #             continue
+        #         tool_mask[j].append(mask_val)
 
-        # debug_example(completion_ids, completions, logprobs, "after mask")
-        
+        # a faster way to do this
+        # completion_ids_tensor = torch.tensor(completion_ids)
+
+        # is_ret = completion_ids_tensor == self.db_retrieve_token_id
+        # is_end = completion_ids_tensor == self.db_end_token_id
+
+        # delta = is_ret.int() - is_end.int()
+        # state = torch.cumsum(delta, dim=1)
+
+        # tool_mask = (state == 0)
+
+        # TODO: need to check if this is correct
         for i in range(len(completion_ids)):
-            assert len(logprobs[i]) == len(completion_ids[i]), f"logprobs of length {len(logprobs[i])} and completion_ids of length {len(completion_ids[i])} are not the same length"
+            tool_mask[i] = compute_pretrain_mask(torch.tensor(completion_ids[i]).unsqueeze(0), include_eos=True).squeeze(0).tolist()
+
+        debug_example(completion_ids, completions, logprobs, "after mask")
+        
+        if logprobs is not None:
+            for i in range(len(completion_ids)):
+                assert len(logprobs[i]) == len(completion_ids[i]), f"logprobs of length {len(logprobs[i])} and completion_ids of length {len(completion_ids[i])} are not the same length"
         return tool_mask, completions, completion_ids, logprobs, tool_call_count, tool_failure_count
 
     def _generate(self, prompts: list):

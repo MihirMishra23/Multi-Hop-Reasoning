@@ -6,14 +6,15 @@ from transformers import AutoTokenizer, HfArgumentParser
 from eval.metrics import exact_match_score
 from trl.trainer.grpo_config import GRPOConfig
 from multi_lmlm.constants import ANSWER_START_TOKEN, ANSWER_END_TOKEN
-
+import wandb
+import os
 
 @dataclass
 class ScriptArguments:
     """Arguments for dataset and paths."""
     model_path: str = field(metadata={"help": "Path to the pretrained model"})
     database_path: str = field(metadata={"help": "Path to the LMLM database JSON file"})
-    
+
     # Dataset parameters
     dataset_name: str = field(
         default="hotpotqa/hotpot_qa",
@@ -68,8 +69,15 @@ def main():
     script_args, lmlm_args, grpo_config = parser.parse_args_into_dataclasses()
 
     # wandb name
-    grpo_config.run_name = script_args.model_path.split('/')[-1]+'-'+str(grpo_config.loss_type)+'-g'+str(grpo_config.num_generations)+'-bs'+str(grpo_config.per_device_train_batch_size)+'-s'+str(grpo_config.gradient_accumulation_steps)
-    
+    grpo_config.run_name = script_args.model_path.split('/')[-1]+'-'+str(grpo_config.loss_type)+'-g'+str(grpo_config.num_generations)+'-bs'+str(grpo_config.per_device_train_batch_size)+'-s'+str(grpo_config.gradient_accumulation_steps)+'-b'+str(grpo_config.beta)+'-ep'+str(grpo_config.num_train_epochs)+'-n'+str(script_args.train_size)
+    # grpo_config.output_dir = os.path.join(script_args.save_dir, grpo_config.run_name)
+    os.makedirs(grpo_config.output_dir, exist_ok=True)
+
+    if wandb.run is not None:
+        wandb.run.name = grpo_config.run_name
+    else:
+        print(f"Wandb run is not initialized, skipping wandb name setting")
+
     # Load and process dataset
     print(f"Loading dataset: {script_args.dataset_name}")
     dataset = load_dataset(script_args.dataset_name, script_args.dataset_config, split="train")
@@ -79,8 +87,8 @@ def main():
     
     # Create train/eval splits
     total_size = len(processed_dataset)
-    train_start = total_size - script_args.train_size - script_args.eval_size
-    train_end = total_size - script_args.eval_size
+    train_start = max(0, total_size - script_args.train_size - script_args.eval_size)
+    train_end = min(total_size, train_start + script_args.train_size)
     
     train_set = processed_dataset.select(range(train_start, train_end))
     eval_set = processed_dataset.select(range(train_end, total_size))
@@ -94,9 +102,6 @@ def main():
     print(f"Loading tokenizer from: {script_args.model_path}")
     tokenizer = AutoTokenizer.from_pretrained(script_args.model_path)
     
-    # Configure run name
-    run_name = script_args.model_path.split('checkpoints/')[1].split("sft")[0] if 'checkpoints/' in script_args.model_path else "grpo_training"
-    grpo_config.run_name = run_name
     
     print(f"GRPO Config:")
     print(f"  Output dir: {grpo_config.output_dir}")
