@@ -54,19 +54,31 @@ def _build_hotpotqa_contexts_from_raw(examples: List[Dict[str, Any]]) -> List[st
     contexts: List[str] = []
     for ex in examples:
         context_field = ex.get("context")
-        if not isinstance(context_field, dict):
+        if isinstance(context_field, dict):
+            titles = context_field.get("title")
+            sentences = context_field.get("sentences")
+            if not isinstance(titles, list) or not isinstance(sentences, list):
+                continue
+            for i, title in enumerate(titles):
+                sents_i = sentences[i] if i < len(sentences) else []
+                sent_list = [s for s in (sents_i or [])]
+                paragraph = f"{title}: " + " ".join(sent_list).strip()
+                paragraph = paragraph.strip()
+                if paragraph:
+                    contexts.append(paragraph)
             continue
-        titles = context_field.get("title")
-        sentences = context_field.get("sentences")
-        if not isinstance(titles, list) or not isinstance(sentences, list):
-            continue
-        for i, title in enumerate(titles):
-            sents_i = sentences[i] if i < len(sentences) else []
-            sent_list = [s for s in (sents_i or [])]
-            paragraph = f"{title}: " + " ".join(sent_list).strip()
-            paragraph = paragraph.strip()
-            if paragraph:
-                contexts.append(paragraph)
+        if isinstance(context_field, list):
+            for item in context_field:
+                if not isinstance(item, (list, tuple)) or len(item) != 2:
+                    continue
+                title, sents_i = item
+                if not isinstance(sents_i, list):
+                    continue
+                sent_list = [s for s in (sents_i or [])]
+                paragraph = f"{title}: " + " ".join(sent_list).strip()
+                paragraph = paragraph.strip()
+                if paragraph:
+                    contexts.append(paragraph)
     return contexts
 
 
@@ -331,6 +343,11 @@ def main() -> None:
         logger.info("Loading RAG corpus from %s", args.rag_corpus_path)
         rag_corpus = _dedupe_nonempty(_load_hotpotqa_contexts_from_path(args.rag_corpus_path))
         logger.info("Loaded %d unique RAG paragraphs", len(rag_corpus))
+        if not rag_corpus:
+            logger.warning(
+                "RAG corpus is empty after loading %s (check format and content).",
+                args.rag_corpus_path,
+            )
 
     args.rag_scope = (
         _infer_rag_scope(args.rag_corpus_path)
