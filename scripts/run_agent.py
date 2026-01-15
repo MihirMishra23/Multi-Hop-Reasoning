@@ -88,7 +88,7 @@ def process_single_batch(
 
     count = 0
     for ex in ds:
-        count += 1
+
         if (count %10 == 0):
             print(f"\n\ncount : {count} \n\n")
         qid = ex.get("id") or ex.get("_id")
@@ -101,9 +101,11 @@ def process_single_batch(
 
         answer, trace = agent.run(
             question,
+            index = count,
             temperature=args.temperature,
             max_tokens=args.max_tokens,
         )
+        count += 1
 
         # Extract evidence docs for RAG if needed
         evidence_docs = []
@@ -127,6 +129,7 @@ def process_single_batch(
                 "error": step.error,
                 "tool_name": step.tool_name,
                 "tool_args": step.tool_args,
+                "golden_triplets" : step.golden_triplets,
             }
             for step in (trace or [])
         ]
@@ -211,6 +214,7 @@ def main() -> None:
         choices=["db", "rag", "icl", "lmlm"],
         help="Agent method label (for output path)",
     )
+    #LMLM related argumentss
     parser.add_argument("--model-path", default=None, help="Local model path")
     parser.add_argument(
         "--database-path",
@@ -221,6 +225,16 @@ def main() -> None:
         "--adaptive-k",
         default=False,
         help="Whether to use adaptive k for lmlm retreival",
+    )
+    parser.add_argument(
+        "--top-k",
+        default=4,
+        help="Maximum number of results to retrieve from database",
+    )
+    parser.add_argument(
+        "--retrieve_triplets",
+        default=False,
+        help="Whether to retrieve entire triplets from database (instead of retrieving only the value)",
     )
     # RAG-related flags
     parser.add_argument(
