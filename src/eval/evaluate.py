@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Tuple, Optional
 
 from .metrics import exact_match_score, f1_score
-from src.data import get_dataset
+from data import get_dataset
 
 
 @dataclass

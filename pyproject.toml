@@ -34,8 +34,7 @@ hotpotqa-evaluate = "hotpotqa.evaluate:main"
 hotpotqa-predict = "hotpotqa.predict:main"
 
 [tool.setuptools.packages.find]
-include = ["eval*", "hotpotqa*"]
-exclude = ["examples*", "scripts*", "tests*"]
+where = ["src"]
 
 [tool.black]
 line-length = 100
