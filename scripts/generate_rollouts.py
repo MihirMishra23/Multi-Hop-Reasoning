@@ -1,4 +1,4 @@
-
+import tiktoken
 import os
 import time
 import asyncio
@@ -7,7 +7,7 @@ from google import genai
 from lmlm.database.database_manager import DatabaseManager
 from synthetic_data.utils import  RolloutMetadata, assert_valid_rollout
 from lmlm.constants import DB_END_TOKEN, DB_RETRIEVE_TOKEN, DB_SEP_TOKEN, DB_START_TOKEN,ANSWER_START_TOKEN, ANSWER_END_TOKEN
-from openai import OpenAI
+from openai import AsyncOpenAI
 from datetime import datetime
 from constants import REPO_ROOT
 from data import get_dataset
@@ -24,6 +24,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--max-generations", type=int, required=True, help="Maximum number of generation iterations")
     parser.add_argument("--start-idx", type=int, required=True, help="Starting index for dataset")
     parser.add_argument("--nb-examples", type=int, required=True, help="Number of examples to process")
+    parser.add_argument("--max-retries", type=int, required=True, help="Per example, max number of times to retry (for failed example)")
     parser.add_argument("--max-concurrent", type=int, required=True, help="Maximum concurrent requests")
     parser.add_argument("--hotpot-setting", type=str, required=True, choices=["distractor", "fullwiki"],
                         help="HotpotQA dataset setting: distractor or fullwiki")
@@ -66,8 +67,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     with open(args.metadata_path, "r") as f:
         args.metadata = json.load(f)
 
-    # Create OpenAI client and add to args
-    args.client = OpenAI(
+    args.client = AsyncOpenAI(
         api_key=os.getenv("GEMINI_API_KEY"),
         base_url="https://generativelanguage.googleapis.com/v1beta/openai"
     )
@@ -75,24 +75,23 @@ def parse_args(argv=None) -> argparse.Namespace:
     return args
 
 
-def gemini_w_db_lookup(prompt: str, args: argparse.Namespace) -> str:
+async def gemini_w_db_lookup(prompt: str, args: argparse.Namespace) -> str:
     current_gen = 1
     res = ""
     input = [{"role" : "system", "content" : args.system_prompt},{"role" : "user" , "content" : prompt}, {"role" : "assistant", "content" : ""}]
     while (current_gen <= args.max_generations):
-        print("On generation number: ", current_gen)
-        print("The prompt is :", input)
-        stream = args.client.chat.completions.create(
+        stream = await args.client.chat.completions.create(
             model=args.model,
             messages=input,
             stream=True,
             max_completion_tokens=2048,
         )
 
-        for char in "".join([chunk.choices[0].delta.content for chunk in stream if chunk.choices[0].delta.content is not None]):
-            if char is None:
-                break
-            res+=char
+
+        async for chunk in stream:
+            if chunk.choices[0].delta.content is None:
+                continue
+            res += chunk.choices[0].delta.content
             if not res.endswith(DB_RETRIEVE_TOKEN):
                 continue
             _, query = res.rsplit(DB_START_TOKEN, 1)
@@ -116,37 +115,31 @@ def gemini_w_db_lookup(prompt: str, args: argparse.Namespace) -> str:
 
 async def process_example(semaphore, example, idx, args: argparse.Namespace):
     async with semaphore:
-        max_retries = 10
+        max_retries = args.max_retries
         retry_delay = 60
         for attempt in range(max_retries):
             try:
-                print(f"\nProcessing example {idx}...")
+                print(f"\nProcessing example {idx + 1}...")
                 question = example["question"]
-                print("here 1")
-                triplets = args.metadata[idx]["triplets"]
-                print("here 2")
+                triplets = args.metadata[args.start_idx + idx]["triplets"]
                 triplets_formatted_str = "\n".join([f"({triplet[0]}, {triplet[1]}, {triplet[2]})" for triplet in triplets])
-                print("here 3")
                 prompt = f"Here is the question: {question}"
 
-                # Run the synchronous gemini_w_db_lookup() in a thread pool
-                result = await asyncio.to_thread(gemini_w_db_lookup, prompt, args)
+                result = await gemini_w_db_lookup(prompt, args)
 
                 if result is None:
                     return None
 
                 assert_valid_rollout(result)
-                print("here 4")
 
                 lmlm_answer = result.split(ANSWER_START_TOKEN)[-1].split(ANSWER_END_TOKEN)[0]
                 answers = example["answers"]
-                print("here 5")
 
                 score = max([f1_score(lmlm_answer, a)[0] for a in answers])
-                print(f"completed exaample {idx}!")
+                print(f"completed example {idx + 1}!")
                 return RolloutMetadata(full_response = "", annotated_text = result, triplets = triplets_formatted_str, golden_answer = answers, f1_score = score, lmlm_answer = lmlm_answer, question = question)
             except Exception as e:
-                print(f"lookup failed with error {e} Retrying, currently at {attempt} retries... ")
+                print(f"Failure on idx {idx}, error {e}. Retrying, currently at {attempt} retries... ")
                 await asyncio.sleep(retry_delay)
 
         print("Failed all retries for example : ", example)
@@ -169,7 +162,7 @@ async def main(args: argparse.Namespace):
     # Create tasks for all examples
     tasks = []
     for idx, example in enumerate(dataset):
-        tasks.append(process_example(semaphore, example, idx + 1, args))
+        tasks.append(process_example(semaphore, example, idx, args))
 
     # Run all tasks concurrently
     results = await asyncio.gather(*tasks)
