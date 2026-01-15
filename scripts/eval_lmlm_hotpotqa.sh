@@ -1,13 +1,14 @@
-MODEL_PATH=/home/rtn27/LMLM_develop/training/qwen3-1.7b/checkpoints/_full_ep10_bsz32_new_qa
-DATABASE_PATH=/home/rtn27/LMLM/build-database/triplets/hotpotqa_1k_42_dev_triplets.json
+MODEL_PATH=/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa
+DATABASE_PATH=/share/j_sun/lmlm_multihop/database/gemini/generated_database_validation_42_1000.json
 METHOD=lmlm
 MAX_TOKENS=512
-BATCH_SIZE=4
-NUMB_BATCHES=-1
-OUTPUT_DIR=/home/rtn27/Multi-Hop-Reasoning/qwen3-1.7b
+BATCH_SIZE=1
+NUMB_BATCHES=1
+OUTPUT_DIR=results/qwen3-1.7b
 SPLIT=dev
 SETTING=distractor
 DATASET=hotpotqa
+SEED=42
 
 
 python scripts/run_agent.py \
@@ -20,4 +21,5 @@ python scripts/run_agent.py \
     --split ${SPLIT} \
     --setting ${SETTING} \
     --dataset ${DATASET} \
-    --num-batches ${NUMB_BATCHES}
+    --num-batches ${NUMB_BATCHES} \
+    --seed ${SEED}

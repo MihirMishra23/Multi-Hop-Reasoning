@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Literal
 
-from src.llm.base import LLM, LLMResponse
+from llm.base import LLM, LLMResponse
 
 
 ActionType = Literal["generate", "toolcall", "finish"]
