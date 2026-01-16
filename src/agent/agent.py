@@ -14,6 +14,7 @@ class AgentStep:
     error: Optional[str] = None
     tool_name: Optional[str] = None
     tool_args: Optional[Dict[str, Any]] = None
+    golden_triplets: Optional[str] = None
 
 
 class Agent:
