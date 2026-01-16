@@ -14,7 +14,7 @@ from torch.nn import CrossEntropyLoss
 import matplotlib.pyplot as plt
 import wandb
 from transformers import EvalPrediction, AutoTokenizer
-from lmlm.training.utils.utils_mask import extract_dblookup_masks, MASK_CATEGORIES
+from multi_lmlm.training.utils.utils_mask import extract_dblookup_masks, MASK_CATEGORIES
 
 
 # --------------------
@@ -86,7 +86,9 @@ def compute_loss_func(outputs, labels, num_items_in_batch, include_eos=False):
         return weighted_loss.sum() / num_items_in_batch
 
 
-def compute_pretrain_mask(shift_labels, include_eos=False):
+def compute_pretrain_mask(shift_labels: torch.Tensor, include_eos=False):
+    if not isinstance(shift_labels, torch.Tensor):
+        shift_labels = torch.tensor(shift_labels)
     if not USE_SPECIAL_DBLOOKUP_TOKENS:
         raise ValueError("Current method does not support USE_SPECIAL_DBLOOKUP_TOKENS=False. It is already deprecated.")
     mask_batch = extract_dblookup_masks(shift_labels, TOKENIZER, pretrain_mask_only=True, include_eos=include_eos)
@@ -94,7 +96,7 @@ def compute_pretrain_mask(shift_labels, include_eos=False):
     pretrain_mask = mask_batch["pretrain"] & valid_mask
     return pretrain_mask # same shape as shift_labels
 
-def compute_org_mask(shift_labels, include_eos=False):   
+def compute_org_mask(shift_labels: torch.Tensor, include_eos=False):   
     mask_batch = extract_dblookup_masks(shift_labels, TOKENIZER, pretrain_mask_only=False, include_eos=include_eos)
     valid_mask = shift_labels != -100
     org_mask = mask_batch["org"] & valid_mask
@@ -342,8 +344,8 @@ def dataset_stats(dataset_name, dataset, tokenizer=None, visualize=False):
         }
 
     try:
-        from lmlm.database.database_manager import extract_database
-        from lmlm.training.utils.utils_filter import clean_dataset
+        from multi_lmlm.database.database_manager import extract_database
+        from multi_lmlm.training.utils.utils_filter import clean_dataset
 
         subset = extract_database(subset)
         db_calls = [len(e["atomic_knowledge"]) for e in subset]

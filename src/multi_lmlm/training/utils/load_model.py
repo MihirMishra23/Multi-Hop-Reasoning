@@ -9,7 +9,7 @@ from transformers import (
     GPT2TokenizerFast,
 )
 from peft import PeftModel
-from lmlm.constants import CONFIGS_DIR, DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, DB_END_TOKEN, TINY_LLAMA2_TOKENIZER_PATH
+from multi_lmlm.constants import CONFIGS_DIR, DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, DB_END_TOKEN, TINY_LLAMA2_TOKENIZER_PATH
 
 
 def initialize_model_for_pretraining(model_args, resume_from_checkpoint=None, use_special_dblookup_tokens=False):
