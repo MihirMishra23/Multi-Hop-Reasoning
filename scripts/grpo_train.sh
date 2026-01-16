@@ -17,7 +17,7 @@ export VLLM_USE_FLASHINFER=0
 # Default values
 GPU_TYPE="B200"
 # MODEL_PATH="Qwen/Qwen3-1.7B"
-MODEL_PATH="/share/j_sun/lz586/checkpoints/lmlm_multi_hop/qwen3-1.7B_sft_v1.3_5743"
+MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48
 DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
 SAVE_DIR=/share/j_sun/lz586/checkpoints/lmlm_multi_hop
 DATASET_NAME="hotpotqa/hotpot_qa"
@@ -79,11 +79,22 @@ done
 
 if [ "$GPU_TYPE" == "B200" ]; then
     # B200
-    NUM_GPUS=2
-    NUM_GENERATIONS=8
-    PER_DEVICE_TRAIN_BATCH_SIZE=16
-    GRADIENT_ACCUMULATION_STEPS=8
-    VLLM_GPU_MEMORY_UTILIZATION=0.15
+    if [[ "${MODEL_PATH}" == *"1.7B"* ]]; then
+        NUM_GPUS=2
+        NUM_GENERATIONS=8
+        PER_DEVICE_TRAIN_BATCH_SIZE=16
+        GRADIENT_ACCUMULATION_STEPS=8
+        VLLM_GPU_MEMORY_UTILIZATION=0.15
+    elif [[ "${MODEL_PATH}" == *"4B"* ]]; then
+        NUM_GPUS=2
+        NUM_GENERATIONS=8
+        PER_DEVICE_TRAIN_BATCH_SIZE=16
+        GRADIENT_ACCUMULATION_STEPS=8
+        VLLM_GPU_MEMORY_UTILIZATION=0.15
+    else
+        echo "Invalid model path: ${MODEL_PATH}"
+        exit 1
+    fi
 elif [ "$GPU_TYPE" == "H100" ]; then
     # H100 debug
     NUM_GPUS=2
