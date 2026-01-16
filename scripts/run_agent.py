@@ -340,6 +340,7 @@ def main() -> None:
         "setting": args.setting,
         "retrieval": args.retrieval,
         "rag_k": args.rag_k,
+        "top_k" : args.top_k,
         "max_steps": args.max_steps,
         "model_path": args.model_path,
         "database_path": args.database_path,
