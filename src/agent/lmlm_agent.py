@@ -3,11 +3,10 @@ from agent.agent import Agent, AgentStep
 import re
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from lmlm.database.database_manager import DatabaseManager
+from multi_lmlm.database.database_manager import DatabaseManager
 from transformers import LogitsProcessor
-from lmlm.constants import DB_END_TOKEN, ANSWER_START_TOKEN, DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, ANSWER_END_TOKEN
+from multi_lmlm.constants import DB_END_TOKEN, ANSWER_START_TOKEN, DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, ANSWER_END_TOKEN
 import os
-
 def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
         output_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
 

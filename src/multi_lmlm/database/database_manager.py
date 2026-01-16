@@ -6,7 +6,7 @@ import logging
 from typing import Dict, List, Optional, Union
 from collections import Counter
 from datasets import DatasetDict
-from lmlm.database.topk_retriever import TopkRetriever
+from multi_lmlm.database.topk_retriever import TopkRetriever
 
 # Setup logger
 logger = logging.getLogger(__name__)

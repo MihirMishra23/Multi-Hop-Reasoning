@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from lmlm.database.database_manager import extract_database
+from multi_lmlm.database.database_manager import extract_database
 
 USE_SPECIAL_DBLOOKUP_TOKENS = True
 def set_use_special_dblookup_tokens(use_special_dblookup_tokens=True):
