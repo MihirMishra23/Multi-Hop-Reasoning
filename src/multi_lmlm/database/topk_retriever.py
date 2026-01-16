@@ -140,7 +140,7 @@ class TopkRetriever:
         print("id to triplet or smth")
         self.id_to_triplet = {i: triplet for i, triplet in enumerate(self.database)}
 
-    def retrieve_top_k(self, entity: str, relation: str, threshold: Optional[float] = None) -> List[str]:
+    def retrieve_top_k(self, entity: str, relation: str, threshold: Optional[float] = None, return_triplets: bool = False) -> List[str]:
         query_text = f"{self._normalize_text(entity)} {self._normalize_text(relation)}"
         query_embedding = self.model.encode([query_text], convert_to_numpy=True, normalize_embeddings=True)
 
@@ -167,8 +167,10 @@ class TopkRetriever:
                     max_idx = i
                     max_diff = differences[i]
             results = results[:max_idx + 1]
-        
 
+        if return_triplets:
+            return_values = [f"({r[0]}, {r[1]}, {r[2]})" for r in results]
+            return return_values[:self.top_k]
 
         return_values = [r[2] for r in results]
         return return_values[:self.top_k]

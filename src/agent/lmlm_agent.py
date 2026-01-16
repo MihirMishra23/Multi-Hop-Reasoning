@@ -1,3 +1,4 @@
+import json
 from agent.agent import Agent, AgentStep
 import re
 import torch
@@ -5,7 +6,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from multi_lmlm.database.database_manager import DatabaseManager
 from transformers import LogitsProcessor
 from multi_lmlm.constants import DB_END_TOKEN, ANSWER_START_TOKEN, DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, ANSWER_END_TOKEN
-
+import os
 def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
         output_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
 
@@ -13,7 +14,6 @@ def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
             output_text = output_text.split(input_text)[-1]
         else:
             output_text = tokenizer.decode(outputs[0][input_len:], clean_up_tokenization_spaces=True) 
-            # logger.info(f"decode again: {output_text}")
         return output_text  
 
 class LogitBiasProcessor(LogitsProcessor):
@@ -30,9 +30,17 @@ class LogitBiasProcessor(LogitsProcessor):
         return scores
 
 class LMLMAgent(Agent):
-    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6, adaptive : bool = False):
+    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6, adaptive : bool = False, top_k : int = 4):
         self.model_path = model_path
         self.database_path = database_path
+        self.top_k = top_k
+        metadata_file = os.path.join(os.path.dirname(database_path), "metadata.json")
+        if os.path.exists(metadata_file):
+            with open(metadata_file, 'r') as f:
+                self.metadata = json.load(f)
+        else:
+            self.metadata = None
+
         self.db = DatabaseManager()
         self.db.load_database(database_path, adaptive= adaptive)
         self.device ="cuda" if torch.cuda.is_available() else "cpu"
@@ -47,7 +55,7 @@ class LMLMAgent(Agent):
     def create_prompt_from_query_batch(self, queries : list[str]):
         return [self.create_prompt_from_query(query) for query in queries]
 
-    def run(self, query : str,  max_tokens = 256, temperature = 0.0):
+    def run(self, query : str,  index : int, max_tokens = 256, temperature = 0.0):
         count = 0
         prompt = self.create_prompt_from_query(query)
 
@@ -82,7 +90,7 @@ class LMLMAgent(Agent):
             try:
                 split = prompt.rsplit(DB_START_TOKEN)
                 db_query = split[-1]
-                return_values = self.db.retrieve_from_database(DB_START_TOKEN  + db_query, 0.6) 
+                return_values = self.db.retrieve_from_database(DB_START_TOKEN  + db_query, 0.6, return_triplets = True, top_k = self.top_k) 
                 return_value = ", ".join(return_values)
             except Exception as e:
                 print(f"Database lookup failed: {e}")
@@ -92,7 +100,11 @@ class LMLMAgent(Agent):
             prompt += return_value + DB_END_TOKEN
         try:
             answer = prompt.split(ANSWER_START_TOKEN)[1].split(ANSWER_END_TOKEN)[0]
-            trace = [AgentStep(prompt, answer, "generate")]
+            if self.metadata:
+                golden_triplets =  ", ".join(f"({entity}, {rel}, {val})" for (entity, rel, val) in self.metadata[index]["triplets"])
+            else:
+                golden_triplets = 'No metadata provided'
+            trace = [AgentStep(prompt, answer, "generate", golden_triplets = golden_triplets)]
             return answer, trace
         except Exception as e:
             return "", [AgentStep(prompt, "", "generate")]

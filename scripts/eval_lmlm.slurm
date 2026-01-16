@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=eval_hotpot_qwen-2-7b
+#SBATCH --job-name=1.7b-t-eval
 #SBATCH --nodes=1
 #SBATCH -p jjs533
 #SBATCH --ntasks=1
@@ -36,16 +36,18 @@ else
 fi
 
 
-MODEL_PATH="/share/j_sun/rtn27/checkpoints/qwen2-7B_sft_v1.4_3949/sft_ep5_bsz32_new_qa_25-12-24_04-54"
-OUTPUT_DIR="/share/j_sun/rtn27/preds/qwen2-7B_sft_v1.4_3949"
+MODEL_PATH=/share/j_sun/rtn27/checkpoints/qwen3-1.7B_sft_v1.3_5743/sft_ep5_bsz32_new_qa_26-01-06_04-44
+DATABASE_PATH=/home/rtn27/Multi-Hop-Reasoning/src/database_creation/gemini/hotpotqa_validation_all_context_42_start_idx_0_1000_date_12-29/database.json
+OUTPUT_DIR="/share/j_sun/rtn27/preds/qwen3-1.7B_sft_v1.3_5743_triplets/"
 METHOD=lmlm
 MAX_TOKENS=2048
 NUMB_BATCHES=1
-BATCH_SIZE=1000
+BATCH_SIZE=10
 SPLIT=dev
 SETTING=distractor
 SEED=42
-ADAPTIVE_K=true
+ADAPTIVE_K=false
+TOP_K=10
 
 python scripts/run_agent.py \
     --model-path ${MODEL_PATH} \
@@ -59,6 +61,7 @@ python scripts/run_agent.py \
     --dataset ${DATASET} \
     --num-batches ${NUMB_BATCHES} \
     --seed ${SEED} \
-    --adaptive-k ${ADAPTIVE_K}
+    --adaptive-k ${ADAPTIVE_K} \
+    --top-k ${TOP_K}
 
 echo "Successfully saved predictions to ${OUTPUT_DIR}"
