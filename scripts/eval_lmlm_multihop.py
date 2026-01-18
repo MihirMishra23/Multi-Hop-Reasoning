@@ -38,6 +38,11 @@ from agent import get_agent, Agent
 from llm import get_llm
 from data import get_dataset
 
+from eval.evaluate import (
+    evaluate_file,
+    build_output_filename,
+    save_results,
+)
 
 def build_query(question: str) -> str:
     """Instruction to ensure the Agent emits a FINAL_ANSWER the parser recognizes."""
@@ -64,8 +69,8 @@ def process_single_batch(
         return False
 
     # Build output path
-    filename = f"{args.dataset}_{args.split}_seed={args.seed}_bn={batch_number}_bs={args.batch_size}_{datetime.now().strftime('%Y-%m-%d_%H_%M')}.json"
-    output_path = os.path.join(output_dir, filename)
+    # filename = f"{args.split}_seed={args.seed}_bn={batch_number}_bs={args.batch_size}_{datetime.now().strftime('%Y-%m-%d_%H_%M')}.json"
+    
 
     # Check if already exists (for resume)
     if args.resume and os.path.exists(save_path):
@@ -88,7 +93,7 @@ def process_single_batch(
 
     count = 0
     for ex in ds:
-
+        count += 1
         if (count %10 == 0):
             print(f"\n\ncount : {count} \n\n")
         qid = ex.get("id") or ex.get("_id")
@@ -101,11 +106,9 @@ def process_single_batch(
 
         answer, trace = agent.run(
             question,
-            index = count,
             temperature=args.temperature,
             max_tokens=args.max_tokens,
         )
-        count += 1
 
         # Extract evidence docs for RAG if needed
         evidence_docs = []
@@ -129,7 +132,6 @@ def process_single_batch(
                 "error": step.error,
                 "tool_name": step.tool_name,
                 "tool_args": step.tool_args,
-                "golden_triplets" : step.golden_triplets,
             }
             for step in (trace or [])
         ]
@@ -214,7 +216,6 @@ def main() -> None:
         choices=["db", "rag", "icl", "lmlm"],
         help="Agent method label (for output path)",
     )
-    #LMLM related argumentss
     parser.add_argument("--model-path", default=None, help="Local model path")
     parser.add_argument(
         "--database-path",
@@ -225,16 +226,6 @@ def main() -> None:
         "--adaptive-k",
         default=False,
         help="Whether to use adaptive k for lmlm retreival",
-    )
-    parser.add_argument(
-        "--top-k",
-        default=4,
-        help="Maximum number of results to retrieve from database",
-    )
-    parser.add_argument(
-        "--retrieve_triplets",
-        default=False,
-        help="Whether to retrieve entire triplets from database (instead of retrieving only the value)",
     )
     # RAG-related flags
     parser.add_argument(
@@ -270,6 +261,11 @@ def main() -> None:
     parser.add_argument(
         "--output-dir", default=None, help="Base output directory (defaults to <repo>/preds)"
     )
+    parser.add_argument(
+        "--eval",
+        action="store_true",
+        help="Evaluate the predictions",
+    )
     args = parser.parse_args()
 
     # Logging
@@ -289,10 +285,34 @@ def main() -> None:
 
     # Build directory structure: type/dataset_setting/model/
     output_dir = base_output_dir
-    save_path = os.path.join(output_dir, f"{args.model_path.split('/')[-1]}_{args.split}_seed={args.seed}_bn={args.batch_number}_bs={args.batch_size}_{datetime.now().strftime('%Y-%m-%d_%H_%M')}.json")
+    model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
+    save_path = os.path.join(output_dir, "generations", f"eval_{args.dataset}_{model_name}_n{args.batch_number*args.batch_size}.json")
+    save_results_path = os.path.join(output_dir, "results", f"results_{args.dataset}_{model_name}_n{args.batch_number*args.batch_size}.json")
 
     os.makedirs(output_dir, exist_ok=True)
 
+    # read from save_path
+    if os.path.exists(save_path):
+        with open(save_path, "r") as f:
+            results = json.load(f)
+        
+        if len(results["results"]) == args.batch_number*args.batch_size and results["metadata"]["model-path"] == args.model_path:
+            logging.info(f"Generations already exists at {save_path}. Evaluating...")
+            if args.eval:
+                # Evaluate
+                results = evaluate_file(
+                    save_path,
+                    dataset=args.dataset,
+                    setting=args.setting,
+                    split=args.split,
+                    source='hf',
+                )
+                logging.info(f"Evaluation results: {json.dumps(results, indent=2)}")
+
+                outpath = save_results(results, "./", save_results_path)
+                logging.info(f"Evaluation results saved to: {outpath}")
+                return
+            
     # Determine batch processing mode
     total_batches = (total + args.batch_size - 1) // args.batch_size
 
@@ -342,7 +362,6 @@ def main() -> None:
         "setting": args.setting,
         "retrieval": args.retrieval,
         "rag_k": args.rag_k,
-        "top_k" : args.top_k,
         "max_steps": args.max_steps,
         "model_path": args.model_path,
         "database_path": args.database_path,
@@ -378,6 +397,22 @@ def main() -> None:
         num_batches_to_process,
         failed_batches,
     )
+
+    if args.eval:
+        # Evaluate
+        results = evaluate_file(
+            save_path,
+            dataset=args.dataset,
+            setting=args.setting,
+            split=args.split,
+            source='hf',
+        )
+        logging.info(f"Evaluation results: {json.dumps(results, indent=2)}")
+
+
+        outpath = save_results(results, "./", save_results_path)
+        logging.info(f"Evaluation results saved to: {outpath}")
+
 
 
 if __name__ == "__main__":
