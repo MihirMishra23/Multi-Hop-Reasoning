@@ -274,6 +274,10 @@ def main() -> None:
         preds_path = tmp_file.name
         tmp_file_path = tmp_file.name
 
+    if args.llm is None:
+        args.llm = args.preds.split("/")[-1].split("_seed")[0].split("_dev")[0]
+        print(f"Using llm: {args.llm}")
+
     # Extract dataset and setting from pred file metadata if not provided via args
     if batch_files:
         pred_metadata = extract_metadata_from_pred_file(batch_files[0])
@@ -331,7 +335,6 @@ def main() -> None:
 
     outpath = save_results(results, args.outdir, filename)
     logging.info(f"Evaluation results saved to: {outpath}")
-    print(outpath)
 
     # Clean up temporary file if created
     if tmp_file_path and os.path.exists(tmp_file_path):
