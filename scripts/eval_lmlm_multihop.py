@@ -285,8 +285,9 @@ def main() -> None:
 
     # Build directory structure: type/dataset_setting/model/
     output_dir = base_output_dir
-    save_path = os.path.join(output_dir, f"eval_{args.dataset}_{args.model_path.split('/')[-1]}_n{args.batch_number*args.batch_size}.json")
-    save_results_name = f"results_{args.dataset}_{args.model_path.split('/')[-1]}_n{args.batch_number*args.batch_size}.json"
+    model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
+    save_path = os.path.join(output_dir, "generations", f"eval_{args.dataset}_{model_name}_n{args.batch_number*args.batch_size}.json")
+    save_results_path = os.path.join(output_dir, "results", f"results_{args.dataset}_{model_name}_n{args.batch_number*args.batch_size}.json")
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -308,7 +309,7 @@ def main() -> None:
                 )
                 logging.info(f"Evaluation results: {json.dumps(results, indent=2)}")
 
-                outpath = save_results(results, output_dir, save_results_name)
+                outpath = save_results(results, "./", save_results_path)
                 logging.info(f"Evaluation results saved to: {outpath}")
                 return
             
@@ -408,9 +409,8 @@ def main() -> None:
         )
         logging.info(f"Evaluation results: {json.dumps(results, indent=2)}")
 
-        results_dir = os.path.join(output_dir, "results")
-        os.makedirs(results_dir, exist_ok=True)
-        outpath = save_results(results, results_dir, save_results_name)
+
+        outpath = save_results(results, "./", save_results_path)
         logging.info(f"Evaluation results saved to: {outpath}")
 
 
