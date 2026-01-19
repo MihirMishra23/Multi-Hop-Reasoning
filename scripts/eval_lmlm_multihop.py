@@ -54,11 +54,11 @@ def process_single_batch(
     args: argparse.Namespace,
     batch_number: int,
     total_examples: int,
-    save_path: str,
     full_dataset,
     agent: Agent,
-) -> bool:
-    """Process a single batch and save immediately. Returns True if successful."""
+    existing_results: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """Process a single batch and return results dict."""
     logger = logging.getLogger("run_agent")
 
     # Calculate batch indices
@@ -66,19 +66,18 @@ def process_single_batch(
     end_idx = min(start_idx + args.batch_size, total_examples)
 
     if start_idx >= total_examples:
-        return False
-
-    # Build output path
-    # filename = f"{args.split}_seed={args.seed}_bn={batch_number}_bs={args.batch_size}_{datetime.now().strftime('%Y-%m-%d_%H_%M')}.json"
-    
-
-    # Check if already exists (for resume)
-    if args.resume and os.path.exists(save_path):
-        logger.info("Skipping batch %d (already exists at %s)", batch_number, save_path)
-        return True
+        return {}
 
     # Select batch slice
     ds = full_dataset.select(range(start_idx, end_idx))
+
+    # Check if this batch is already complete (for resume)
+    if args.resume and len(ds) > 0:
+        first_qid = str(ds[0].get("id") or ds[0].get("_id"))
+        if first_qid in existing_results:
+            logger.info(f"Skipping batch {batch_number} (already processed)")
+            return {}
+
     logger.info(
         "Processing batch %d: indices [%d, %d) => %d examples",
         batch_number,
@@ -91,24 +90,39 @@ def process_single_batch(
     results: Dict[str, Dict[str, Any]] = {}
     batch_size_actual = len(ds)
 
-    count = 0
+    # Collect queries and info for batch
+    queries = []
+    examples_metadata = []
+
     for ex in ds:
-        count += 1
-        if (count %10 == 0):
-            print(f"\n\ncount : {count} \n\n")
         qid = ex.get("id") or ex.get("_id")
         question = ex["question"]
-
-        # Reset agent state for new question (with new contexts if applicable)
         contexts = ex.get("contexts") or []
-        if args.method in ("rag", "icl"):
-            agent.reset(contexts)  # type: ignore
 
-        answer, trace = agent.run(
-            question,
-            temperature=args.temperature,
-            max_tokens=args.max_tokens,
-        )
+        queries.append(question)
+        examples_metadata.append({
+            "qid": qid,
+            "question": question,
+            "answers": ex["answers"],
+            "supporting_facts": ex["supporting_facts"],
+            "contexts": contexts,
+        })
+
+    logger.info(f"Processing batch of {len(queries)} queries")
+
+    answers, traces = agent.run(
+        queries,
+        temperature=args.temperature,
+        max_tokens=args.max_tokens,
+    )
+
+    # Format results
+    for idx, metadata in enumerate(examples_metadata):
+        if (idx + 1) % 10 == 0:
+            print(f"\n\ncount : {idx + 1} \n\n")
+
+        answer = answers[idx] if idx < len(answers) else None
+        trace = traces[idx] if idx < len(traces) else None
 
         # Extract evidence docs for RAG if needed
         evidence_docs = []
@@ -136,53 +150,17 @@ def process_single_batch(
             for step in (trace or [])
         ]
 
-        results[str(qid)] = {
+        results[str(metadata["qid"])] = {
             "pred": answer,
-            "gold_answer": ex["answers"],
-            "gold_evidence": ex["supporting_facts"],
-            "question": question,
+            "gold_answer": metadata["answers"],
+            "gold_evidence": metadata["supporting_facts"],
+            "question": metadata["question"],
             "trace": serialized_trace,
         }
         if args.method == "rag" and args.debug_evidence:
-            results[str(qid)]["evidence"] = evidence_docs
-
-    # Build final output with deduplicated metadata
-    output = {
-        "metadata": {
-            "model-path": args.model_path,
-            "database-path": args.database_path,
-            "model": args.model,
-            "dataset": args.dataset,
-            "setting": args.setting,
-            "split": args.split,
-            "batch_size": batch_size_actual,
-            "batch_number": batch_number,
-            "type": args.method,
-            "seed": args.seed if args.seed is not None else None,
-        },
-        "inference_params": {
-            "seed": args.seed,
-            "temperature": args.temperature,
-            "max_tokens": args.max_tokens,
-        },
-        "results": results,
-    }
-    # Add retrieval metadata for RAG
-    if args.method == "rag":
-        output["metadata"]["retrieval"] = {
-            "backend": args.retrieval,
-            "scope": args.setting,
-            "k": args.rag_k,
-        }
+            results[str(metadata["qid"])]["evidence"] = evidence_docs
 
     logger.info("Generated %d predictions for batch %d", len(results), batch_number)
-    logger.debug("Predictions payload: %s", json.dumps(output, ensure_ascii=False)[:2000])
-
-    # Save JSON with deduplicated metadata immediately
-    with open(save_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, indent=4)
-
-    logger.info("Saved %d predictions to %s", len(results), save_path)
 
     # Force garbage collection and clear GPU cache to prevent memory fragmentation
     gc.collect()
@@ -192,7 +170,52 @@ def process_single_batch(
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             torch.mps.empty_cache()
 
-    return True
+    return results
+
+
+def save_results_to_file(
+    all_results: Dict[str, Dict[str, Any]],
+    save_path: str,
+    args: argparse.Namespace,
+) -> None:
+    """Save results to JSON file."""
+    logger = logging.getLogger("run_agent")
+
+    # Build final output with metadata
+    output = {
+        "metadata": {
+            "model-path": args.model_path,
+            "database-path": args.database_path,
+            "model": args.model,
+            "dataset": args.dataset,
+            "setting": args.setting,
+            "split": args.split,
+            "batch_size": args.batch_size,
+            "total_examples": len(all_results),
+            "type": args.method,
+            "seed": args.seed if args.seed is not None else None,
+        },
+        "inference_params": {
+            "seed": args.seed,
+            "temperature": args.temperature,
+            "max_tokens": args.max_tokens,
+        },
+        "results": all_results,
+    }
+    # Add retrieval metadata for RAG
+    if args.method == "rag":
+        output["metadata"]["retrieval"] = {
+            "backend": args.retrieval,
+            "scope": args.setting,
+            "k": args.rag_k,
+        }
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    with open(save_path, "w", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, indent=4)
+
+    logger.info("Saved %d predictions to %s", len(all_results), save_path)
 
 
 def main() -> None:
@@ -245,18 +268,29 @@ def main() -> None:
         "--max-steps", type=int, default=5, help="Max reasoning steps for the Agent"
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
-    parser.add_argument("--batch-number", type=int, default=1, help="Batch number index (1-based)")
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
     parser.add_argument(
-        "--num-batches",
+        "--start-batch",
         type=int,
         default=1,
-        help="Number of batches to process (default: 1). Use -1 to process all batches.",
+        help="Batch number to start from (1-based). Useful for parallelization.",
+    )
+    parser.add_argument(
+        "--total-count",
+        type=int,
+        default=None,
+        help="Total number of examples to process. If not specified, processes entire dataset.",
+    )
+    parser.add_argument(
+        "--save-every",
+        type=int,
+        default=None,
+        help="Save results every N batches. None saves once at the end",
     )
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Skip batches that already exist (check by file existence)",
+        help="Resume from existing results file, skipping already processed examples.",
     )
     parser.add_argument(
         "--output-dir", default=None, help="Base output directory (defaults to <repo>/preds)"
@@ -277,77 +311,85 @@ def main() -> None:
 
     # Load full dataset once (with seed for deterministic shuffling)
     full_dataset = get_dataset(args.dataset, args.setting, args.split, seed=args.seed)
-    total = len(full_dataset)
-    print(f"total: {total}")
-    
-    # Prepare output location with structure: type/dataset_setting/model/split_seed{s}_bn{n}_bs{b}.json
-    base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
+    total_dataset_size = len(full_dataset)
 
-    # Build directory structure: type/dataset_setting/model/
+    # Determine target count
+    target_count = args.total_count if args.total_count is not None else total_dataset_size
+    target_count = min(target_count, total_dataset_size)
+
+    logger.info(f"Dataset size: {total_dataset_size}, Target count: {target_count}")
+
+    # Prepare output location
+    base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
     output_dir = base_output_dir
     model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
-    save_path = os.path.join(output_dir, "generations", f"eval_{args.dataset}_{model_name}_n{args.batch_number*args.batch_size}.json")
-    save_results_path = os.path.join(output_dir, "results", f"results_{args.dataset}_{model_name}_n{args.batch_number*args.batch_size}.json")
+    save_path = os.path.join(output_dir, "generations", f"eval_{args.dataset}_{model_name}_n{target_count}.json")
+    save_results_path = os.path.join(output_dir, "results", f"results_{args.dataset}_{model_name}_n{target_count}.json")
 
     os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    os.makedirs(os.path.dirname(save_results_path), exist_ok=True)
 
-    # read from save_path
-    if os.path.exists(save_path):
-        with open(save_path, "r") as f:
-            results = json.load(f)
-        
-        if len(results["results"]) == args.batch_number*args.batch_size and results["metadata"]["model-path"] == args.model_path:
-            logging.info(f"Generations already exists at {save_path}. Evaluating...")
-            if args.eval:
-                # Evaluate
-                results = evaluate_file(
-                    save_path,
-                    dataset=args.dataset,
-                    setting=args.setting,
-                    split=args.split,
-                    source='hf',
-                )
-                logging.info(f"Evaluation results: {json.dumps(results, indent=2)}")
+    # Load existing results if resuming
+    existing_results = {}
+    if args.resume and os.path.exists(save_path):
+        try:
+            with open(save_path, "r") as f:
+                existing_data = json.load(f)
+                existing_results = existing_data.get("results", {})
+                logger.info(f"Resuming from {save_path} with {len(existing_results)} existing results")
+        except Exception as e:
+            logger.warning(f"Failed to load existing results from {save_path}: {e}")
 
-                outpath = save_results(results, "./", save_results_path)
-                logging.info(f"Evaluation results saved to: {outpath}")
+    # Check if we already have all the results we need (and not resuming)
+    if not args.resume and os.path.exists(save_path):
+        try:
+            with open(save_path, "r") as f:
+                existing_data = json.load(f)
+
+            if (len(existing_data["results"]) >= target_count and
+                existing_data["metadata"]["model-path"] == args.model_path):
+                logger.info(f"Generations already complete at {save_path} ({len(existing_data['results'])} results). Evaluating...")
+                if args.eval:
+                    # Evaluate
+                    results = evaluate_file(
+                        save_path,
+                        dataset=args.dataset,
+                        setting=args.setting,
+                        split=args.split,
+                        source='hf',
+                    )
+                    logger.info(f"Evaluation results: {json.dumps(results, indent=2)}")
+
+                    outpath = save_results(results, "./", save_results_path)
+                    logger.info(f"Evaluation results saved to: {outpath}")
                 return
-            
-    # Determine batch processing mode
-    total_batches = (total + args.batch_size - 1) // args.batch_size
+        except Exception as e:
+            logger.warning(f"Failed to read existing results from {save_path}: {e}")
 
-    # Process specified number of batches (or all if -1)
-    if args.num_batches == -1:
-        # Process all remaining batches
-        num_batches_to_process = total_batches - args.batch_number + 1
-        logger.info(
-            "Processing all batches starting from batch %d: dataset=%s setting=%s split=%s method=%s model=%s batch_size=%d (total_batches=%d)",
-            args.batch_number,
-            args.dataset,
-            args.setting,
-            args.split,
-            args.method,
-            args.model,
-            args.batch_size,
-            total_batches,
-        )
-    else:
-        # Process specified number of batches
-        num_batches_to_process = min(args.num_batches, total_batches - args.batch_number + 1)
-        logger.info(
-            "Processing %d batch(es) starting from batch %d: dataset=%s setting=%s split=%s method=%s model=%s batch_size=%d (total_batches=%d)",
-            num_batches_to_process,
-            args.batch_number,
-            args.dataset,
-            args.setting,
-            args.split,
-            args.method,
-            args.model,
-            args.batch_size,
-            total_batches,
-        )
+    # Calculate number of batches needed
+    total_batches_needed = (target_count + args.batch_size - 1) // args.batch_size
 
-    start_batch = args.batch_number
+    # Calculate batches to process based on start_batch
+    start_batch = args.start_batch
+    batches_to_process = total_batches_needed - start_batch + 1
+
+    if batches_to_process <= 0:
+        logger.warning(f"Start batch {start_batch} is beyond total batches needed {total_batches_needed}")
+        return
+
+    logger.info(
+        "Processing %d examples in %d batches (starting from batch %d): dataset=%s setting=%s split=%s method=%s model=%s batch_size=%d",
+        target_count,
+        batches_to_process,
+        start_batch,
+        args.dataset,
+        args.setting,
+        args.split,
+        args.method,
+        args.model,
+        args.batch_size,
+    )
 
     # Instantiate LLM and Agent once
     llm = None
@@ -371,32 +413,41 @@ def main() -> None:
     agent: Agent = get_agent(method=args.method, agent_kwargs=agent_kwargs)
 
     # Process batches with progress tracking
+    # Start with existing results if resuming
+    all_results = existing_results.copy() if existing_results else {}
     successful_batches = 0
     failed_batches = 0
 
-    with tqdm(total=num_batches_to_process, desc="Processing batches", unit="batch") as pbar:
-        for batch_num in range(start_batch, start_batch + num_batches_to_process):
+    with tqdm(total=batches_to_process, desc="Processing batches", unit="batch") as pbar:
+        for batch_num in range(start_batch, start_batch + batches_to_process):
             try:
-                success = process_single_batch(
-                    args, batch_num, total, save_path, full_dataset, agent
+                batch_results = process_single_batch(
+                    args, batch_num, target_count, full_dataset, agent, all_results
                 )
-                if success:
+                all_results.update(batch_results)
+                if batch_results:  # Only count as successful if we actually processed
                     successful_batches += 1
+
+                # Save based on save_every flag
+                if args.save_every and successful_batches % args.save_every == 0:
+                    save_results_to_file(all_results, save_path, args)
+
                 pbar.update(1)
             except Exception as e:
                 failed_batches += 1
                 logger.error("Error processing batch %d: %s", batch_num, e, exc_info=True)
-                if not args.resume:
-                    # Re-raise if not in resume mode to fail fast
-                    raise
+                raise
                 pbar.update(1)
 
     logger.info(
         "Completed %d/%d batches successfully (%d failed)",
         successful_batches,
-        num_batches_to_process,
+        batches_to_process,
         failed_batches,
     )
+
+    # Save final results (either first time if save_every=-1, or final update)
+    save_results_to_file(all_results, save_path, args)
 
     if args.eval:
         # Evaluate
