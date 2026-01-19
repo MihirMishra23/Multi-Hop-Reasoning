@@ -350,7 +350,7 @@ def main() -> None:
             logger.warning(f"Failed to load existing results from {save_path}: {e}")
 
     # Check if we already have all the results we need (and not resuming)
-    if not args.resume and os.path.exists(save_path):
+    if args.resume and os.path.exists(save_path):
         try:
             with open(save_path, "r") as f:
                 existing_data = json.load(f)

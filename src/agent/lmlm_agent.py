@@ -58,7 +58,6 @@ class LMLMAgent(Agent):
             model=model_path,
             tensor_parallel_size=1,
             gpu_memory_utilization=0.8,
-            max_model_len=8096, #random value
             seed=42,
         )
 
