@@ -61,8 +61,8 @@ def process_single_batch(
     """Process a single batch and return results dict."""
     logger = logging.getLogger("run_agent")
 
-    # Calculate batch indices
-    start_idx = (batch_number - 1) * args.batch_size
+    # Calculate batch indices starting from start_index
+    start_idx = args.start_index + (batch_number - 1) * args.batch_size
     end_idx = min(start_idx + args.batch_size, total_examples)
 
     if start_idx >= total_examples:
@@ -270,16 +270,16 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
     parser.add_argument(
-        "--start-batch",
+        "--start-index",
         type=int,
-        default=1,
-        help="Batch number to start from (1-based). Useful for parallelization.",
+        default=0,
+        help="Dataset index to start from (0-based). Useful for parallelization.",
     )
     parser.add_argument(
         "--total-count",
         type=int,
-        default=None,
-        help="Total number of examples to process. If not specified, processes entire dataset.",
+        default=1000,
+        help="Total number of examples to process from start-index. Default is 1000.",
     )
     parser.add_argument(
         "--save-every",
@@ -301,6 +301,7 @@ def main() -> None:
         help="Evaluate the predictions",
     )
     args = parser.parse_args()
+    print("split : ", args.split)
 
     # Logging
     logging.basicConfig(
@@ -313,18 +314,25 @@ def main() -> None:
     full_dataset = get_dataset(args.dataset, args.setting, args.split, seed=args.seed)
     total_dataset_size = len(full_dataset)
 
-    # Determine target count
-    target_count = args.total_count if args.total_count is not None else total_dataset_size
-    target_count = min(target_count, total_dataset_size)
+    # Validate start_index
+    if args.start_index >= total_dataset_size:
+        logger.warning(f"Start index {args.start_index} is at or beyond dataset size {total_dataset_size}")
+        return
 
-    logger.info(f"Dataset size: {total_dataset_size}, Target count: {target_count}")
+    # Calculate how many examples to process (total_count is NUMBER of examples from start_index)
+    examples_to_process = min(args.total_count, total_dataset_size - args.start_index)
+
+    # Calculate the exclusive end index
+    end_index = args.start_index + examples_to_process
+
+    logger.info(f"Dataset size: {total_dataset_size}, Processing {examples_to_process} examples from index {args.start_index} to {end_index}")
 
     # Prepare output location
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
     output_dir = base_output_dir
     model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
-    save_path = os.path.join(output_dir, "generations", f"eval_{args.dataset}_{model_name}_n{target_count}.json")
-    save_results_path = os.path.join(output_dir, "results", f"results_{args.dataset}_{model_name}_n{target_count}.json")
+    save_path = os.path.join(output_dir, "generations", f"eval_{args.dataset}_{args.split}_{model_name}_start_idx_{args.start_index}_n{examples_to_process}.json")
+    save_results_path = os.path.join(output_dir, "results", f"results_{args.dataset}_{model_name}_n{examples_to_process}.json")
 
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -347,7 +355,7 @@ def main() -> None:
             with open(save_path, "r") as f:
                 existing_data = json.load(f)
 
-            if (len(existing_data["results"]) >= target_count and
+            if (len(existing_data["results"]) >= examples_to_process and
                 existing_data["metadata"]["model-path"] == args.model_path):
                 logger.info(f"Generations already complete at {save_path} ({len(existing_data['results'])} results). Evaluating...")
                 if args.eval:
@@ -368,21 +376,13 @@ def main() -> None:
             logger.warning(f"Failed to read existing results from {save_path}: {e}")
 
     # Calculate number of batches needed
-    total_batches_needed = (target_count + args.batch_size - 1) // args.batch_size
-
-    # Calculate batches to process based on start_batch
-    start_batch = args.start_batch
-    batches_to_process = total_batches_needed - start_batch + 1
-
-    if batches_to_process <= 0:
-        logger.warning(f"Start batch {start_batch} is beyond total batches needed {total_batches_needed}")
-        return
+    batches_to_process = (examples_to_process + args.batch_size - 1) // args.batch_size
 
     logger.info(
-        "Processing %d examples in %d batches (starting from batch %d): dataset=%s setting=%s split=%s method=%s model=%s batch_size=%d",
-        target_count,
+        "Processing %d examples in %d batches (starting from index %d): dataset=%s setting=%s split=%s method=%s model=%s batch_size=%d",
+        examples_to_process,
         batches_to_process,
-        start_batch,
+        args.start_index,
         args.dataset,
         args.setting,
         args.split,
@@ -419,10 +419,10 @@ def main() -> None:
     failed_batches = 0
 
     with tqdm(total=batches_to_process, desc="Processing batches", unit="batch") as pbar:
-        for batch_num in range(start_batch, start_batch + batches_to_process):
+        for batch_num in range(1, batches_to_process + 1):
             try:
                 batch_results = process_single_batch(
-                    args, batch_num, target_count, full_dataset, agent, all_results
+                    args, batch_num, end_index, full_dataset, agent, all_results
                 )
                 all_results.update(batch_results)
                 if batch_results:  # Only count as successful if we actually processed
