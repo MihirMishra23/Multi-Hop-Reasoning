@@ -31,15 +31,14 @@ fi
 
 METHOD=lmlm
 MAX_TOKENS=1024
-NUMB_BATCHES=1
-BATCH_SIZE=1000
+TOTAL_COUNT=30
+BATCH_SIZE=16
 OUTPUT_DIR=./output
 SPLIT=dev
 SETTING=distractor
-
+SAVE_EVERY=64
 SEED=42
 ADAPTIVE_K=true
-
 
 
 python scripts/eval_lmlm_multihop.py \
@@ -48,20 +47,12 @@ python scripts/eval_lmlm_multihop.py \
     --method ${METHOD} \
     --max-tokens ${MAX_TOKENS} \
     --batch-size ${BATCH_SIZE} \
+    --total-count ${TOTAL_COUNT} \
     --output-dir ${OUTPUT_DIR}/ \
     --split ${SPLIT} \
     --setting ${SETTING} \
     --dataset ${DATASET} \
-    --num-batches ${NUMB_BATCHES} \
     --seed ${SEED} \
     --adaptive-k ${ADAPTIVE_K} \
+    --save-every ${SAVE_EVERY}\
     --eval
-
-
-# PRED_FILE=/home/lz586/icl/Multi-Hop-Reasoning/output/Qwen3-1.7B-SFT_ep5_bsz48.json
-# python scripts/evaluate.py \
-#     --preds ${PRED_FILE} \
-#     --split ${SPLIT} \
-#     --seed ${SEED} \
-#     --batch-size ${BATCH_SIZE} \
-#     --outdir ${OUTPUT_DIR}/results
