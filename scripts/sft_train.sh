@@ -59,6 +59,18 @@ elif [ "${MODEL_SIZE}" = "4B" ]; then
     GRADIENT_ACCUMULATION_STEPS=6   # change to 4
     MAX_SEQ_LENGTH=1024
 
+elif [ "${MODEL_SIZE}" = "3B" ]; then
+    MODEL_NAME_OR_PATH="Qwen/Qwen2.5-3B"
+    PER_DEVICE_TRAIN_BATCH_SIZE=24
+    GRADIENT_ACCUMULATION_STEPS=2   # change to 4
+    MAX_SEQ_LENGTH=2048
+
+elif [ "${MODEL_SIZE}" = "382M" ]; then
+    MODEL_NAME_OR_PATH="kilian-group/LMLM-llama2-382M"
+    PER_DEVICE_TRAIN_BATCH_SIZE=48
+    GRADIENT_ACCUMULATION_STEPS=1
+    MAX_SEQ_LENGTH=1024
+
 else
     echo "Invalid model size: ${MODEL_SIZE}"
     exit 1
@@ -67,6 +79,7 @@ fi
 if [ "${THRESHOLD}" = "0.8" ]; then
     DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_0.8_len_12004.json"
 elif [ "${THRESHOLD}" = "-1" ]; then
+    # default
     DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/12-19_rollouts_combined_12k_5743_examples_6000_triplets_filtered.json"
 elif [ "${THRESHOLD}" = "0.3" ]; then
     DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_0.3_len_13796.json"
