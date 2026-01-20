@@ -45,8 +45,7 @@ class LMLMAgent(Agent):
         self.db.load_database(database_path, adaptive= adaptive)
         self.device ="cuda" if torch.cuda.is_available() else "cpu"
         self.tok = AutoTokenizer.from_pretrained(model_path)
-        self.model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16 if self.device=="cuda" else None)
-        self.model.to(self.device).eval()
+
         self.similarity_threshold = similarity_threshold
 
         # Initialize vLLM for batch generation
@@ -58,9 +57,12 @@ class LMLMAgent(Agent):
             model=model_path,
             tensor_parallel_size=1,
             gpu_memory_utilization=0.8,
-            max_model_len=8096, #random value
+            # max_model_len=16384,
             seed=42,
+            tokenizer=model_path,
         )
+
+        self.max_turns = 16
 
     def create_prompt_from_query(self, query):
         return f"Question:\n{query}\nAnswer:\n"
@@ -91,8 +93,9 @@ class LMLMAgent(Agent):
 
         # Generation loop - continue until all queries complete
         # Max iterations to prevent infinite loops (in case of malformed outputs)
-        max_turns = 16
-        for turn in range(max_turns):
+        
+        # BUG: potential bug here. need to check the prompt length each turn to make sure it doesn't exceed the max model length
+        for turn in range(self.max_turns):
             # Only generate for active queries
             active_prompts = [p for i, p in enumerate(prompts) if active[i]]
             if not active_prompts:
@@ -104,7 +107,7 @@ class LMLMAgent(Agent):
                 n=1,
                 temperature=temperature,
                 top_p=1.0,
-                top_k=-1,
+                top_k=0,
                 max_tokens=max_tokens,  # Generate up to max_tokens or until stop token
                 stop_token_ids=self.stop_token_ids,
                 logprobs=0,
