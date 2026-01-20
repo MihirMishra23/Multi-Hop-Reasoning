@@ -252,6 +252,7 @@ def main() -> None:
         "--return-triplets",
         default=False,
         help="Whether to return entire triplets (as opposed to only values)",
+        action="store_true"
     )
     # RAG-related flags
     parser.add_argument(
@@ -294,6 +295,7 @@ def main() -> None:
         "--use-inverses",
         default=False,
         help="Whether to allow inverse lookups, of the form (value, relationship)",
+        action="store_true"
     )
     parser.add_argument(
         "--resume",
@@ -343,6 +345,7 @@ def main() -> None:
         ret_triplets_str = "_ret_triplets"
     use_inv_str = ""
     if args.use_inverses:
+        print("using inverses!")
         use_inv_str = "_use_inv"
     model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
     save_path = os.path.join(output_dir, "generations", f"eval_{args.dataset}_{args.split}_{model_name}_start_idx_{args.start_index}_n{examples_to_process}{ret_triplets_str}{use_inv_str}.json")
