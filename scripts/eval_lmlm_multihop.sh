@@ -50,8 +50,8 @@ fi
 
 METHOD=lmlm
 MAX_TOKENS=1024
-TOTAL_COUNT=1000
-BATCH_SIZE=32
+TOTAL_COUNT=30
+BATCH_SIZE=16
 OUTPUT_DIR=./output
 SETTING=distractor
 SAVE_EVERY=64
@@ -80,3 +80,5 @@ python scripts/eval_lmlm_multihop.py \
     --return-triplets ${RETURN_TRIPLETS}\
     --use-inverses ${USE_INVERSES} \
     --eval
+    --eval \
+    --resume
