@@ -256,6 +256,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         reward_funcs: RewardFunc | list[RewardFunc],
         lmlm_database_path  : str,
         adaptive_k : bool = False,
+        return_triples : bool = False,
         args: GRPOConfig | None = None,
         train_dataset: Dataset | IterableDataset | None = None,
         eval_dataset: Dataset | IterableDataset | dict[str, Dataset | IterableDataset] | None = None,
@@ -269,6 +270,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         #LMLM db initialization
         self.db = DatabaseManager()
         self.db.load_database(lmlm_database_path, adaptive= adaptive_k)
+        self.return_triples = return_triples
 
         # Args
         if args is None:
@@ -1420,7 +1422,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                 prompt_completion_tools[idx] += completions[idx_with_tool]
                 tool_call_count += 1
                 try:
-                    result = ", ".join(self.db.retrieve_from_database(tool_call, return_triplets = True)) + DB_END_TOKEN
+                    result = ", ".join(self.db.retrieve_from_database(tool_call, return_triplets = self.return_triples)) + DB_END_TOKEN
                 except Exception as e:
                     print("db lookup failed :", str(e))
                     tool_failure_count += 1
