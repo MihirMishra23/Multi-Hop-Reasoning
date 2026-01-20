@@ -149,7 +149,6 @@ accelerate launch \
   --vllm_gpu_memory_utilization=${VLLM_GPU_MEMORY_UTILIZATION} \
   --use_vllm \
   --vllm_mode=colocate \
-  --adaptive_k \
   --tools \
   --gradient_checkpointing \
   --do_eval \
@@ -170,5 +169,6 @@ accelerate launch \
   --save_total_limit=5 \
   --save_steps=0.2 \
   ${RESUME_FROM_CHECKPOINT}
+#   --adaptive_k \
 
 echo "Training completed!"

@@ -31,8 +31,8 @@ fi
 
 METHOD=lmlm
 MAX_TOKENS=1024
-TOTAL_COUNT=30
-BATCH_SIZE=16
+TOTAL_COUNT=1000
+BATCH_SIZE=32
 OUTPUT_DIR=./output
 SPLIT=dev
 SETTING=distractor
@@ -55,4 +55,5 @@ python scripts/eval_lmlm_multihop.py \
     --seed ${SEED} \
     --adaptive-k ${ADAPTIVE_K} \
     --save-every ${SAVE_EVERY}\
-    --eval
+    --eval \
+    --resume

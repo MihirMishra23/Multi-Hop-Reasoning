@@ -24,29 +24,51 @@ cd /home/lz586/icl/Multi-Hop-Reasoning/
 
 echo "Starting Eval..."
 MODEL_PATH_LST=(
-    # /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_ep5_bsz48
-    # /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48
     /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_ep5_bsz48-grpo-g8-bs16-s8-b0.0-ep5-n8000
-    # /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48-grpo-g8-bs16-s8-b0.0-ep5-n8000
-    # /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48_th0.8-grpo-g8-bs16-s8-b0.0-ep5-n8000
-    # /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48_th-2-grpo-g8-bs16-s8-b0.0-ep5-n8000
-    # /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48_th0.3-grpo-g8-bs16-s8-b0.0-ep5-n8000
+    /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48-grpo-g8-bs16-s8-b0.0-ep5-n8000
+    /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48_th0.8-grpo-g8-bs16-s8-b0.0-ep5-n8000
+    /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48_th-2-grpo-g8-bs16-s8-b0.0-ep5-n8000
+    /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48_th0.3-grpo-g8-bs16-s8-b0.0-ep5-n8000
+    /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_ep5_bsz48
+    /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48
 )
 
 DATASET_LST=(
-    hotpotqa
+    # hotpotqa
     musique
 )
 
-for MODEL_PATH in "${MODEL_PATH_LST[@]}"; do
-    # find the latest checkpoint
-    CKPT_PATH=$(ls -t ${MODEL_PATH} | head -n 1)
-    MODEL_PATH=${MODEL_PATH}/${CKPT_PATH}
-    echo "Using model path: ${MODEL_PATH}"
 
-    for DATASET in "${DATASET_LST[@]}"; do
-        echo "Evaluating ${MODEL_PATH} on ${DATASET}"
-        bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh --model_path ${MODEL_PATH} --dataset ${DATASET}
+# -----------------------
+# Main loop
+# -----------------------
+for MODEL_DIR in "${MODEL_PATH_LST[@]}"; do
+    echo "Processing model dir: ${MODEL_DIR}"
+
+    # Collect checkpoint dirs
+    mapfile -t CKPT_DIRS < <(
+        find "${MODEL_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' -printf '%f\n' \
+        | sort -V
+    )
+
+    if [[ ${#CKPT_DIRS[@]} -eq 0 ]]; then
+        echo "No checkpoint-* directories found under: ${MODEL_DIR}" >&2
+        continue
+    fi
+
+    if [[ "${EVAL_MODE}" == "latest" ]]; then
+        CKPT_DIRS=( "${CKPT_DIRS[-1]}" )
+    fi
+
+    for CKPT in "${CKPT_DIRS[@]}"; do
+        MODEL_PATH="${MODEL_DIR}/${CKPT}"
+
+        for DATASET in "${DATASET_LST[@]}"; do
+            echo "Evaluating ${MODEL_PATH} on ${DATASET}"
+            bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
+                --model_path "${MODEL_PATH}" \
+                --dataset "${DATASET}"
+        done
     done
 done
 

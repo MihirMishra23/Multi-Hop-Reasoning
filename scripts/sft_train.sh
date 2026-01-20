@@ -72,6 +72,11 @@ elif [ "${THRESHOLD}" = "0.3" ]; then
     DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_0.3_len_13796.json"
 elif [ "${THRESHOLD}" = "-2" ]; then
     DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_-2_len_18351.json"
+elif [ "${THRESHOLD}" = "-3" ]; then
+    # return triplets
+    DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/12-19_rollouts_combined_5743_12k_return_triplets.json"
+elif [ "${THRESHOLD}" = "1.0" ]; then
+    DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_1.0_len_11308.json"
 else
     echo "Invalid threshold: ${THRESHOLD}"
     exit 1
