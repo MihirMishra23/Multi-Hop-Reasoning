@@ -1,4 +1,4 @@
-MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48
+MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz16_th0.8-grpo-g8-bs16-s8-b0.0-ep5-n8000/checkpoint-750
 DATASET=hotpotqa
 SPLIT=dev
 
@@ -50,14 +50,16 @@ fi
 
 METHOD=lmlm
 MAX_TOKENS=1024
-TOTAL_COUNT=16
-BATCH_SIZE=16
+TOTAL_COUNT=1000
+BATCH_SIZE=32
 OUTPUT_DIR=./output
 SETTING=distractor
 SAVE_EVERY=64
 SEED=42
 ADAPTIVE_K=true
+RETURN_TRIPLETS=true
 START_IDX=0
+USE_INVERSES=false
 
 
 python scripts/eval_lmlm_multihop.py \
@@ -75,4 +77,6 @@ python scripts/eval_lmlm_multihop.py \
     --adaptive-k ${ADAPTIVE_K} \
     --save-every ${SAVE_EVERY}\
     --start-index ${START_IDX}\
+    --return-triplets ${RETURN_TRIPLETS}\
+    --use-inverses ${USE_INVERSES} \
     --eval
