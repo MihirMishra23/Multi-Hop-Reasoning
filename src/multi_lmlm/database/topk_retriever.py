@@ -147,7 +147,7 @@ class TopkRetriever:
 
     def retrieve_top_k(self, entity: str, relation: str, threshold: Optional[float] = None, return_triplets: bool = False) -> List[str]:
         query_text = f"{self._normalize_text(entity)} {self._normalize_text(relation)}"
-        query_embedding = self.model.encode([query_text], convert_to_numpy=True, normalize_embeddings=True)
+        query_embedding = self.model.encode([query_text], convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=False)
 
         distances, indices = self.index.search(query_embedding, self.top_k + 1)
 

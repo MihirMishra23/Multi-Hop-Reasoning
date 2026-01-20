@@ -117,7 +117,7 @@ def process_single_batch(
     )
 
     # Format results
-    for idx, metadata in enumerate(examples_metadata):
+    for idx, metadata in tqdm(enumerate(examples_metadata), total=len(examples_metadata), desc="Processing queries"):
 
         answer = answers[idx] if idx < len(answers) else None
         trace = traces[idx] if idx < len(traces) else None
