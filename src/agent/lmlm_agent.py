@@ -7,14 +7,16 @@ from transformers import LogitsProcessor
 from multi_lmlm.constants import DB_END_TOKEN, ANSWER_START_TOKEN, DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, ANSWER_END_TOKEN
 import os
 from vllm import LLM, SamplingParams
-def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
-        output_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
 
-        if input_text in output_text:
-            output_text = output_text.split(input_text)[-1]
-        else:
-            output_text = tokenizer.decode(outputs[0][input_len:], clean_up_tokenization_spaces=True) 
-        return output_text  
+
+def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
+    output_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
+
+    if input_text in output_text:
+        output_text = output_text.split(input_text)[-1]
+    else:
+        output_text = tokenizer.decode(outputs[0][input_len:], clean_up_tokenization_spaces=True) 
+    return output_text  
 
 class LogitBiasProcessor(LogitsProcessor):
     def __init__(self, bias_dict: dict):
@@ -53,14 +55,32 @@ class LMLMAgent(Agent):
         self.db_retrieve_token_id = self.tok.encode(DB_RETRIEVE_TOKEN, add_special_tokens=False)[0]
         self.answer_end_token_id = self.tok.encode(ANSWER_END_TOKEN, add_special_tokens=False)[0]
 
+
+        # Add validation in __init__
+        print(f"EOS token ID: {self.tok.eos_token_id}")
+        print(f"DB_RETRIEVE_TOKEN ID: {self.tok.encode(DB_RETRIEVE_TOKEN, add_special_tokens=False)[0]}")
+        print(f"Vocab size: {len(self.tok)}")
+
+        # Ensure they're within vocab bounds
+        def check_token_in_vocab(tokenizer):
+            special_tokens = [DB_START_TOKEN, DB_END_TOKEN, DB_RETRIEVE_TOKEN, 
+                  ANSWER_START_TOKEN, ANSWER_END_TOKEN, DB_SEP_TOKEN]
+            for token in special_tokens:
+                encoded = tokenizer.encode(token, add_special_tokens=False)
+                print(f"{token}: {encoded}")
+                assert len(encoded) > 0, f"Token {token} not in vocabulary"
+
+        check_token_in_vocab(self.tok)
+
         self.llm = LLM(
             model=model_path,
             tensor_parallel_size=1,
-            gpu_memory_utilization=0.8,
+            gpu_memory_utilization=0.6,
             # max_model_len=16384,
             seed=42,
             tokenizer=model_path,
         )
+        check_token_in_vocab(self.llm.get_tokenizer())
 
         self.max_turns = 16
 
@@ -100,6 +120,16 @@ class LMLMAgent(Agent):
             active_prompts = [p for i, p in enumerate(prompts) if active[i]]
             if not active_prompts:
                 break
+    
+            # DEBUG: Check prompt lengths
+            for idx, prompt in enumerate(active_prompts):
+                prompt_len = len(self.tok.encode(prompt))
+                max_len = self.llm.llm_engine.model_config.max_model_len
+                if prompt_len + max_tokens > max_len:
+                    print(f"Warning: Prompt {idx} length {prompt_len} + max_tokens {max_tokens} exceeds max {max_len}")
+                    # Either truncate or mark as inactive
+                    active[idx] = False
+                    continue
 
             # Setup sampling parameters with stop tokens
             # vLLM will automatically stop at DB_RETRIEVE_TOKEN or EOS
@@ -110,7 +140,7 @@ class LMLMAgent(Agent):
                 top_k=0,
                 max_tokens=max_tokens,  # Generate up to max_tokens or until stop token
                 stop_token_ids=self.stop_token_ids,
-                logprobs=0,
+                # logprobs=0, # help solve the bug of illegal cuda memory access
             )
 
             # Generate for all active prompts
