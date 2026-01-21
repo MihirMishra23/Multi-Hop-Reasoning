@@ -1,5 +1,3 @@
-#!/bin/bash 
-
 MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48
 DATASET=hotpotqa
 SPLIT=dev
@@ -63,9 +61,17 @@ SETTING=distractor
 SAVE_EVERY=64
 SEED=42
 
-ADAPTIVE_K=true
+# default
+USE_INVERSES=false
 if [[ "${MODEL_PATH}" == *"-nak"* ]]; then
     ADAPTIVE_K=false
+else
+    ADAPTIVE_K=true
+fi
+
+# th-3
+if [[ "${MODEL_PATH}" == *"-th-3"* ]]; then
+    RETURN_TRIPLETS=true
 fi
 
 
@@ -84,5 +90,7 @@ python scripts/eval_lmlm_multihop.py \
     --adaptive-k ${ADAPTIVE_K} \
     --save-every ${SAVE_EVERY}\
     --start-index ${START_IDX}\
+    --return-triplets ${RETURN_TRIPLETS}\
+    --use-inverses ${USE_INVERSES} \
     --eval \
     --resume
