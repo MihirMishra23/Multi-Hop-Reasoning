@@ -248,6 +248,12 @@ def main() -> None:
         default=False,
         help="Whether to use adaptive k for lmlm retreival",
     )
+    parser.add_argument(
+        "--return-triplets",
+        default=False,
+        help="Whether to return entire triplets (as opposed to only values)",
+        action="store_true"
+    )
     # RAG-related flags
     parser.add_argument(
         "--retrieval", default="bm25", choices=["bm25"], help="Retrieval backend for --method rag"
@@ -284,6 +290,12 @@ def main() -> None:
         type=int,
         default=None,
         help="Save results every N batches. None saves once at the end",
+    )
+    parser.add_argument(
+        "--use-inverses",
+        default=False,
+        help="Whether to allow inverse lookups, of the form (value, relationship)",
+        action="store_true"
     )
     parser.add_argument(
         "--resume",
@@ -328,9 +340,14 @@ def main() -> None:
     # Prepare output location
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
     output_dir = base_output_dir
+
+    use_inv_str = ""
+    if args.use_inverses:
+        print("using inverses!")
+        use_inv_str = "inv"
     model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
-    save_path = os.path.join(output_dir, "generations", f"eval_{args.dataset}_{args.split}_{model_name}_i{args.start_index}_n{examples_to_process}.json")
-    save_results_path = os.path.join(output_dir, "results", f"results_{args.dataset}_{model_name}_i{args.start_index}_n{examples_to_process}.json")
+    save_path = os.path.join(output_dir, "generations", f"eval_{args.dataset}_{args.split}_{model_name}_start_idx_{args.start_index}_n{examples_to_process}_{use_inv_str}.json")
+    save_results_path = os.path.join(output_dir, "results", f"results_{args.dataset}_{model_name}_n{examples_to_process}_{use_inv_str}.json")
 
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -394,6 +411,7 @@ def main() -> None:
     if args.method != "lmlm":
         llm = get_llm(model_name=args.model)
 
+
     # Build agent_kwargs dictionary
     agent_kwargs = {
         "llm": llm,
@@ -405,6 +423,8 @@ def main() -> None:
         "max_steps": args.max_steps,
         "model_path": args.model_path,
         "database_path": args.database_path,
+        "return_triplets" : args.return_triplets,
+        "use_inverses" : args.use_inverses
     }
 
     # Get agent instance using factory function
@@ -434,9 +454,9 @@ def main() -> None:
             except Exception as e:
                 failed_batches += 1
                 logger.error("Error processing batch %d: %s", batch_num, e, exc_info=True)
-                raise
                 pbar.update(1)
-
+                raise
+                
     logger.info(
         "Completed %d/%d batches successfully (%d failed)",
         successful_batches,

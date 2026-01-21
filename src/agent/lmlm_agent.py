@@ -1,5 +1,5 @@
 import json
-from agent.agent import Agent, AgentStep
+from agent.agent_class import Agent, AgentStep
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from multi_lmlm.database.database_manager import DatabaseManager
@@ -32,7 +32,7 @@ class LogitBiasProcessor(LogitsProcessor):
         return scores
 
 class LMLMAgent(Agent):
-    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6, adaptive : bool = False, top_k : int = 4):
+    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6, adaptive : bool = False, top_k : int = 4, return_triplets : bool = False, use_inverses : bool = False ):
         self.model_path = model_path
         self.database_path = database_path
         self.top_k = top_k
@@ -43,8 +43,13 @@ class LMLMAgent(Agent):
         else:
             self.metadata = None
 
+        if use_inverses:
+            print("USING INVERSES WOOHOO")
+
+        self.return_triplets = return_triplets
+
         self.db = DatabaseManager()
-        self.db.load_database(database_path, adaptive= adaptive)
+        self.db.load_database(database_path, adaptive= adaptive, use_inverses = use_inverses)
         self.device ="cuda" if torch.cuda.is_available() else "cpu"
         self.tok = AutoTokenizer.from_pretrained(model_path)
 
@@ -192,7 +197,7 @@ class LMLMAgent(Agent):
                         return_values = self.db.retrieve_from_database(
                             DB_START_TOKEN + db_query,
                             self.similarity_threshold,
-                            return_triplets=False,
+                            return_triplets=self.return_triplets,
                             top_k=self.top_k
                         )
                         return_value = ", ".join(return_values)
@@ -213,9 +218,9 @@ class LMLMAgent(Agent):
 
 if __name__ == '__main__':
     #testing script
-    agent = LMLMAgent(model_path = "/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48_th0.8-grpo-g8-bs16-s8-b0.0-ep5-n8000/checkpoint-1000", database_path="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json")
+    agent = LMLMAgent(model_path = "/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48_th0.8-grpo-g8-bs16-s8-b0.0-ep5-n8000/checkpoint-1000", database_path="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json", use_inverses = True, return_triplets = True)
     for i in range(5):
-        results = agent.run_vllm(["The Twelfth United States Army Group commander was the first chairman of what?"], 0)
+        results = agent.run(["Walter Piston studied composition with"], 0)
         print("results :\n\n" , results)
     
 
