@@ -95,8 +95,8 @@ if [ "$GPU_TYPE" == "B200" ]; then
     elif [[ "${MODEL_PATH}" == *"382M"* ]]; then
         NUM_GPUS=1
         NUM_GENERATIONS=8
-        PER_DEVICE_TRAIN_BATCH_SIZE=64
-        GRADIENT_ACCUMULATION_STEPS=4
+        PER_DEVICE_TRAIN_BATCH_SIZE=256
+        GRADIENT_ACCUMULATION_STEPS=1
         VLLM_GPU_MEMORY_UTILIZATION=0.15
     else
         echo "Invalid model path: ${MODEL_PATH}"

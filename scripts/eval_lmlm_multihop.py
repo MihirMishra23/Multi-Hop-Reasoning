@@ -329,8 +329,8 @@ def main() -> None:
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
     output_dir = base_output_dir
     model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
-    save_path = os.path.join(output_dir, "generations", f"eval_{args.dataset}_{args.split}_{model_name}_start_idx_{args.start_index}_n{examples_to_process}.json")
-    save_results_path = os.path.join(output_dir, "results", f"results_{args.dataset}_{model_name}_n{examples_to_process}.json")
+    save_path = os.path.join(output_dir, "generations", f"eval_{args.dataset}_{args.split}_{model_name}_i{args.start_index}_n{examples_to_process}.json")
+    save_results_path = os.path.join(output_dir, "results", f"results_{args.dataset}_{model_name}_i{args.start_index}_n{examples_to_process}.json")
 
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
