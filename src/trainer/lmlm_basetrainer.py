@@ -320,7 +320,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         self.pad_token_id = tokenizer.pad_token_id
         self.eos_token_id = tokenizer.eos_token_id
 
-        self.stop_token_ids = [tokenizer.eos_token_id, tokenizer.encode(DB_RETRIEVE_TOKEN)[0]]
+        self.stop_token_ids = [tokenizer.eos_token_id, tokenizer.encode(DB_RETRIEVE_TOKEN, add_special_tokens = False)[0]]
 
         # fix BUG
         self.db_retrieve_token_id = tokenizer.encode(DB_RETRIEVE_TOKEN)[0]
