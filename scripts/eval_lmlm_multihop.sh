@@ -27,9 +27,11 @@ done
 if [ "${DATASET}" = "hotpotqa" ]; then
     if [ "${SPLIT}" = "dev" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json"
+        START_IDX=0
     elif [ "${SPLIT}" = "train" ]; then
         echo "Using train set from GRPO"
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+        START_IDX=82347
     else
         echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
         exit 1
@@ -37,8 +39,10 @@ if [ "${DATASET}" = "hotpotqa" ]; then
 elif [ "${DATASET}" = "musique" ]; then
     if [ "${SPLIT}" = "dev" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/musique_validation_42_1000_all_context_database.json"
+        START_IDX=0
     elif [ "${SPLIT}" = "train" ]; then
         echo "There is no train database made for musique"
+        exit 1
     else
         echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
         exit 1
@@ -50,14 +54,25 @@ fi
 
 METHOD=lmlm
 MAX_TOKENS=1024
-TOTAL_COUNT=16
-BATCH_SIZE=16
+TOTAL_COUNT=500
+BATCH_SIZE=32
 OUTPUT_DIR=./output
 SETTING=distractor
 SAVE_EVERY=64
 SEED=42
-ADAPTIVE_K=true
-START_IDX=0
+
+# default
+USE_INVERSES=false
+if [[ "${MODEL_PATH}" == *"-nak"* ]]; then
+    ADAPTIVE_K=false
+else
+    ADAPTIVE_K=true
+fi
+
+# th-3
+if [[ "${MODEL_PATH}" == *"-th-3"* ]]; then
+    RETURN_TRIPLETS=true
+fi
 
 
 python scripts/eval_lmlm_multihop.py \
@@ -75,4 +90,7 @@ python scripts/eval_lmlm_multihop.py \
     --adaptive-k ${ADAPTIVE_K} \
     --save-every ${SAVE_EVERY}\
     --start-index ${START_IDX}\
-    --eval
+    --return-triplets ${RETURN_TRIPLETS}\
+    --use-inverses ${USE_INVERSES} \
+    --eval \
+    --resume

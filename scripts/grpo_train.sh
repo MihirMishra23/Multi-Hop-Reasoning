@@ -40,6 +40,7 @@ LOGGING_STEPS=5
 TOP_P=0.95
 TEMPERATURE=1.3
 TOP_K=0
+IS_ADAPTIVE_K=False
 
 
 
@@ -91,6 +92,12 @@ if [ "$GPU_TYPE" == "B200" ]; then
         PER_DEVICE_TRAIN_BATCH_SIZE=16
         GRADIENT_ACCUMULATION_STEPS=8
         VLLM_GPU_MEMORY_UTILIZATION=0.15
+    elif [[ "${MODEL_PATH}" == *"382M"* ]]; then
+        NUM_GPUS=1
+        NUM_GENERATIONS=8
+        PER_DEVICE_TRAIN_BATCH_SIZE=256
+        GRADIENT_ACCUMULATION_STEPS=1
+        VLLM_GPU_MEMORY_UTILIZATION=0.15
     else
         echo "Invalid model path: ${MODEL_PATH}"
         exit 1
@@ -123,6 +130,28 @@ else
     RESUME_FROM_CHECKPOINT=""
 fi
 
+# "${MODEL_NAME_OR_PATH##*/}-SFT_ep${NUM_TRAIN_EPOCHS}_bsz${EFFECTIVE_BATCH_SIZE}_th${THRESHOLD}"
+
+# split the threshold by split the _th from the model path
+BASENAME="${MODEL_PATH##*/}"
+THRESHOLD="${BASENAME##*_th}"
+
+if [ "${THRESHOLD}" = "-3" ]; then
+    RETURN_TRIPLES="--return_triples"
+    echo "RETURN_TRIPLES: ${RETURN_TRIPLES}"
+else
+    RETURN_TRIPLES=""
+fi
+
+if [ "${IS_ADAPTIVE_K}" = "True" ]; then
+    ADAPTIVE_K="--adaptive_k"
+    echo "ADAPTIVE_K: ${ADAPTIVE_K}"
+else
+    ADAPTIVE_K=""
+    OUTPUT_DIR="${OUTPUT_DIR}-nak"
+fi
+
+
 echo "Starting GRPO training with:"
 echo "  Model: ${MODEL_PATH}"
 echo "  Database: ${DATABASE_PATH}"
@@ -149,7 +178,6 @@ accelerate launch \
   --vllm_gpu_memory_utilization=${VLLM_GPU_MEMORY_UTILIZATION} \
   --use_vllm \
   --vllm_mode=colocate \
-  --adaptive_k \
   --tools \
   --gradient_checkpointing \
   --do_eval \
@@ -169,6 +197,8 @@ accelerate launch \
   --save_strategy=steps \
   --save_total_limit=5 \
   --save_steps=0.2 \
-  ${RESUME_FROM_CHECKPOINT}
+  ${RESUME_FROM_CHECKPOINT} \
+  ${RETURN_TRIPLES} \
+  ${ADAPTIVE_K}
 
 echo "Training completed!"
