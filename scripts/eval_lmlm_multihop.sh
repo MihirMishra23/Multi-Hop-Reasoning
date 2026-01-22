@@ -1,6 +1,9 @@
 MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48
 DATASET=hotpotqa
 SPLIT=dev
+USE_INVERSES="" # or "--use-inverses"
+NUM_SAMPLES=1000
+
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -16,6 +19,14 @@ while [[ $# -gt 0 ]]; do
         --split)
             SPLIT="$2"
             shift 2
+            ;;
+        --num_samples)
+            NUM_SAMPLES="$2"
+            shift 2
+            ;;
+        --use-inverses)
+            USE_INVERSES="--use-inverses"
+            shift
             ;;
         *)
             echo "Unknown argument: $1"
@@ -54,24 +65,24 @@ fi
 
 METHOD=lmlm
 MAX_TOKENS=1024
-TOTAL_COUNT=500
 BATCH_SIZE=32
 OUTPUT_DIR=./output
 SETTING=distractor
 SAVE_EVERY=64
 SEED=42
 
-# default
-USE_INVERSES=false
+
 if [[ "${MODEL_PATH}" == *"-nak"* ]]; then
-    ADAPTIVE_K=false
+    ADAPTIVE_K=""
 else
-    ADAPTIVE_K=true
+    ADAPTIVE_K="--adaptive-k"
 fi
 
 # th-3
 if [[ "${MODEL_PATH}" == *"-th-3"* ]]; then
-    RETURN_TRIPLETS=true
+    RETURN_TRIPLETS="--return-triplets"
+else
+    RETURN_TRIPLETS=""
 fi
 
 
@@ -81,16 +92,16 @@ python scripts/eval_lmlm_multihop.py \
     --method ${METHOD} \
     --max-tokens ${MAX_TOKENS} \
     --batch-size ${BATCH_SIZE} \
-    --total-count ${TOTAL_COUNT} \
+    --total-count ${NUM_SAMPLES} \
     --output-dir ${OUTPUT_DIR}/ \
     --split ${SPLIT} \
     --setting ${SETTING} \
     --dataset ${DATASET} \
     --seed ${SEED} \
-    --adaptive-k ${ADAPTIVE_K} \
     --save-every ${SAVE_EVERY}\
     --start-index ${START_IDX}\
-    --return-triplets ${RETURN_TRIPLETS}\
-    --use-inverses ${USE_INVERSES} \
+    ${ADAPTIVE_K} \
+    ${RETURN_TRIPLETS} \
+    ${USE_INVERSES} \
     --eval \
     --resume

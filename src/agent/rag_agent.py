@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 
-from agent.agent import Agent, AgentStep, LLM, LLMResponse
+from agent.agent_class import Agent, AgentStep, LLM, LLMResponse
 from tools.retrieval import BaseRetriever, FlashRAGBM25Retriever
 
 
