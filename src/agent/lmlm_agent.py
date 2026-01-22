@@ -1,5 +1,5 @@
 import json
-from agent.agent import Agent, AgentStep
+from agent.agent_class import Agent, AgentStep
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from multi_lmlm.database.database_manager import DatabaseManager
@@ -7,14 +7,16 @@ from transformers import LogitsProcessor
 from multi_lmlm.constants import DB_END_TOKEN, ANSWER_START_TOKEN, DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, ANSWER_END_TOKEN
 import os
 from vllm import LLM, SamplingParams
-def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
-        output_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
 
-        if input_text in output_text:
-            output_text = output_text.split(input_text)[-1]
-        else:
-            output_text = tokenizer.decode(outputs[0][input_len:], clean_up_tokenization_spaces=True) 
-        return output_text  
+
+def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
+    output_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
+
+    if input_text in output_text:
+        output_text = output_text.split(input_text)[-1]
+    else:
+        output_text = tokenizer.decode(outputs[0][input_len:], clean_up_tokenization_spaces=True) 
+    return output_text  
 
 class LogitBiasProcessor(LogitsProcessor):
     def __init__(self, bias_dict: dict):
@@ -30,7 +32,7 @@ class LogitBiasProcessor(LogitsProcessor):
         return scores
 
 class LMLMAgent(Agent):
-    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6, adaptive : bool = False, top_k : int = 4):
+    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6, adaptive : bool = False, top_k : int = 4, return_triplets : bool = False, use_inverses : bool = False ):
         self.model_path = model_path
         self.database_path = database_path
         self.top_k = top_k
@@ -41,12 +43,16 @@ class LMLMAgent(Agent):
         else:
             self.metadata = None
 
+        if use_inverses:
+            print("USING INVERSES WOOHOO")
+
+        self.return_triplets = return_triplets
+
         self.db = DatabaseManager()
-        self.db.load_database(database_path, adaptive= adaptive)
+        self.db.load_database(database_path, adaptive= adaptive, use_inverses = use_inverses)
         self.device ="cuda" if torch.cuda.is_available() else "cpu"
         self.tok = AutoTokenizer.from_pretrained(model_path)
-        self.model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16 if self.device=="cuda" else None)
-        self.model.to(self.device).eval()
+
         self.similarity_threshold = similarity_threshold
 
         # Initialize vLLM for batch generation
@@ -54,12 +60,34 @@ class LMLMAgent(Agent):
         self.db_retrieve_token_id = self.tok.encode(DB_RETRIEVE_TOKEN, add_special_tokens=False)[0]
         self.answer_end_token_id = self.tok.encode(ANSWER_END_TOKEN, add_special_tokens=False)[0]
 
+
+        # Add validation in __init__
+        print(f"EOS token ID: {self.tok.eos_token_id}")
+        print(f"DB_RETRIEVE_TOKEN ID: {self.tok.encode(DB_RETRIEVE_TOKEN, add_special_tokens=False)[0]}")
+        print(f"Vocab size: {len(self.tok)}")
+
+        # Ensure they're within vocab bounds
+        def check_token_in_vocab(tokenizer):
+            special_tokens = [DB_START_TOKEN, DB_END_TOKEN, DB_RETRIEVE_TOKEN, 
+                  ANSWER_START_TOKEN, ANSWER_END_TOKEN, DB_SEP_TOKEN]
+            for token in special_tokens:
+                encoded = tokenizer.encode(token, add_special_tokens=False)
+                print(f"{token}: {encoded}")
+                assert len(encoded) > 0, f"Token {token} not in vocabulary"
+
+        check_token_in_vocab(self.tok)
+
         self.llm = LLM(
             model=model_path,
             tensor_parallel_size=1,
-            gpu_memory_utilization=0.8,
+            gpu_memory_utilization=0.6,
+            # max_model_len=16384,
             seed=42,
+            tokenizer=model_path,
         )
+        check_token_in_vocab(self.llm.get_tokenizer())
+
+        self.max_turns = 16
 
     def create_prompt_from_query(self, query):
         return f"Question:\n{query}\nAnswer:\n"
@@ -90,12 +118,23 @@ class LMLMAgent(Agent):
 
         # Generation loop - continue until all queries complete
         # Max iterations to prevent infinite loops (in case of malformed outputs)
-        max_turns = 16
-        for turn in range(max_turns):
+        
+        # BUG: potential bug here. need to check the prompt length each turn to make sure it doesn't exceed the max model length
+        for turn in range(self.max_turns):
             # Only generate for active queries
             active_prompts = [p for i, p in enumerate(prompts) if active[i]]
             if not active_prompts:
                 break
+    
+            # DEBUG: Check prompt lengths
+            for idx, prompt in enumerate(active_prompts):
+                prompt_len = len(self.tok.encode(prompt))
+                max_len = self.llm.llm_engine.model_config.max_model_len
+                if prompt_len + max_tokens > max_len:
+                    print(f"Warning: Prompt {idx} length {prompt_len} + max_tokens {max_tokens} exceeds max {max_len}")
+                    # Either truncate or mark as inactive
+                    active[idx] = False
+                    continue
 
             # Setup sampling parameters with stop tokens
             # vLLM will automatically stop at DB_RETRIEVE_TOKEN or EOS
@@ -103,10 +142,10 @@ class LMLMAgent(Agent):
                 n=1,
                 temperature=temperature,
                 top_p=1.0,
-                top_k=-1,
+                top_k=0,
                 max_tokens=max_tokens,  # Generate up to max_tokens or until stop token
                 stop_token_ids=self.stop_token_ids,
-                logprobs=0,
+                # logprobs=0, # help solve the bug of illegal cuda memory access
             )
 
             # Generate for all active prompts
@@ -158,7 +197,7 @@ class LMLMAgent(Agent):
                         return_values = self.db.retrieve_from_database(
                             DB_START_TOKEN + db_query,
                             self.similarity_threshold,
-                            return_triplets=False,
+                            return_triplets=self.return_triplets,
                             top_k=self.top_k
                         )
                         return_value = ", ".join(return_values)
@@ -179,9 +218,9 @@ class LMLMAgent(Agent):
 
 if __name__ == '__main__':
     #testing script
-    agent = LMLMAgent(model_path = "/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48_th0.8-grpo-g8-bs16-s8-b0.0-ep5-n8000/checkpoint-1000", database_path="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json")
+    agent = LMLMAgent(model_path = "/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48_th0.8-grpo-g8-bs16-s8-b0.0-ep5-n8000/checkpoint-1000", database_path="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json", use_inverses = True, return_triplets = True)
     for i in range(5):
-        results = agent.run_vllm(["The Twelfth United States Army Group commander was the first chairman of what?"], 0)
+        results = agent.run(["Walter Piston studied composition with"], 0)
         print("results :\n\n" , results)
     
 

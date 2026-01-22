@@ -21,6 +21,7 @@ class TopkRetriever:
                  cache_dir: Optional[str] = "./data/database_cache",
                  database_name: str = "default_db",
                  use_hf_cache: bool = True,
+                 use_inverses : bool = False,
                  hf_repo_id: str = "kilian-group/LMLM-database-cache"):
         """
         Args:
@@ -51,7 +52,11 @@ class TopkRetriever:
         if self.cache_dir and not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir, exist_ok=True)
 
-        cache_path = os.path.join(self.cache_dir, f"{self.database_name}_{len(self.database)}") if self.cache_dir else None
+        optional_inv_text = ""
+        if use_inverses:
+            optional_inv_text = "_use_inv"
+        
+        cache_path = os.path.join(self.cache_dir, f"{self.database_name}_{len(self.database)}" + optional_inv_text) if self.cache_dir else None
         
         cached_path = self._get_cached_paths(
             cache_path,
@@ -142,7 +147,7 @@ class TopkRetriever:
 
     def retrieve_top_k(self, entity: str, relation: str, threshold: Optional[float] = None, return_triplets: bool = False) -> List[str]:
         query_text = f"{self._normalize_text(entity)} {self._normalize_text(relation)}"
-        query_embedding = self.model.encode([query_text], convert_to_numpy=True, normalize_embeddings=True)
+        query_embedding = self.model.encode([query_text], convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=False)
 
         distances, indices = self.index.search(query_embedding, self.top_k + 1)
 
