@@ -336,6 +336,7 @@ def main() -> None:
     # Calculate how many examples to process (total_count is NUMBER of examples from start_index)
     examples_to_process = min(args.total_count, total_dataset_size - args.start_index)
 
+    # TODO: how to make the training and eval use the same split function (e.g. create_train_val_splits)?
     # Calculate the exclusive end index
     end_index = args.start_index + examples_to_process
 
