@@ -8,6 +8,7 @@ from trl.trainer.grpo_config import GRPOConfig
 from multi_lmlm.constants import ANSWER_START_TOKEN, ANSWER_END_TOKEN
 import wandb
 import os
+from utils import create_train_val_splits
 
 @dataclass
 class ScriptArguments:
@@ -85,17 +86,10 @@ def main():
     # Load and process dataset
     print(f"Loading dataset: {script_args.dataset_name}")
     dataset = load_dataset(script_args.dataset_name, script_args.dataset_config, split="train")
-    dataset = dataset.shuffle(seed=42)
     
     processed_dataset = dataset.map(process_example)
     
-    # Create train/eval splits
-    total_size = len(processed_dataset)
-    train_start = max(0, total_size - script_args.train_size - script_args.eval_size)
-    train_end = min(total_size, train_start + script_args.train_size)
-    
-    train_set = processed_dataset.select(range(train_start, train_end))
-    eval_set = processed_dataset.select(range(train_end, total_size))
+    train_set, eval_set = create_train_val_splits(processed_dataset, script_args.train_size, script_args.eval_size, script_args.dataset_name)
     
     print(f"Train set size: {len(train_set)}")
     print(f"Eval set size: {len(eval_set)}")
