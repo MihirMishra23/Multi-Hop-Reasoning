@@ -307,6 +307,9 @@ def main() -> None:
         "--output-dir", default=None, help="Base output directory (defaults to <repo>/preds)"
     )
     parser.add_argument(
+        "--save-version", default=None, help="Save version (defaults to "")"
+    )
+    parser.add_argument(
         "--eval",
         action="store_true",
         help="Evaluate the predictions",
@@ -346,8 +349,8 @@ def main() -> None:
    
     model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
     save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}.json"
-    save_path = os.path.join(output_dir, "generations", f"eval_{save_postfix}")
-    save_results_path = os.path.join(output_dir, "results", f"results_{save_postfix}")
+    save_path = os.path.join(output_dir, f"generations{args.save_version}", f"eval_{save_postfix}")
+    save_results_path = os.path.join(output_dir, f"results{args.save_version}", f"results_{save_postfix}")
 
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
