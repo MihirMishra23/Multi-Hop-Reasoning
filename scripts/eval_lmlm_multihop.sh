@@ -110,7 +110,7 @@ else
 fi
 
 
-python scripts/eval_lmlm_multihop.py \
+python src/eval_lmlm_multihop.py \
     --model-path ${MODEL_PATH} \
     --database-path ${DATABASE_PATH} \
     --method ${METHOD} \
