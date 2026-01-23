@@ -3,6 +3,7 @@ DATASET=hotpotqa
 SPLIT=dev
 USE_INVERSES="" # or "--use-inverses"
 NUM_SAMPLES=1000
+SAVE_VERSION=""
 
 
 # Parse command line arguments
@@ -28,6 +29,10 @@ while [[ $# -gt 0 ]]; do
             USE_INVERSES="--use-inverses"
             shift
             ;;
+        --save_version)
+            SAVE_VERSION="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown argument: $1"
             exit 1
@@ -38,11 +43,25 @@ done
 if [ "${DATASET}" = "hotpotqa" ]; then
     if [ "${SPLIT}" = "dev" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json"
+        DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
-    elif [ "${SPLIT}" = "train" ]; then
+    elif [ "${SPLIT}" = "val100" ]; then
+        echo "Using eval set from GRPO"
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+        DEFAULT_NUM_SAMPLES=100
+        START_IDX=90347
+        SPLIT="train"
+    elif [ "${SPLIT}" = "val1k" ]; then
         echo "Using train set from GRPO"
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+        DEFAULT_NUM_SAMPLES=1000
         START_IDX=82347
+    elif [ "${SPLIT}" = "train1k" ]; then
+        echo "Using train set from GRPO"
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=89347
+        SPLIT="train"
     else
         echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
         exit 1
@@ -50,6 +69,7 @@ if [ "${DATASET}" = "hotpotqa" ]; then
 elif [ "${DATASET}" = "musique" ]; then
     if [ "${SPLIT}" = "dev" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/musique_validation_42_1000_all_context_database.json"
+        DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
     elif [ "${SPLIT}" = "train" ]; then
         echo "There is no train database made for musique"
@@ -61,6 +81,10 @@ elif [ "${DATASET}" = "musique" ]; then
 else
     echo "Error: DATASET must be either 'hotpotqa' or 'musique', got '${DATASET}'"
     exit 1
+fi
+
+if [ "${NUM_SAMPLES}" -gt "${DEFAULT_NUM_SAMPLES}" ]; then
+    NUM_SAMPLES="${DEFAULT_NUM_SAMPLES}"
 fi
 
 METHOD=lmlm
@@ -94,6 +118,7 @@ python scripts/eval_lmlm_multihop.py \
     --batch-size ${BATCH_SIZE} \
     --total-count ${NUM_SAMPLES} \
     --output-dir ${OUTPUT_DIR}/ \
+    --save-version ${SAVE_VERSION} \
     --split ${SPLIT} \
     --setting ${SETTING} \
     --dataset ${DATASET} \
