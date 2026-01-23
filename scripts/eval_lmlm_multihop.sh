@@ -1,4 +1,4 @@
-MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48
+MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48_th0.8-grpo-g8-bs16-s8-b0.0-ep5-n8000/checkpoint-1250
 DATASET=hotpotqa
 SPLIT=dev
 
@@ -52,9 +52,13 @@ else
     exit 1
 fi
 
+# #TEMP
+# DATABASE_PATH=/share/j_sun/lmlm_multihop/database/gemini/temp/hotpot_qa_output_validation_seed_42_sample_from_start_nb_30_date_01-23_database.json
+# #END OF TMEP
+
 METHOD=lmlm
 MAX_TOKENS=1024
-TOTAL_COUNT=500
+TOTAL_COUNT=30
 BATCH_SIZE=32
 OUTPUT_DIR=./output
 SETTING=distractor
@@ -90,7 +94,4 @@ python scripts/eval_lmlm_multihop.py \
     --adaptive-k ${ADAPTIVE_K} \
     --save-every ${SAVE_EVERY}\
     --start-index ${START_IDX}\
-    --return-triplets ${RETURN_TRIPLETS}\
-    --use-inverses ${USE_INVERSES} \
     --eval \
-    --resume
