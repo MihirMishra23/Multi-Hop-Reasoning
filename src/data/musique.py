@@ -164,7 +164,7 @@ def load_musique(
     return ds
 
 
-def _coerce_musique_record(record: Any) -> Optional[Dict[str, Any]]:
+def _normalize_musique_corpus_record(record: Any) -> Optional[Dict[str, Any]]:
     if isinstance(record, dict):
         title = str(record.get("title", "")).strip()
         contents = record.get("contents")
@@ -195,7 +195,7 @@ def load_musique_rag_corpus(path: str) -> List[Dict[str, Any]]:
                 if not line:
                     continue
                 record = json.loads(line)
-                coerced = _coerce_musique_record(record)
+                coerced = _normalize_musique_corpus_record(record)
                 if coerced:
                     records.append(coerced)
                     continue
@@ -212,14 +212,14 @@ def load_musique_rag_corpus(path: str) -> List[Dict[str, Any]]:
     if not isinstance(records, list):
         return []
     if records and all(isinstance(item, str) for item in records):
-        coerced = [_coerce_musique_record(item) for item in records]
+        coerced = [_normalize_musique_corpus_record(item) for item in records]
         deduped = _dedupe_paragraph_records([c for c in coerced if c])
     elif records and all(
         isinstance(item, dict) and ("title" in item or "contents" in item) for item in records
     ):
         coerced: List[Dict[str, Any]] = []
         for item in records:
-            record = _coerce_musique_record(item)
+            record = _normalize_musique_corpus_record(item)
             if record:
                 coerced.append(record)
         deduped = _dedupe_paragraph_records(coerced)

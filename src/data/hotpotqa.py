@@ -225,7 +225,7 @@ def _dedupe_nonempty_paragraphs(paragraphs: List[str]) -> List[str]:
     return output
 
 
-def _coerce_hotpotqa_record(record: Any) -> Optional[Dict[str, Any]]:
+def _normalize_hotpotqa_corpus_record(record: Any) -> Optional[Dict[str, Any]]:
     if isinstance(record, dict):
         title = str(record.get("title", "")).strip()
         contents = record.get("contents")
@@ -251,7 +251,7 @@ def load_hotpotqa_rag_corpus(path: str) -> List[Dict[str, Any]]:
                 if not line:
                     continue
                 record = json.loads(line)
-                coerced = _coerce_hotpotqa_record(record)
+                coerced = _normalize_hotpotqa_corpus_record(record)
                 if coerced:
                     records.append(coerced)
     else:
