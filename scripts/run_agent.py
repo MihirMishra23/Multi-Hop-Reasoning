@@ -292,6 +292,12 @@ def main() -> None:
         and not args.rag_corpus_path
     ):
         args.rag_corpus_path = DEFAULT_FULLWIKI_CORPUS_PATH
+    if args.method == "rag" and args.dataset == "musique" and not args.rag_corpus_path:
+        args.rag_corpus_path = f"hf:{args.split}"
+        logger.info(
+            "MuSiQue RAG requires a global corpus; defaulting to %s",
+            args.rag_corpus_path,
+        )
 
     rag_corpus = None
     rag_corpus_path = args.rag_corpus_path
@@ -323,15 +329,22 @@ def main() -> None:
         logger.info("Loading RAG corpus from %s", rag_corpus_path)
         if args.dataset == "hotpotqa":
             rag_corpus = load_hotpotqa_rag_corpus(rag_corpus_path)
+            logger.info(f"Loaded {len(rag_corpus)} unique RAG paragraphs from hotpotqa")
         elif args.dataset == "musique":
             rag_corpus = load_musique_rag_corpus(rag_corpus_path)
+            logger.info(f"Loaded {len(rag_corpus)} unique RAG paragraphs from musique")
         else:
             rag_corpus = []
-        logger.info("Loaded %d unique RAG paragraphs", len(rag_corpus))
+        
+        # if rag corpus loading fails
         if not rag_corpus:
             logger.warning(
                 "RAG corpus is empty after loading %s (check format and content).",
                 rag_corpus_path,
+            )
+            raise RuntimeError(
+                "RAG requires a non-empty global corpus; "
+                "please verify --rag-corpus-path or HF cache."
             )
 
     if rag_scope is None:
