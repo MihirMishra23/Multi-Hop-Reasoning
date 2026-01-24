@@ -57,6 +57,45 @@ def _infer_rag_scope(rag_corpus_path: str) -> str:
     return "custom"
 
 
+def _normalize_title(title: Any) -> str:
+    return str(title or "").strip().lower()
+
+
+def _extract_retrieved_title(doc: Any) -> str:
+    if isinstance(doc, dict):
+        return _normalize_title(doc.get("title", ""))
+    return ""
+
+
+def _compute_retrieval_stats(
+    evidence_docs: List[Any],
+    supporting_facts: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    supporting_titles = {
+        _normalize_title(item.get("title", ""))
+        for item in (supporting_facts or [])
+        if isinstance(item, dict)
+    }
+    supporting_titles = {t for t in supporting_titles if t}
+    retrieved_titles = {
+        _extract_retrieved_title(doc) for doc in (evidence_docs or [])
+    }
+    retrieved_titles = {t for t in retrieved_titles if t}
+
+    overlap = supporting_titles.intersection(retrieved_titles)
+    gold_total = len(supporting_titles)
+    retrieved_total = len(retrieved_titles)
+    overlap_count = len(overlap)
+
+    return {
+        "gold_total": gold_total,
+        "retrieved_total": retrieved_total,
+        "overlap": overlap_count,
+        "precision": overlap_count / retrieved_total if retrieved_total else 0.0,
+        "recall": overlap_count / gold_total if gold_total else 0.0,
+    }
+
+
 def process_single_batch(
     args: argparse.Namespace,
     batch_number: int,
@@ -150,6 +189,11 @@ def process_single_batch(
             "question": question,
             "trace": serialized_trace,
         }
+        if args.method == "rag":
+            results[str(qid)]["retrieval"] = _compute_retrieval_stats(
+                evidence_docs=evidence_docs,
+                supporting_facts=ex.get("supporting_facts") or [],
+            )
         if args.method == "rag" and args.debug_evidence:
             results[str(qid)]["evidence"] = evidence_docs
 
