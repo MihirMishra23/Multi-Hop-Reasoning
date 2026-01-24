@@ -198,6 +198,7 @@ def _build_hotpotqa_rag_records_from_raw(examples: List[Dict[str, Any]]) -> List
 
 
 def _dedupe_paragraph_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Deduplicate by (title, contents) while preserving order."""
     seen = set()
     output: List[Dict[str, Any]] = []
     for record in records:
@@ -226,6 +227,7 @@ def _dedupe_nonempty_paragraphs(paragraphs: List[str]) -> List[str]:
 
 
 def _normalize_hotpotqa_corpus_record(record: Any) -> Optional[Dict[str, Any]]:
+    """Normalize various record shapes into {title, contents}."""
     if isinstance(record, dict):
         title = str(record.get("title", "")).strip()
         contents = record.get("contents")
