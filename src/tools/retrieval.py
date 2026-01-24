@@ -24,6 +24,7 @@ def _split_title_article(context: str) -> tuple[str, str]:
 
 
 def _normalize_document(doc: Any) -> Tuple[str, Any]:
+    """Return (index_text, original_doc) for a document string or structured record."""
     if isinstance(doc, dict):
         title = str(doc.get("title", "")).strip()
         contents = (
@@ -42,6 +43,7 @@ def _normalize_document(doc: Any) -> Tuple[str, Any]:
 
 
 def _build_contents_list(documents: List[Any]) -> Tuple[List[str], List[Any]]:
+    """Build indexable text list and aligned original-doc list for mapping results."""
     contents_list: List[str] = []
     docs_list: List[Any] = []
     for doc in documents or []:
@@ -58,6 +60,7 @@ def _map_results_to_docs(
     contents_list: List[str],
     docs_list: List[Any],
 ) -> List[Any]:
+    """Map retriever outputs back to original docs (prefer IDs when available)."""
     if not results:
         return []
     first = results[0]

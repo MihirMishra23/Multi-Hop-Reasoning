@@ -5,6 +5,7 @@ from tools.retrieval import BaseRetriever, FlashRAGBM25Retriever, FlashRAGBM25Co
 
 
 def _doc_to_text(doc: Any) -> str:
+    """Render retrieved evidence (dict or string) into a prompt-friendly string."""
     if isinstance(doc, dict):
         title = str(doc.get("title", "")).strip()
         contents = str(doc.get("contents", "")).strip()
@@ -50,7 +51,7 @@ class RAGAgent(Agent):
         self._evidence_docs: List[Any] = []
 
     def gather_evidence(self, query: str) -> None:
-        """ Note that this is only computed once"""
+        """Retrieve evidence once per question to avoid repeated indexing."""
         if self._evidence_docs:
             return
         documents = self._corpus if self._corpus else self.contexts

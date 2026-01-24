@@ -93,6 +93,7 @@ def _build_musique_rag_records_from_raw(examples: List[Dict[str, Any]]) -> List[
 
 
 def _dedupe_paragraph_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Deduplicate by (title, contents) while preserving order."""
     seen = set()
     deduped: List[Dict[str, Any]] = []
     for record in records:
@@ -165,6 +166,7 @@ def load_musique(
 
 
 def _normalize_musique_corpus_record(record: Any) -> Optional[Dict[str, Any]]:
+    """Normalize various record shapes into {title, contents}."""
     if isinstance(record, dict):
         title = str(record.get("title", "")).strip()
         contents = record.get("contents")
