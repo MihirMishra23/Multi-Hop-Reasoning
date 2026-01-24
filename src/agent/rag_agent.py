@@ -4,8 +4,18 @@ from agent.agent import Agent, AgentStep, LLM, LLMResponse
 from tools.retrieval import BaseRetriever, FlashRAGBM25Retriever, FlashRAGBM25CorpusRetriever
 
 
-def _join_evidence(docs: List[str]) -> str:
-    return "\n================\n\n".join(docs)
+def _doc_to_text(doc: Any) -> str:
+    if isinstance(doc, dict):
+        title = str(doc.get("title", "")).strip()
+        contents = str(doc.get("contents", "")).strip()
+        if title and contents:
+            return f"{title}: {contents}".strip()
+        return contents or title
+    return str(doc)
+
+
+def _join_evidence(docs: List[Any]) -> str:
+    return "\n================\n\n".join(_doc_to_text(doc) for doc in docs)
 
 
 class RAGAgent(Agent):
@@ -19,8 +29,8 @@ class RAGAgent(Agent):
         self,
         llm: LLM,
         retriever_type: str,
-        contexts: List[str],
-        corpus: Optional[List[str]] = None,
+        contexts: List[Any],
+        corpus: Optional[List[Any]] = None,
         rag_k: int = 4,
         max_steps: int = 8,
     ) -> None:
@@ -37,7 +47,7 @@ class RAGAgent(Agent):
         self.contexts = contexts or []
         self._corpus = corpus or []
         self.rag_k = rag_k
-        self._evidence_docs: List[str] = []
+        self._evidence_docs: List[Any] = []
 
     def gather_evidence(self, query: str) -> None:
         """ Note that this is only computed once"""
@@ -61,7 +71,7 @@ class RAGAgent(Agent):
         else:
             return f"Evidence:\n{evidence_block}\n\nQuestion: {query}".strip()
 
-    def reset(self, contexts: List[str]) -> None:
+    def reset(self, contexts: List[Any]) -> None:
         """Reset agent state for a new question with new contexts."""
         if not self._corpus:
             self.contexts = contexts or []
@@ -75,4 +85,3 @@ class RAGAgent(Agent):
         self._evidence_docs = []
         self.gather_evidence(query)
         return super().run(query, **llm_kwargs)
-

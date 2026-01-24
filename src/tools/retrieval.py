@@ -3,11 +3,11 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass
-from typing import List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 
 class BaseRetriever(Protocol):
-    def retrieve(self, query: str, documents: List[str], top_k: int) -> List[str]:
+    def retrieve(self, query: str, documents: List[Any], top_k: int) -> List[Any]:
         ...
 
 
@@ -23,12 +23,59 @@ def _split_title_article(context: str) -> tuple[str, str]:
     return "", context.strip()
 
 
-def _build_contents_list(documents: List[str]) -> List[str]:
+def _normalize_document(doc: Any) -> Tuple[str, Any]:
+    if isinstance(doc, dict):
+        title = str(doc.get("title", "")).strip()
+        contents = (
+            doc.get("contents")
+            if doc.get("contents") is not None
+            else doc.get("context")
+        )
+        if contents is None:
+            contents = doc.get("paragraph_text", "")
+        contents_text = str(contents).strip()
+        combined = f"{title}\n\n{contents_text}".strip()
+        return combined, doc
+    title, article = _split_title_article(str(doc))
+    combined = f"{title}\n\n{article}".strip()
+    return combined, str(doc)
+
+
+def _build_contents_list(documents: List[Any]) -> Tuple[List[str], List[Any]]:
     contents_list: List[str] = []
-    for ctx in documents or []:
-        title, article = _split_title_article(str(ctx))
-        contents_list.append(f"{title}\n{article}".strip())
-    return contents_list
+    docs_list: List[Any] = []
+    for doc in documents or []:
+        combined, original = _normalize_document(doc)
+        if not combined:
+            continue
+        contents_list.append(combined)
+        docs_list.append(original)
+    return contents_list, docs_list
+
+
+def _map_results_to_docs(
+    results: List[Any],
+    contents_list: List[str],
+    docs_list: List[Any],
+) -> List[Any]:
+    if not results:
+        return []
+    first = results[0]
+    if isinstance(first, dict):
+        if "id" in first:
+            return [docs_list[int(item["id"])] for item in results]
+        if "contents" in first:
+            lookup = {contents: i for i, contents in enumerate(contents_list)}
+            mapped: List[Any] = []
+            for item in results:
+                contents = str(item.get("contents", ""))
+                idx = lookup.get(contents)
+                if idx is None:
+                    mapped.append(contents)
+                else:
+                    mapped.append(docs_list[idx])
+            return mapped
+    return [docs_list[int(idx)] for idx in results]
 
 
 @dataclass
@@ -41,9 +88,9 @@ class FlashRAGBM25Retriever:
 
     bm25_backend: str = "bm25s"
 
-    def retrieve(self, query: str, documents: List[str], top_k: int) -> List[str]:
-        # Prepare contents list as '{title}\\n{article}'
-        contents_list = _build_contents_list(documents)
+    def retrieve(self, query: str, documents: List[Any], top_k: int) -> List[Any]:
+        # Prepare contents list as '{title}\\n\\n{article}'
+        contents_list, docs_list = _build_contents_list(documents)
 
         if len(contents_list) == 0:
             return []
@@ -97,15 +144,9 @@ class FlashRAGBM25Retriever:
             results = retriever.search(query=query, num=top_k, return_score=False)
 
             # results may be dicts with 'contents' or id integers; normalize to contents strings
-            top_contents: List[str] = []
-            if isinstance(results, list) and len(results) > 0:
-                first = results[0]
-                if isinstance(first, dict) and "contents" in first:
-                    top_contents = [str(item["contents"]) for item in results]
-                else:
-                    # Assume results are integer IDs into the corpus
-                    top_contents = [contents_list[int(idx)] for idx in results]
-            return top_contents[:top_k]
+            if isinstance(results, list):
+                return _map_results_to_docs(results, contents_list, docs_list)[:top_k]
+            return []
         finally:
             # Cleanup temporary directory
             try:
@@ -120,11 +161,11 @@ class FlashRAGBM25CorpusRetriever:
     BM25 retriever that builds a corpus index once and reuses it across queries.
     """
 
-    documents: List[str]
+    documents: List[Any]
     bm25_backend: str = "bm25s"
 
     def __post_init__(self) -> None:
-        self._contents_list = _build_contents_list(self.documents)
+        self._contents_list, self._docs_list = _build_contents_list(self.documents)
         self._temp_dir: Optional[str] = None
         self._corpus_path: Optional[str] = None
         self._retriever = None
@@ -177,19 +218,14 @@ class FlashRAGBM25CorpusRetriever:
         }
         self._retriever = BM25Retriever(config=config)
 
-    def retrieve(self, query: str, documents: List[str], top_k: int) -> List[str]:
+    def retrieve(self, query: str, documents: List[Any], top_k: int) -> List[Any]:
         if not self._retriever:
             return []
 
         results = self._retriever.search(query=query, num=top_k, return_score=False)
-        top_contents: List[str] = []
-        if isinstance(results, list) and len(results) > 0:
-            first = results[0]
-            if isinstance(first, dict) and "contents" in first:
-                top_contents = [str(item["contents"]) for item in results]
-            else:
-                top_contents = [self._contents_list[int(idx)] for idx in results]
-        return top_contents[:top_k]
+        if isinstance(results, list):
+            return _map_results_to_docs(results, self._contents_list, self._docs_list)[:top_k]
+        return []
 
     def close(self) -> None:
         if self._temp_dir:
