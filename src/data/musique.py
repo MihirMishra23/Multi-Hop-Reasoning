@@ -14,6 +14,8 @@ Notes:
   We encode each supporting paragraph as `{title: <title>, sentence_id: 0}`.
 """
 
+import json
+import os
 import random
 from typing import Any, Dict, List, Optional
 
@@ -54,6 +56,26 @@ def _build_supporting_facts(paragraphs: Any) -> List[Dict[str, Any]]:
         if isinstance(p, dict) and p.get("is_supporting"):
             facts.append({"title": str(p.get("title", "")), "sentence_id": 0})
     return facts
+
+
+def _dedupe_nonempty_paragraphs(paragraphs: List[str]) -> List[str]:
+    seen = set()
+    deduped: List[str] = []
+    for paragraph in paragraphs:
+        text = str(paragraph).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        deduped.append(text)
+    return deduped
+
+
+def _build_musique_rag_contexts_from_raw(examples: List[Dict[str, Any]]) -> List[str]:
+    """Build a global RAG corpus from raw MuSiQue JSON examples."""
+    contexts: List[str] = []
+    for ex in examples:
+        contexts.extend(_build_contexts(ex.get("paragraphs")))
+    return contexts
 
 
 def _normalize_hf_dataset(ds: HFDataset) -> HFDataset:
@@ -110,3 +132,76 @@ def load_musique(
     if limit is not None:
         ds = ds.select(range(min(limit, len(ds))))
     return ds
+
+
+def load_musique_rag_corpus(path: str) -> List[str]:
+    """Load and build a deduplicated MuSiQue RAG corpus from a JSON/JSONL file."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"MuSiQue RAG corpus file not found: {path}")
+
+    _, ext = os.path.splitext(path)
+    if ext.lower() == ".jsonl":
+        contexts: List[str] = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                if isinstance(record, str):
+                    contexts.append(record)
+                    continue
+                if not isinstance(record, dict):
+                    contexts.append(str(record))
+                    continue
+                if "contents" in record:
+                    contexts.append(str(record.get("contents", "")))
+                    continue
+                if "context" in record:
+                    contexts.append(str(record.get("context", "")))
+                    continue
+                if "paragraphs" in record:
+                    contexts.extend(_build_contexts(record.get("paragraphs")))
+        return _dedupe_nonempty_paragraphs(contexts)
+    else:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            records = data.get("data") or data.get("examples") or []
+        else:
+            records = data
+
+    if not isinstance(records, list):
+        return []
+    if records and all(isinstance(item, str) for item in records):
+        return _dedupe_nonempty_paragraphs([str(item) for item in records])
+    return _dedupe_nonempty_paragraphs(_build_musique_rag_contexts_from_raw(records))
+
+
+def load_musique_rag_corpus_from_hf(
+    split: str,
+    limit: Optional[int] = None,
+    seed: Optional[int] = None,
+) -> List[str]:
+    """Build a deduplicated MuSiQue RAG corpus from the HF dataset."""
+    ds = load_musique(split=split, source="hf", limit=limit, seed=seed)
+    contexts: List[str] = []
+    for ex in ds:
+        contexts.extend(ex.get("contexts") or [])
+    return _dedupe_nonempty_paragraphs(contexts)
+
+
+def write_musique_rag_corpus_jsonl(
+    path: str,
+    split: str,
+    limit: Optional[int] = None,
+    seed: Optional[int] = None,
+) -> int:
+    """Write a MuSiQue RAG corpus JSONL file from the HF dataset."""
+    contexts = load_musique_rag_corpus_from_hf(split=split, limit=limit, seed=seed)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for idx, ctx in enumerate(contexts):
+            json.dump({"id": idx, "contents": ctx}, f, ensure_ascii=False)
+            f.write("\n")
+    return len(contexts)

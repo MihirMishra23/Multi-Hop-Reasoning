@@ -37,6 +37,7 @@ from agent import get_agent, Agent
 from llm import get_llm
 from data import get_dataset
 from data.hotpotqa import load_hotpotqa_rag_corpus
+from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
 
 DEFAULT_FULLWIKI_CORPUS_PATH = "/share/j_sun/lmlm_multihop/datasets/hotpot_dev_fullwiki_v1.json"
 
@@ -246,7 +247,10 @@ def main() -> None:
     parser.add_argument(
         "--rag-corpus-path",
         default=None,
-        help="Optional path to a HotpotQA JSON file to build a global RAG corpus.",
+        help=(
+            "Optional path to a HotpotQA/MuSiQue JSON or JSONL file to build a global RAG corpus. "
+            "For MuSiQue, you can pass 'hf:<split>' (e.g., hf:train) to build and cache a JSONL."
+        ),
     )
 
     parser.add_argument("--model", default=None, help="LLM model name")
@@ -290,21 +294,52 @@ def main() -> None:
         args.rag_corpus_path = DEFAULT_FULLWIKI_CORPUS_PATH
 
     rag_corpus = None
-    if args.method == "rag" and args.dataset == "hotpotqa" and args.rag_corpus_path:
-        logger.info("Loading RAG corpus from %s", args.rag_corpus_path)
-        rag_corpus = load_hotpotqa_rag_corpus(args.rag_corpus_path)
+    rag_corpus_path = args.rag_corpus_path
+    rag_scope = None
+    if (
+        args.method == "rag"
+        and args.dataset == "musique"
+        and isinstance(rag_corpus_path, str)
+        and rag_corpus_path.startswith("hf:")
+    ):
+        hf_split = rag_corpus_path.split(":", 1)[1].strip() or "train"
+        cache_dir = os.path.join(REPO_ROOT, "preds", "rag_corpus")
+        rag_corpus_path = os.path.join(cache_dir, f"musique_{hf_split}.jsonl")
+        logger.info(
+            "Building MuSiQue RAG corpus from HF split=%s and saving to %s",
+            hf_split,
+            rag_corpus_path,
+        )
+        count = write_musique_rag_corpus_jsonl(
+            path=rag_corpus_path,
+            split=hf_split,
+            limit=None,
+            seed=args.seed,
+        )
+        logger.info("Wrote %d unique RAG paragraphs to %s", count, rag_corpus_path)
+        rag_scope = f"hf_{hf_split}"
+
+    if args.method == "rag" and rag_corpus_path:
+        logger.info("Loading RAG corpus from %s", rag_corpus_path)
+        if args.dataset == "hotpotqa":
+            rag_corpus = load_hotpotqa_rag_corpus(rag_corpus_path)
+        elif args.dataset == "musique":
+            rag_corpus = load_musique_rag_corpus(rag_corpus_path)
+        else:
+            rag_corpus = []
         logger.info("Loaded %d unique RAG paragraphs", len(rag_corpus))
         if not rag_corpus:
             logger.warning(
                 "RAG corpus is empty after loading %s (check format and content).",
-                args.rag_corpus_path,
+                rag_corpus_path,
             )
 
-    args.rag_scope = (
-        _infer_rag_scope(args.rag_corpus_path)
-        if args.method == "rag" and args.rag_corpus_path
-        else args.setting
-    )
+    if rag_scope is None:
+        if args.method == "rag" and rag_corpus_path:
+            rag_scope = _infer_rag_scope(rag_corpus_path)
+        else:
+            rag_scope = args.setting
+    args.rag_scope = rag_scope
 
     # Load full dataset once (with seed for deterministic shuffling)
     full_dataset = get_dataset(args.dataset, args.setting, args.split, seed=args.seed)
