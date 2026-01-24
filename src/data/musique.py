@@ -78,6 +78,36 @@ def _build_musique_rag_contexts_from_raw(examples: List[Dict[str, Any]]) -> List
     return contexts
 
 
+def _build_musique_rag_records_from_raw(examples: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Build structured corpus records from raw MuSiQue JSON examples."""
+    records: List[Dict[str, Any]] = []
+    for ex in examples:
+        paragraphs = ex.get("paragraphs") or []
+        for p in paragraphs:
+            if not isinstance(p, dict):
+                continue
+            title = str(p.get("title", "")).strip()
+            text = str(p.get("paragraph_text", "")).strip()
+            records.append({"title": title, "contents": text})
+    return records
+
+
+def _dedupe_paragraph_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen = set()
+    deduped: List[Dict[str, Any]] = []
+    for record in records:
+        title = str(record.get("title", "")).strip()
+        contents = str(record.get("contents", "")).strip()
+        if not title and not contents:
+            continue
+        key = (title, contents)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append({"title": title, "contents": contents})
+    return deduped
+
+
 def _normalize_hf_dataset(ds: HFDataset) -> HFDataset:
     def _map(ex: Dict[str, Any]) -> Dict[str, Any]:
         ex_id = ex.get("id") or ex.get("_id") or ""
@@ -134,35 +164,43 @@ def load_musique(
     return ds
 
 
-def load_musique_rag_corpus(path: str) -> List[str]:
+def _coerce_musique_record(record: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(record, dict):
+        title = str(record.get("title", "")).strip()
+        contents = record.get("contents")
+        if contents is None:
+            contents = record.get("context")
+        if contents is None:
+            contents = record.get("paragraph_text", "")
+        return {"title": title, "contents": str(contents).strip()}
+    if isinstance(record, str):
+        if ": " in record:
+            title, contents = record.split(": ", 1)
+            return {"title": title.strip(), "contents": contents.strip()}
+        return {"title": "", "contents": record.strip()}
+    return None
+
+
+def load_musique_rag_corpus(path: str) -> List[Dict[str, Any]]:
     """Load and build a deduplicated MuSiQue RAG corpus from a JSON/JSONL file."""
     if not os.path.exists(path):
         raise FileNotFoundError(f"MuSiQue RAG corpus file not found: {path}")
 
     _, ext = os.path.splitext(path)
+    records: List[Dict[str, Any]] = []
     if ext.lower() == ".jsonl":
-        contexts: List[str] = []
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
                 record = json.loads(line)
-                if isinstance(record, str):
-                    contexts.append(record)
+                coerced = _coerce_musique_record(record)
+                if coerced:
+                    records.append(coerced)
                     continue
-                if not isinstance(record, dict):
-                    contexts.append(str(record))
-                    continue
-                if "contents" in record:
-                    contexts.append(str(record.get("contents", "")))
-                    continue
-                if "context" in record:
-                    contexts.append(str(record.get("context", "")))
-                    continue
-                if "paragraphs" in record:
-                    contexts.extend(_build_contexts(record.get("paragraphs")))
-        return _dedupe_nonempty_paragraphs(contexts)
+                if isinstance(record, dict) and "paragraphs" in record:
+                    records.extend(_build_musique_rag_records_from_raw([record]))
     else:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -174,21 +212,39 @@ def load_musique_rag_corpus(path: str) -> List[str]:
     if not isinstance(records, list):
         return []
     if records and all(isinstance(item, str) for item in records):
-        return _dedupe_nonempty_paragraphs([str(item) for item in records])
-    return _dedupe_nonempty_paragraphs(_build_musique_rag_contexts_from_raw(records))
+        coerced = [_coerce_musique_record(item) for item in records]
+        deduped = _dedupe_paragraph_records([c for c in coerced if c])
+    elif records and all(
+        isinstance(item, dict) and ("title" in item or "contents" in item) for item in records
+    ):
+        coerced: List[Dict[str, Any]] = []
+        for item in records:
+            record = _coerce_musique_record(item)
+            if record:
+                coerced.append(record)
+        deduped = _dedupe_paragraph_records(coerced)
+    else:
+        deduped = _dedupe_paragraph_records(_build_musique_rag_records_from_raw(records))
+
+    for idx, record in enumerate(deduped):
+        record["id"] = idx
+    return deduped
 
 
 def load_musique_rag_corpus_from_hf(
     split: str,
     limit: Optional[int] = None,
     seed: Optional[int] = None,
-) -> List[str]:
+) -> List[Dict[str, Any]]:
     """Build a deduplicated MuSiQue RAG corpus from the HF dataset."""
-    ds = load_musique(split=split, source="hf", limit=limit, seed=seed)
-    contexts: List[str] = []
-    for ex in ds:
-        contexts.extend(ex.get("contexts") or [])
-    return _dedupe_nonempty_paragraphs(contexts)
+    split_norm = _normalize_split(split)
+    raw = load_dataset("dgslibisey/MuSiQue", split=split_norm)  # type: ignore
+    if seed is not None:
+        raw = raw.shuffle(seed=seed)
+    if limit is not None:
+        raw = raw.select(range(min(limit, len(raw))))
+    records = _build_musique_rag_records_from_raw(list(raw))
+    return _dedupe_paragraph_records(records)
 
 
 def write_musique_rag_corpus_jsonl(
@@ -198,10 +254,18 @@ def write_musique_rag_corpus_jsonl(
     seed: Optional[int] = None,
 ) -> int:
     """Write a MuSiQue RAG corpus JSONL file from the HF dataset."""
-    contexts = load_musique_rag_corpus_from_hf(split=split, limit=limit, seed=seed)
+    records = load_musique_rag_corpus_from_hf(split=split, limit=limit, seed=seed)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
-        for idx, ctx in enumerate(contexts):
-            json.dump({"id": idx, "contents": ctx}, f, ensure_ascii=False)
+        for idx, record in enumerate(records):
+            json.dump(
+                {
+                    "id": idx,
+                    "title": record.get("title", ""),
+                    "contents": record.get("contents", ""),
+                },
+                f,
+                ensure_ascii=False,
+            )
             f.write("\n")
-    return len(contexts)
+    return len(records)
