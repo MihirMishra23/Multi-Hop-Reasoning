@@ -15,6 +15,7 @@ def load_mquake(split : str, limit : int,  seed : int):
     raw_dataset = load_dataset("henryzhongsc/MQuAKE-Remastered", split = "CF6334") #Fixed constant split
 
     no_conflict_6334_subset  = raw_dataset.filter(_filter_example)
+    no_conflict_6334_subset.shuffe(seed = 42)
     # See code examples here for selecting the dataset: https://huggingface.co/datasets/henryzhongsc/MQuAKE-Remastered
     # This selects the 6334 subset which we can freely edit without contamination.
 
@@ -27,4 +28,5 @@ def load_mquake(split : str, limit : int,  seed : int):
     if split == 'test':
         no_conflict_6334_subset.select(range(5334, 6334))
     no_conflict_6334_subset = no_conflict_6334_subset.map(_rename_question, load_from_cache_file=False)
+
     return no_conflict_6334_subset
