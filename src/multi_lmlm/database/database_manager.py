@@ -108,10 +108,7 @@ class DatabaseManager:
             )
        
         entity, relationship = matches.pop()
-        print("entity : ", entity)
-        print("relationship : ", relationship)
         results = self.topk_retriever.retrieve_top_k(entity, relationship, threshold=threshold, return_triplets = return_triplets)
-        print("results : ", results)
 
         if not results:
             raise DatabaseLookupError(
