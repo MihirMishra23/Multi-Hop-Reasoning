@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from multi_lmlm.constants import DB_END_TOKEN, DB_RETRIEVE_TOKEN, DB_SEP_TOKEN, DB_START_TOKEN,ANSWER_START_TOKEN, ANSWER_END_TOKEN, THINKING_START_TOKEN, THINKING_END_TOKEN
 
 class RolloutMetadata(BaseModel):
-    question : str
+    question : str | list[str] #Can have multiple questions
     full_response : str
     annotated_text : str
     triplets : str
