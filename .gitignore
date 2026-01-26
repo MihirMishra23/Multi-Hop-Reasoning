@@ -42,4 +42,8 @@ src/test/
 # Account scripts
 scripts/account/
 
+scripts/local/
+
+output/
+
 mlruns/

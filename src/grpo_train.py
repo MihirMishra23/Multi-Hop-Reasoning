@@ -39,6 +39,10 @@ class LMLMArguments:
         default=False,
         metadata={"help": "Enable tool calling"}
     )
+    return_triples: bool = field(
+        default=False,
+        metadata={"help": "Return triples for tool calling"}
+    )
 
 
 def extract_answer_from_tags(text: str):
@@ -112,7 +116,9 @@ def main():
     print(f"  Learning rate: {grpo_config.learning_rate}")
     print(f"  Max grad norm: {grpo_config.max_grad_norm}")
     print(f"  Use vLLM: {grpo_config.use_vllm}")
-    
+    print(f"  Adaptive k: {lmlm_args.adaptive_k}")
+    print(f"  Return triples: {lmlm_args.return_triples}")
+
     # Initialize trainer
     print("Initializing LMLMGRPOTrainer...")
     trainer = LMLMGRPOTrainer(
@@ -120,6 +126,7 @@ def main():
         reward_funcs=em_accuracy,
         lmlm_database_path=script_args.database_path,
         adaptive_k=lmlm_args.adaptive_k,
+        return_triples=lmlm_args.return_triples,
         processing_class=tokenizer,
         tools=lmlm_args.tools,
         train_dataset=train_set,
@@ -129,7 +136,7 @@ def main():
     
     # Start training
     print("Starting training...")
-    trainer.train()
+    trainer.train(resume_from_checkpoint=grpo_config.resume_from_checkpoint)
     print("Training completed!")
 
 

@@ -17,7 +17,7 @@ export VLLM_USE_FLASHINFER=0
 # Default values
 GPU_TYPE="B200"
 # MODEL_PATH="Qwen/Qwen3-1.7B"
-MODEL_PATH="/share/j_sun/lz586/checkpoints/lmlm_multi_hop/qwen3-1.7B_sft_v1.3_5743"
+MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48
 DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
 SAVE_DIR=/share/j_sun/lz586/checkpoints/lmlm_multi_hop
 DATASET_NAME="hotpotqa/hotpot_qa"
@@ -40,6 +40,7 @@ LOGGING_STEPS=5
 TOP_P=0.95
 TEMPERATURE=1.3
 TOP_K=0
+IS_ADAPTIVE_K=False
 
 
 
@@ -79,11 +80,28 @@ done
 
 if [ "$GPU_TYPE" == "B200" ]; then
     # B200
-    NUM_GPUS=2
-    NUM_GENERATIONS=8
-    PER_DEVICE_TRAIN_BATCH_SIZE=16
-    GRADIENT_ACCUMULATION_STEPS=8
-    VLLM_GPU_MEMORY_UTILIZATION=0.15
+    if [[ "${MODEL_PATH}" == *"1.7B"* ]]; then
+        NUM_GPUS=2
+        NUM_GENERATIONS=8
+        PER_DEVICE_TRAIN_BATCH_SIZE=16
+        GRADIENT_ACCUMULATION_STEPS=8
+        VLLM_GPU_MEMORY_UTILIZATION=0.15
+    elif [[ "${MODEL_PATH}" == *"4B"* ]]; then
+        NUM_GPUS=2
+        NUM_GENERATIONS=8
+        PER_DEVICE_TRAIN_BATCH_SIZE=16
+        GRADIENT_ACCUMULATION_STEPS=8
+        VLLM_GPU_MEMORY_UTILIZATION=0.15
+    elif [[ "${MODEL_PATH}" == *"382M"* ]]; then
+        NUM_GPUS=1
+        NUM_GENERATIONS=8
+        PER_DEVICE_TRAIN_BATCH_SIZE=256
+        GRADIENT_ACCUMULATION_STEPS=1
+        VLLM_GPU_MEMORY_UTILIZATION=0.15
+    else
+        echo "Invalid model path: ${MODEL_PATH}"
+        exit 1
+    fi
 elif [ "$GPU_TYPE" == "H100" ]; then
     # H100 debug
     NUM_GPUS=2
@@ -104,12 +122,43 @@ fi
 # output_dir = script_args.model_path.split('/')[-1]+'-'+str(grpo_config.loss_type)+'-g'+str(grpo_config.num_generations)+'-bs'+str(grpo_config.per_device_train_batch_size)+'-s'+str(grpo_config.gradient_accumulation_steps)+'-b'+str(grpo_config.beta)+'-ep'+str(grpo_config.num_train_epochs)+'-n'+str(script_args.train_size)
 OUTPUT_DIR="${SAVE_DIR}/${MODEL_PATH##*/}-${LOSS_TYPE}-g${NUM_GENERATIONS}-bs${PER_DEVICE_TRAIN_BATCH_SIZE}-s${GRADIENT_ACCUMULATION_STEPS}-b${BETA}-ep${NUM_TRAIN_EPOCHS}-n${TRAIN_SIZE}"
 
+# Use it in training
+LAST_CKPT=$(ls -d $OUTPUT_DIR/checkpoint-* 2>/dev/null | sort -V | tail -n 1)
+if [ -n "$LAST_CKPT" ]; then
+    RESUME_FROM_CHECKPOINT="--resume_from_checkpoint=${LAST_CKPT}"
+else
+    RESUME_FROM_CHECKPOINT=""
+fi
+
+# "${MODEL_NAME_OR_PATH##*/}-SFT_ep${NUM_TRAIN_EPOCHS}_bsz${EFFECTIVE_BATCH_SIZE}_th${THRESHOLD}"
+
+# split the threshold by split the _th from the model path
+BASENAME="${MODEL_PATH##*/}"
+THRESHOLD="${BASENAME##*_th}"
+
+if [ "${THRESHOLD}" = "-3" ]; then
+    RETURN_TRIPLES="--return_triples"
+    echo "RETURN_TRIPLES: ${RETURN_TRIPLES}"
+else
+    RETURN_TRIPLES=""
+fi
+
+if [ "${IS_ADAPTIVE_K}" = "True" ]; then
+    ADAPTIVE_K="--adaptive_k"
+    echo "ADAPTIVE_K: ${ADAPTIVE_K}"
+else
+    ADAPTIVE_K=""
+    OUTPUT_DIR="${OUTPUT_DIR}-nak"
+fi
+
+
 echo "Starting GRPO training with:"
 echo "  Model: ${MODEL_PATH}"
 echo "  Database: ${DATABASE_PATH}"
 echo "  Output: ${OUTPUT_DIR}"
 echo "  GPUs: ${NUM_GPUS}"
 echo "  GPU Type: ${GPU_TYPE}"
+echo "  Resume from checkpoint: ${RESUME_FROM_CHECKPOINT}"
 
 accelerate launch \
   --num_processes=${NUM_GPUS} \
@@ -129,7 +178,6 @@ accelerate launch \
   --vllm_gpu_memory_utilization=${VLLM_GPU_MEMORY_UTILIZATION} \
   --use_vllm \
   --vllm_mode=colocate \
-  --adaptive_k \
   --tools \
   --gradient_checkpointing \
   --do_eval \
@@ -147,7 +195,10 @@ accelerate launch \
   --top_k=${TOP_K} \
   --num_train_epochs=${NUM_TRAIN_EPOCHS} \
   --save_strategy=steps \
-  --save_total_limit=4 \
-  --save_steps=0.25
+  --save_total_limit=5 \
+  --save_steps=0.2 \
+  ${RESUME_FROM_CHECKPOINT} \
+  ${RETURN_TRIPLES} \
+  ${ADAPTIVE_K}
 
 echo "Training completed!"

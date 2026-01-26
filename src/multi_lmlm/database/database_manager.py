@@ -78,15 +78,15 @@ class DatabaseManager:
             f"{len(self.database['return_values'])} return values."
         )
 
-    def init_topk_retriever(self, model_name="sentence-transformers/all-MiniLM-L6-v2", top_k=None, default_threshold=0.6, adaptive : bool = False):
+    def init_topk_retriever(self, model_name="sentence-transformers/all-MiniLM-L6-v2", top_k=None, default_threshold=0.6, adaptive : bool = False, use_inverses : bool = False):
 
         if self.topk_retriever is None:
             self.topk_retriever = TopkRetriever(
-                self.database["triplets"], model_name, top_k, adaptive, default_threshold, database_name=self.database_name, use_hf_cache = False,
+                self.database["triplets"], model_name, top_k, adaptive, default_threshold, database_name=self.database_name, use_hf_cache = False, use_inverses = use_inverses
             )
             logger.info(f"Top-k retriever initialized with {len(self)} triplets and threshold {self.topk_retriever.default_threshold}.")
 
-    def retrieve_from_database(self, prompt: str, threshold: Optional[float] = None, top_k : int  = 4):
+    def retrieve_from_database(self, prompt: str, threshold: Optional[float] = None, top_k : int  = 4, return_triplets : bool = False):
         """Retrieve a single top-1 database result from a prompt containing dblookup. If lookup fails, raise an error."""
         pattern_lst = [
             r"\[dblookup\('((?:[^'\\]|\\.)+)',\s*'((?:[^'\\]|\\.)+)'\)\s*->",
@@ -108,7 +108,10 @@ class DatabaseManager:
             )
        
         entity, relationship = matches.pop()
-        results = self.topk_retriever.retrieve_top_k(entity, relationship, threshold=threshold)
+        print("entity : ", entity)
+        print("relationship : ", relationship)
+        results = self.topk_retriever.retrieve_top_k(entity, relationship, threshold=threshold, return_triplets = return_triplets)
+        print("results : ", results)
 
         if not results:
             raise DatabaseLookupError(
@@ -138,7 +141,7 @@ class DatabaseManager:
 
         logger.info(f"Built database with {len(self)} triplets.")
 
-    def load_database(self, load_path: str, top_k : int = 4, default_threshold : float = 0.6, adaptive : bool = False):
+    def load_database(self, load_path: str, top_k : int = 4, default_threshold : float = 0.6, adaptive : bool = False, use_inverses : bool = False):
         """Load database from JSON file."""
         if not os.path.exists(load_path):
             raise FileNotFoundError(f"Database file not found: {load_path}")
@@ -157,9 +160,12 @@ class DatabaseManager:
         self.database["return_values"].update(data["return_values"])
         self.database["triplets"].update(tuple(triplet) for triplet in data["triplets"])
 
+        if use_inverses:
+            self.database["triplets"].update([(t[2], t[1], t[0]) for t in self.database["triplets"]])
+
         logger.info(f"Loaded database from {load_path}.")
 
-        self.init_topk_retriever(top_k=top_k, default_threshold=default_threshold, adaptive = adaptive)
+        self.init_topk_retriever(top_k=top_k, default_threshold=default_threshold, adaptive = adaptive, use_inverses = use_inverses)
 
     def save_database(self, save_path: str):
         """Save current database to a JSON file."""
