@@ -23,7 +23,6 @@ def _count_tokens(contents, model : str):
 
 
 def _get_user_prompt(example, args):
-    print("example: \n\n\n", example, "\n\n\n")
     question = example["question"]
     if args.triplets_in_prompt:
         triplets = example["orig_triples_labeled"]
@@ -34,8 +33,6 @@ def _get_user_prompt(example, args):
     return prompt
 
 def _get_formatted_triplets(example, args, idx):
-    print(f"dataset:---{args.dataset}---\n\n")
-    print("example: \n\n\n", example, "\n\n\n")
     if args.dataset == "mquake-remastered":
         triplets = example["orig_triples_labeled"]
     elif args.dataset == "hotpotqa":
@@ -147,7 +144,6 @@ async def gemini_w_db_lookup(prompt: str, args: argparse.Namespace) -> str:
             try:
                 return_values = args.db.retrieve_from_database(DB_START_TOKEN + query, args.db_threshold, return_triplets = args.return_triplets)[:4] #limit to 4 return values
                 return_value = ", ".join(return_values)
-                print("retrieved from db, return values: ", return_values)
             except Exception as e:
                 print(f"Database lookup failed: {e}")
                 return_value = "unknown"
