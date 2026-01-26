@@ -6,17 +6,16 @@
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
 # Configuration
-DATASET="hotpot_qa"              # hotpot_qa or musique
+DATASET="musique"              # hotpot_qa or musique
 HOTPOT_SETTING="distractor"      # distractor or fullwiki (only for hotpot_qa)
 SPLIT="validation"               # train, validation, test
 MODEL="gemini-3-pro-preview"     # Gemini model name
-NB_EXAMPLES=100      # Number of examples to process
+NB_EXAMPLES=10      # Number of examples to process
 SAMPLE_FROM="start"              # start or end
 USE_ONLY_GOLDEN=false            # true or false
 PROMPT_NAME="default"            # Prompt name from prompts.json
-SEED=42                          
-MAX_CONCURRENT=150         
-NB_PARTS_PER_PROMPT=5 # Only applies when using all contexts
+SEED=42                          # Random seed
+MAX_CONCURRENT=900               # Maximum concurrent API requests
 
 echo "Running database extraction with the following configuration:"
 echo "  Dataset: ${DATASET}"
@@ -52,5 +51,4 @@ python "${SCRIPT_DIR}/extract_triplets.py" \
   --prompt-name "${PROMPT_NAME}" \
   --seed ${SEED} \
   --max-concurrent ${MAX_CONCURRENT} \
-  --nb-parts-per-prompt ${NB_PARTS_PER_PROMPT} \
   ${USE_ONLY_GOLDEN_FLAG}
