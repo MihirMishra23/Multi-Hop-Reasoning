@@ -11,11 +11,11 @@ def _filter_example(example):
     return 'train_edited' in labels or 'test_edited' in labels 
 
 
-def load_mquake(split : str, limit : int,  seed : int):
+def load_mquake(split : str, limit : int,  seed : int = 42):
     raw_dataset = load_dataset("henryzhongsc/MQuAKE-Remastered", split = "CF6334") #Fixed constant split
 
     no_conflict_6334_subset  = raw_dataset.filter(_filter_example)
-    no_conflict_6334_subset.shuffe(seed = 42)
+    no_conflict_6334_subset = no_conflict_6334_subset.shuffle(seed = seed)
     # See code examples here for selecting the dataset: https://huggingface.co/datasets/henryzhongsc/MQuAKE-Remastered
     # This selects the 6334 subset which we can freely edit without contamination.
 
