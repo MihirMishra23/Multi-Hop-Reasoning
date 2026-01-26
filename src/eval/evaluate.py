@@ -178,6 +178,9 @@ def evaluate_file(
     sum_f1 = 0.0
     sum_prec = 0.0
     sum_recall = 0.0
+    retrieval_total_gold = 0
+    retrieval_total_retrieved = 0
+    retrieval_total_overlap = 0
 
     # Extract results from new format (with fallback for potential edge cases)
     results = preds.get("results", preds)
@@ -227,6 +230,18 @@ def evaluate_file(
         sum_recall += recall
         total += 1
 
+        retrieval = rec.get("retrieval")
+        if isinstance(retrieval, dict):
+            gold_total = retrieval.get("gold_total")
+            retrieved_total = retrieval.get("retrieved_total")
+            overlap = retrieval.get("overlap")
+            if isinstance(gold_total, int):
+                retrieval_total_gold += gold_total
+            if isinstance(retrieved_total, int):
+                retrieval_total_retrieved += retrieved_total
+            if isinstance(overlap, int):
+                retrieval_total_overlap += overlap
+
     metrics = {
         "count": total,
         "em": round(sum_em / total, 4) if total else 0.0,
@@ -235,7 +250,7 @@ def evaluate_file(
         "recall": round(sum_recall / total, 4) if total else 0.0,
     }
 
-    return {
+    output: Dict[str, Any] = {
         "metrics": metrics,
         "meta": {
             "dataset": meta.dataset,
@@ -248,6 +263,23 @@ def evaluate_file(
             "preds_path": meta.preds_path,
         },
     }
+    if retrieval_total_gold or retrieval_total_retrieved or retrieval_total_overlap:
+        output["retrieval_metrics"] = {
+            "total_gold": retrieval_total_gold,
+            "total_retrieved": retrieval_total_retrieved,
+            "total_overlap": retrieval_total_overlap,
+            "precision": (
+                round(retrieval_total_overlap / retrieval_total_retrieved, 4)
+                if retrieval_total_retrieved
+                else 0.0
+            ),
+            "recall": (
+                round(retrieval_total_overlap / retrieval_total_gold, 4)
+                if retrieval_total_gold
+                else 0.0
+            ),
+        }
+    return output
 
 
 def build_output_filename(dataset: str, agent: str, llm: str, bn: int, bs: int, timestamp: str) -> str:
