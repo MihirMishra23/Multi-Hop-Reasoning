@@ -26,7 +26,9 @@ def load_mquake(split : str, limit : int,  seed : int = 42):
         no_conflict_6334_subset = no_conflict_6334_subset.select(range(5334))
     
     if split == 'test':
-        no_conflict_6334_subset.select(range(5334, 6334))
+        no_conflict_6334_subset = no_conflict_6334_subset.select(range(5334, 6334))
     no_conflict_6334_subset = no_conflict_6334_subset.map(_rename_question, load_from_cache_file=False)
 
-    return no_conflict_6334_subset
+    return no_conflict_6334_subset.select(range(limit))
+
+
