@@ -2,7 +2,7 @@
 
 from typing import Any, Dict
 
-from .agent import Agent
+from .agent_class import Agent
 from .rag_agent import RAGAgent
 from .icl_agent import ICLAgent
 from .lmlm_agent import LMLMAgent
@@ -79,15 +79,12 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
             # Extract parameters
             model_path = agent_kwargs.get("model_path")
             database_path = agent_kwargs.get("database_path")
-            top_k = agent_kwargs.get("top_k")
-            adaptive_k = agent_kwargs.get("adaptive_k")
-
             if model_path is None:
                 raise Exception("You must set a local model path for lmlm setting")
             if database_path is None:
                 raise Exception("You must set a local database path for lmlm setting")
 
-            agent = LMLMAgent(model_path=model_path, database_path=database_path, adaptive = adaptive_k)
+            agent = LMLMAgent(**agent_kwargs)
 
         case _:
             raise NotImplementedError(f"Method '{method}' is not implemented.")

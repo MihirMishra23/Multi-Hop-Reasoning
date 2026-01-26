@@ -204,7 +204,7 @@ def evaluate_file(
                 # get_dataset requires a setting param; for datasets without setting, pass a placeholder
                 effective_setting = setting_name or "na"
                 try:
-                    ds = get_dataset(dataset_name, effective_setting, split_name, source=source)
+                    ds = get_dataset(name = dataset_name, setting = effective_setting, split = split_name, source=source)
                     tmp: Dict[str, str] = {}
                     for row in ds:
                         ans = row.get("answers") or []
