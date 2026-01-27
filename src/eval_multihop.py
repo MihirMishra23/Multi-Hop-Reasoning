@@ -311,14 +311,11 @@ def main() -> None:
         default=False,
         help="Whether to use adaptive k for lmlm retreival",
         action="store_true"
-<<<<<<<< HEAD:src/eval_multihop.py
     )
     parser.add_argument(
         "--top-k",
         default=4,
         help="Maximum number of results to retrieve from database",
-========
->>>>>>>> origin/master:src/eval_lmlm_multihop.py
     )
     parser.add_argument(
         "--return-triplets",
@@ -472,11 +469,7 @@ def main() -> None:
     args.rag_scope = rag_scope
 
     # Load full dataset once (with seed for deterministic shuffling)
-<<<<<<<< HEAD:src/eval_multihop.py
-    full_dataset = get_dataset(name = args.dataset, setting = args.setting, split = args.split, seed = args.seed)
-========
     full_dataset = get_dataset(name = args.dataset, setting = args.setting, split =  args.split, seed=args.seed)
->>>>>>>> origin/master:src/eval_lmlm_multihop.py
     total_dataset_size = len(full_dataset)
 
     # Validate start_index
@@ -507,17 +500,6 @@ def main() -> None:
         save_path = os.path.join(base_output_dir, args.method, f"{args.dataset}_{args.setting}", model_name, "generations")
         save_results_path = os.path.join(base_output_dir, args.method, f"{args.dataset}_{args.setting}", model_name, "results")
 
-<<<<<<<< HEAD:src/eval_multihop.py
-========
-    use_inv_str = "_inv" if args.use_inverses else ""
-   
-    model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
-    save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}.json"
-    save_path = os.path.join(output_dir, f"generations{args.save_version}", f"eval_{save_postfix}")
-    save_results_path = os.path.join(output_dir, f"results{args.save_version}", f"results_{save_postfix}")
-
-    os.makedirs(output_dir, exist_ok=True)
->>>>>>>> origin/master:src/eval_lmlm_multihop.py
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     os.makedirs(os.path.dirname(save_results_path), exist_ok=True)
 
