@@ -9,16 +9,17 @@ from .mquake import load_mquake
 
 def get_dataset(
     name: str,
-    split: str,
+    setting: str,
+    split: str, #hf split
     source: str = "auto",
     limit: Optional[int] = None,
     seed: Optional[int] = None,
-    setting: str | None = None,
+    sub_split : Optional[str] = None, #sub split of 'split'
 ) -> HFDataset:
     """Dispatch to dataset-specific loaders and return a unified HF Dataset."""
     name_norm = name.lower()
     if name_norm == "hotpotqa":
-        return load_hotpotqa(setting=setting, split=split, source=source, limit=limit, seed=seed)
+        return load_hotpotqa(setting=setting, split=split, source=source, limit=limit, seed=seed, sub_split = sub_split)
     if name_norm == "musique":
         # MuSiQue has no 'setting'; ignore the argument
         return load_musique(split=split, source=source, limit=limit, seed=seed)
