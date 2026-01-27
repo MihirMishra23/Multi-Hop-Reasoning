@@ -20,7 +20,7 @@ GPU_TYPE="B200"
 MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48
 DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
 SAVE_DIR=/share/j_sun/lz586/checkpoints/lmlm_multi_hop
-DATASET_NAME="hotpotqa/hotpot_qa"
+DATASET_NAME="hotpotqa"
 NUM_GPUS=1
 
 # config
