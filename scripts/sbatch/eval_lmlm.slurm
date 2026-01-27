@@ -65,7 +65,7 @@ for MODEL_DIR in "${MODEL_PATH_LST[@]}"; do
 
         for DATASET in "${DATASET_LST[@]}"; do
             echo "Evaluating ${MODEL_PATH} on ${DATASET}"
-            bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
+            bash ./scripts/eval_lmlm_multihop.sh \
                 --model_path "${MODEL_PATH}" \
                 --dataset "${DATASET}"
         done

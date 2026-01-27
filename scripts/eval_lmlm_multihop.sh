@@ -1,6 +1,10 @@
 MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48
 DATASET=hotpotqa
 SPLIT=dev
+USE_INVERSES="" # or "--use-inverses"
+NUM_SAMPLES=1000
+SAVE_VERSION=""
+
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -17,6 +21,18 @@ while [[ $# -gt 0 ]]; do
             SPLIT="$2"
             shift 2
             ;;
+        --num_samples)
+            NUM_SAMPLES="$2"
+            shift 2
+            ;;
+        --use-inverses)
+            USE_INVERSES="--use-inverses"
+            shift
+            ;;
+        --save_version)
+            SAVE_VERSION="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown argument: $1"
             exit 1
@@ -27,11 +43,31 @@ done
 if [ "${DATASET}" = "hotpotqa" ]; then
     if [ "${SPLIT}" = "dev" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json"
+        DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
-    elif [ "${SPLIT}" = "train" ]; then
+    elif [ "${SPLIT}" = "debug_dev" ]; then
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/generated_database_validation_42_1000.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+        SPLIT="dev"
+    elif [ "${SPLIT}" = "train_val100" ]; then
+        echo "Using eval set from GRPO"
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+        DEFAULT_NUM_SAMPLES=100
+        START_IDX=90347
+        SPLIT="train"
+    elif [ "${SPLIT}" = "train_val1k" ]; then
         echo "Using train set from GRPO"
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+        DEFAULT_NUM_SAMPLES=1000
         START_IDX=82347
+        SPLIT="train"
+    elif [ "${SPLIT}" = "train_train1k" ]; then
+        echo "Using train set from GRPO"
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=89347
+        SPLIT="train"
     else
         echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
         exit 1
@@ -39,6 +75,7 @@ if [ "${DATASET}" = "hotpotqa" ]; then
 elif [ "${DATASET}" = "musique" ]; then
     if [ "${SPLIT}" = "dev" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/musique_validation_42_1000_all_context_database.json"
+        DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
     elif [ "${SPLIT}" = "train" ]; then
         echo "There is no train database made for musique"
@@ -52,45 +89,50 @@ else
     exit 1
 fi
 
+if [ "${NUM_SAMPLES}" -gt "${DEFAULT_NUM_SAMPLES}" ]; then
+    NUM_SAMPLES="${DEFAULT_NUM_SAMPLES}"
+fi
+
 METHOD=lmlm
 MAX_TOKENS=1024
-TOTAL_COUNT=500
 BATCH_SIZE=32
 OUTPUT_DIR=./output
 SETTING=distractor
 SAVE_EVERY=64
 SEED=42
 
-# default
-USE_INVERSES=false
+
 if [[ "${MODEL_PATH}" == *"-nak"* ]]; then
-    ADAPTIVE_K=false
+    ADAPTIVE_K=""
 else
-    ADAPTIVE_K=true
+    ADAPTIVE_K="--adaptive-k"
 fi
 
 # th-3
 if [[ "${MODEL_PATH}" == *"-th-3"* ]]; then
-    RETURN_TRIPLETS=true
+    RETURN_TRIPLETS="--return-triplets"
+else
+    RETURN_TRIPLETS=""
 fi
 
 
-python scripts/eval_lmlm_multihop.py \
+python src/eval_lmlm_multihop.py \
     --model-path ${MODEL_PATH} \
     --database-path ${DATABASE_PATH} \
     --method ${METHOD} \
     --max-tokens ${MAX_TOKENS} \
     --batch-size ${BATCH_SIZE} \
-    --total-count ${TOTAL_COUNT} \
+    --total-count ${NUM_SAMPLES} \
     --output-dir ${OUTPUT_DIR}/ \
+    --save-version ${SAVE_VERSION} \
     --split ${SPLIT} \
     --setting ${SETTING} \
     --dataset ${DATASET} \
     --seed ${SEED} \
-    --adaptive-k ${ADAPTIVE_K} \
     --save-every ${SAVE_EVERY}\
     --start-index ${START_IDX}\
-    --return-triplets ${RETURN_TRIPLETS}\
-    --use-inverses ${USE_INVERSES} \
+    ${ADAPTIVE_K} \
+    ${RETURN_TRIPLETS} \
+    ${USE_INVERSES} \
     --eval \
     --resume

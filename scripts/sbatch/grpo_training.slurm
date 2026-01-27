@@ -24,6 +24,6 @@ cd /home/lz586/icl/Multi-Hop-Reasoning/
 
 
 echo "Starting GRPO Training..."
-bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/grpo_train.sh --model_path /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_ep5_bsz48
+bash ./scripts/grpo_train.sh --model_path /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_ep5_bsz48
 
 echo "GRPO Training complete!"

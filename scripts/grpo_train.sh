@@ -20,7 +20,7 @@ GPU_TYPE="B200"
 MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48
 DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
 SAVE_DIR=/share/j_sun/lz586/checkpoints/lmlm_multi_hop
-DATASET_NAME="hotpotqa/hotpot_qa"
+DATASET_NAME="hotpotqa"
 NUM_GPUS=1
 
 # config
@@ -32,7 +32,7 @@ GRADIENT_ACCUMULATION_STEPS=4
 PER_DEVICE_TRAIN_BATCH_SIZE=16
 NUM_GENERATIONS=8
 NUM_TRAIN_EPOCHS=5 # default 3
-TRAIN_SIZE=8000
+TRAIN_SIZE=7000
 EVAL_SIZE=100
 MAX_COMPLETION_LENGTH=1024
 EVAL_STEPS=4
@@ -40,7 +40,7 @@ LOGGING_STEPS=5
 TOP_P=0.95
 TEMPERATURE=1.3
 TOP_K=0
-IS_ADAPTIVE_K=False
+IS_ADAPTIVE_K=True
 
 
 
@@ -69,6 +69,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --dataset_name)
             DATASET_NAME="$2"
+            shift 2
+            ;;
+        --num_train_epochs)
+            NUM_TRAIN_EPOCHS="$2"
+            shift 2
+            ;;
+        --is_adaptive_k)
+            IS_ADAPTIVE_K="$2"
             shift 2
             ;;
         *)
@@ -119,6 +127,7 @@ else
     echo "Invalid number of GPUs: ${NUM_GPUS}"
     exit 1
 fi
+
 # output_dir = script_args.model_path.split('/')[-1]+'-'+str(grpo_config.loss_type)+'-g'+str(grpo_config.num_generations)+'-bs'+str(grpo_config.per_device_train_batch_size)+'-s'+str(grpo_config.gradient_accumulation_steps)+'-b'+str(grpo_config.beta)+'-ep'+str(grpo_config.num_train_epochs)+'-n'+str(script_args.train_size)
 OUTPUT_DIR="${SAVE_DIR}/${MODEL_PATH##*/}-${LOSS_TYPE}-g${NUM_GENERATIONS}-bs${PER_DEVICE_TRAIN_BATCH_SIZE}-s${GRADIENT_ACCUMULATION_STEPS}-b${BETA}-ep${NUM_TRAIN_EPOCHS}-n${TRAIN_SIZE}"
 
