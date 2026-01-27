@@ -8,7 +8,7 @@ from trl.trainer.grpo_config import GRPOConfig
 from multi_lmlm.constants import ANSWER_START_TOKEN, ANSWER_END_TOKEN
 import wandb
 import os
-from utils import create_train_val_splits
+from data import get_dataset
 
 @dataclass
 class ScriptArguments:
@@ -64,7 +64,7 @@ def process_example(example):
     """Process HotpotQA example into prompt-solution format."""
     return {
         "prompt": f"Question:\n{example['question']}\nAnswer:\n",
-        "solution": example["answer"]
+        "solution": example["answers"][0]
     }
 
 
@@ -85,11 +85,12 @@ def main():
 
     # Load and process dataset
     print(f"Loading dataset: {script_args.dataset_name}")
-    dataset = load_dataset(script_args.dataset_name, script_args.dataset_config, split="train")
+
+    train_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "train", limit = script_args.train_size)
+    test_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "eval", limit = script_args.eval_size)
     
-    processed_dataset = dataset.map(process_example)
-    
-    train_set, eval_set = create_train_val_splits(processed_dataset, script_args.train_size, script_args.eval_size, script_args.dataset_name)
+    train_set = train_dataset.map(process_example)
+    eval_set = test_dataset.map(process_example)
     
     print(f"Train set size: {len(train_set)}")
     print(f"Eval set size: {len(eval_set)}")
