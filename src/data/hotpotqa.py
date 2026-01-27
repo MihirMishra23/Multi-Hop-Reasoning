@@ -298,6 +298,7 @@ def load_hotpotqa(
     source: str = "auto",
     limit: Optional[int] = None,
     seed: Optional[int] = None,
+    sub_split: Optional[str] = None,
 ) -> HFDataset:
     """Load HotpotQA with unified schema.
 
@@ -341,6 +342,24 @@ def load_hotpotqa(
     # Shuffle with seed if provided
     if seed is not None:
         ds = ds.shuffle(seed=seed)
+        
+    if sub_split is not None:
+        MAGIC_START_IDX = 82347
+        MAGIC_TRAIN_MAX_SIZE = 8000
+        MAGIC_VAL_MAX_SIZE   = 100
+
+        n = len(ds)
+        assert MAGIC_START_IDX + MAGIC_TRAIN_MAX_SIZE + MAGIC_VAL_MAX_SIZE == len(ds)
+        
+        if sub_split == "train":
+            assert limit <= MAGIC_TRAIN_MAX_SIZE
+            ds = ds.select(range(n - MAGIC_VAL_MAX_SIZE - limit, n - MAGIC_VAL_MAX_SIZE))
+        if sub_split == "eval":
+            assert limit  <= MAGIC_VAL_MAX_SIZE
+            ds = ds.select(range(n - limit, n))
+
+        ds = ds.select(range(min(limit, len(ds))))
+        
     if limit is not None:
         ds = ds.select(range(min(limit, len(ds))))
     return ds
