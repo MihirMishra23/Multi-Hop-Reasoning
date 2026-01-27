@@ -413,7 +413,7 @@ def main() -> None:
     args.rag_scope = rag_scope
 
     # Load full dataset once (with seed for deterministic shuffling)
-    full_dataset = get_dataset(args.dataset, args.setting, args.split, seed=args.seed)
+    full_dataset = get_dataset(dataset = args.dataset, setting = args.setting, split = args.split, seed=seed = args.seed)
     total = len(full_dataset)
     print(f"total: {total}")
     
