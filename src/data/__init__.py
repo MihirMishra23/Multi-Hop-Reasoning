@@ -4,6 +4,7 @@ from datasets import Dataset as HFDataset  # type: ignore
 
 from .hotpotqa import load_hotpotqa
 from .musique import load_musique
+from .mquake import load_mquake
 
 
 def get_dataset(
@@ -22,6 +23,8 @@ def get_dataset(
     if name_norm == "musique":
         # MuSiQue has no 'setting'; ignore the argument
         return load_musique(split=split, source=source, limit=limit, seed=seed)
+    if name_norm == "mquake-remastered":
+        return load_mquake(split = split, limit = limit, seed = seed)
     raise ValueError(f"Unsupported dataset: {name}")
 
 

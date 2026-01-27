@@ -4,9 +4,9 @@ import time
 import asyncio
 import argparse
 from google import genai
-from lmlm.database.database_manager import DatabaseManager
-from synthetic_data.utils import  RolloutMetadata, assert_valid_rollout
-from lmlm.constants import DB_END_TOKEN, DB_RETRIEVE_TOKEN, DB_SEP_TOKEN, DB_START_TOKEN,ANSWER_START_TOKEN, ANSWER_END_TOKEN
+from multi_lmlm.database.database_manager import DatabaseManager
+from synthetic_data.utils import  RolloutMetadata, is_valid_rollout
+from multi_lmlm.constants import DB_END_TOKEN, DB_RETRIEVE_TOKEN, DB_SEP_TOKEN, DB_START_TOKEN,ANSWER_START_TOKEN, ANSWER_END_TOKEN, THINKING_START_TOKEN, THINKING_END_TOKEN
 from openai import AsyncOpenAI
 from datetime import datetime
 from constants import REPO_ROOT
@@ -16,10 +16,37 @@ from eval.metrics import f1_score
 import json
 
 
+token_counter_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+def _count_tokens(contents, model : str):
+    return token_counter_client.models.count_tokens(model = model, contents = str(contents)).total_tokens #This is not really accurate, but gemini does not have a way to count chat template tokens
+
+
+
+def _get_user_prompt(example, args):
+    question = example["question"]
+    if args.triplets_in_prompt:
+        triplets = example["orig_triples_labeled"]
+        formatted_ent_rel_pairs = ", ".join([f"({t[0]}, {t[1]})" for t in triplets])
+        prompt = f"Here are the available lookups: {formatted_ent_rel_pairs} Here is the question: {question[0]}"
+    else:
+        prompt = f"Here is the question: {question}"
+    return prompt
+
+def _get_formatted_triplets(example, args, idx):
+    if args.dataset == "mquake-remastered":
+        triplets = example["orig_triples_labeled"]
+    elif args.dataset == "hotpotqa":
+        triplets = args.metadata[args.start_idx + idx]["triplets"]
+    else:
+        raise Exception(f"Unsupported dataset: {args.dataset}")
+    triplets_formatted_str = "\n".join([f"({triplet[0]}, {triplet[1]}, {triplet[2]})" for triplet in triplets])
+    return triplets_formatted_str
+        
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate rollouts using LMLM agent with database lookups")
     parser.add_argument("--database-path", type=str, required=True, help="Path to database JSON file")
     parser.add_argument("--metadata-path", type=str, required=True, help="Path to metadata JSON file")
+    parser.add_argument("--dataset", type=str, required=True, help="dataset to generate synthetic data one", choices = ["hotpotqa", "mquake-remastered"])
     parser.add_argument("--model", type=str, required=True, help="Model to use for generation")
     parser.add_argument("--max-generations", type=int, required=True, help="Maximum number of generation iterations")
     parser.add_argument("--start-idx", type=int, required=True, help="Starting index for dataset")
@@ -33,9 +60,12 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--prompt-name", type=str, required=True, help="Prompt name from lmlm_agent.json")
     parser.add_argument("--db-top-k", type=int, required=True, help="Number of top results to retrieve from database")
     parser.add_argument("--db-threshold", type=float, required=True, help="Threshold for database retrieval")
+    parser.add_argument("--count-tokens",action=argparse.BooleanOptionalAction, required=False, help="Whether or not to count input / output tokens, defaults to false", default = False)
     parser.add_argument("--adaptive-k", action=argparse.BooleanOptionalAction, required=True,
                         help="Whether to use adaptive k for database retrieval")
     parser.add_argument("--return-triplets", action=argparse.BooleanOptionalAction, required=True,
+                        help="whether to return triplets or just values")
+    parser.add_argument("--triplets-in-prompt", action=argparse.BooleanOptionalAction, required=True,
                         help="whether to return triplets or just values")
 
     args = parser.parse_args(argv)
@@ -56,7 +86,9 @@ def parse_args(argv=None) -> argparse.Namespace:
         DB_START_TOKEN=DB_START_TOKEN,
         DB_SEP_TOKEN=DB_SEP_TOKEN,
         DB_RETRIEVE_TOKEN=DB_RETRIEVE_TOKEN,
-        DB_END_TOKEN=DB_END_TOKEN
+        DB_END_TOKEN=DB_END_TOKEN,
+        THINKING_START_TOKEN=THINKING_START_TOKEN,
+        THINKING_END_TOKEN=THINKING_END_TOKEN,
     )
 
     # Load database and add to args
@@ -74,24 +106,38 @@ def parse_args(argv=None) -> argparse.Namespace:
 
     return args
 
-
+total_tokens = 0
 async def gemini_w_db_lookup(prompt: str, args: argparse.Namespace) -> str:
+    input_tokens = None
+    output_tokens = None
+
+    if args.count_tokens:
+        input_tokens = 0
+        output_tokens = 0
+
     current_gen = 1
     res = ""
     input = [{"role" : "system", "content" : args.system_prompt},{"role" : "user" , "content" : prompt}, {"role" : "assistant", "content" : ""}]
     while (current_gen <= args.max_generations):
-        stream = await args.client.chat.completions.create(
+        response = await args.client.chat.completions.create(
             model=args.model,
             messages=input,
-            stream=True,
+            stream=False,
             max_completion_tokens=2048,
         )
 
+        if args.count_tokens:
+            input_tokens += _count_tokens(
+                model=args.model,
+                contents=input,
+            )
+            output_tokens += _count_tokens(
+                model=args.model,
+                contents=response.choices[0].message.content,
+            )
 
-        async for chunk in stream:
-            if chunk.choices[0].delta.content is None:
-                continue
-            res += chunk.choices[0].delta.content
+        for char in response.choices[0].message.content:
+            res+= char
             if not res.endswith(DB_RETRIEVE_TOKEN):
                 continue
             _, query = res.rsplit(DB_START_TOKEN, 1)
@@ -110,8 +156,8 @@ async def gemini_w_db_lookup(prompt: str, args: argparse.Namespace) -> str:
 
         current_gen += 1
         if ANSWER_END_TOKEN in res:
-            return res
-    return res
+            return input_tokens, output_tokens, res
+    return input_tokens, output_tokens, res
 
 async def process_example(semaphore, example, idx, args: argparse.Namespace):
     async with semaphore:
@@ -121,23 +167,33 @@ async def process_example(semaphore, example, idx, args: argparse.Namespace):
             try:
                 print(f"\nProcessing example {idx + 1}...")
                 question = example["question"]
-                triplets = args.metadata[args.start_idx + idx]["triplets"]
-                triplets_formatted_str = "\n".join([f"({triplet[0]}, {triplet[1]}, {triplet[2]})" for triplet in triplets])
-                prompt = f"Here is the question: {question}"
+                
+                triplets_formatted_str = _get_formatted_triplets(example, args, idx)
 
-                result = await gemini_w_db_lookup(prompt, args)
+                prompt = _get_user_prompt(example, args)
+                # prompt = f"Here is the question: {question}"
+
+                input_tokens, output_tokens, result = await gemini_w_db_lookup(prompt, args)
 
                 if result is None:
                     return None
-
-                assert_valid_rollout(result)
-
-                lmlm_answer = result.split(ANSWER_START_TOKEN)[-1].split(ANSWER_END_TOKEN)[0]
+                
                 answers = example["answers"]
 
+                if not is_valid_rollout(result):
+                    score = -1.0
+                    print(f"completed example {idx + 1}, no answer was given.")
+                    return RolloutMetadata(full_response = "", annotated_text = result, triplets = triplets_formatted_str, golden_answer = answers, f1_score = score, lmlm_answer = None, question = question)
+
+                lmlm_answer = result.split(ANSWER_START_TOKEN)[-1].split(ANSWER_END_TOKEN)[0]
+                full_response = ""
+                annotated_text = result
+                if "<plan>" in result and "</plan>" in result:
+                    full_response = result
+                    annotated_text = result.split("</plan>")[1].strip()
                 score = max([f1_score(lmlm_answer, a)[0] for a in answers])
                 print(f"completed example {idx + 1}!")
-                return RolloutMetadata(full_response = "", annotated_text = result, triplets = triplets_formatted_str, golden_answer = answers, f1_score = score, lmlm_answer = lmlm_answer, question = question)
+                return RolloutMetadata(full_response = full_response, annotated_text = annotated_text, triplets = triplets_formatted_str, golden_answer = answers, f1_score = score, lmlm_answer = lmlm_answer, question = question, input_tokens = input_tokens, output_tokens = output_tokens)
             except Exception as e:
                 print(f"Failure on idx {idx}, error {e}. Retrying, currently at {attempt} retries... ")
                 await asyncio.sleep(retry_delay)
@@ -147,7 +203,7 @@ async def process_example(semaphore, example, idx, args: argparse.Namespace):
 async def main(args: argparse.Namespace):
     # Load HotpotQA dataset
     print(f"Loading HotpotQA dataset from HuggingFace...")
-    dataset = get_dataset("hotpotqa", args.hotpot_setting, split=args.split, seed = args.seed)
+    dataset = get_dataset(name = args.dataset, setting = args.hotpot_setting, split=args.split, seed = args.seed, limit = args.nb_examples)
     print(f"Using HotpotQA setting: {args.hotpot_setting}")
     print(f"Length of the dataset is: {len(dataset)}")
 
@@ -172,7 +228,7 @@ async def main(args: argparse.Namespace):
 
     formatted_rollouts = {"examples":  [r.model_dump(mode = 'json') for r in rollouts]}
 
-    output_path = f"{os.path.dirname(os.path.abspath(__file__))}/hotpot_qa_rollouts_{datetime.today().strftime('%m-%d')}_count_{len(rollouts)}_start_idx_{args.start_idx}_total_{args.nb_examples}.json"
+    output_path = f"/share/j_sun/lmlm_multihop/sft_data/{args.dataset}_rollouts_{datetime.today().strftime('%m-%d')}_count_{len(rollouts)}_start_idx_{args.start_idx}_total_{args.nb_examples}.json"
     print(f"\n\ndone! Collected {len(rollouts)} successful rollouts out of {len(tasks)} examples. ")
     with open(output_path, 'w') as f:
         json.dump(formatted_rollouts, f, indent=2)
