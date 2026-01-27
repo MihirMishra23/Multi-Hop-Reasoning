@@ -6,7 +6,7 @@ def create_train_val_splits(dataset: Dataset, train_size: int, eval_size: int, d
 
     dataset = dataset.shuffle(seed=42)  
 
-    if dataset_name == "hotpotqa":
+    if dataset_name == "hotpotqa/hotpot_qa":
         # TODO: hack for now only for hotpotqa
         MAGIC_START_IDX = 82347
         MAGIC_TRAIN_MAX_SIZE = 8000
