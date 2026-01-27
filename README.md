@@ -76,6 +76,29 @@ python scripts/run_agent.py \
   --batch-size 10
 ```
 
+RAG examples:
+
+```bash
+# Per-example distractor RAG (current behavior)
+python scripts/run_agent.py \
+  --dataset hotpotqa \
+  --setting distractor \
+  --split validation \
+  --method rag \
+  --model gpt-4
+```
+
+```bash
+# FullWiki RAG (defaults to fullwiki corpus path when setting=fullwiki)
+python scripts/run_agent.py \
+  --dataset hotpotqa \
+  --setting fullwiki \
+  --split validation \
+  --method rag \
+  --model gpt-4 \
+  --rag-corpus-path /share/j_sun/lmlm_multihop/datasets/hotpot_dev_fullwiki_v1.json
+```
+
 This will produce a file like:
 
 ```

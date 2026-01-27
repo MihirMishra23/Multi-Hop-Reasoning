@@ -23,9 +23,8 @@ import random
 import sys
 import logging
 import gc
-from typing import Dict, Any
+from typing import Dict, Any, List
 from tqdm import tqdm
-from datetime import datetime
 
 # Fix OpenMP conflict when multiple libraries link to different OpenMP runtimes
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -37,12 +36,64 @@ import torch
 from agent import get_agent, Agent
 from llm import get_llm
 from data import get_dataset
+from data.hotpotqa import load_hotpotqa_rag_corpus
+from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
+
+DEFAULT_FULLWIKI_CORPUS_PATH = "/share/j_sun/lmlm_multihop/datasets/hotpot_dev_fullwiki_v1.json"
 
 
 def build_query(question: str) -> str:
     """Instruction to ensure the Agent emits a FINAL_ANSWER the parser recognizes."""
     instruction = "Provide only the final answer prefixed by 'FINAL_ANSWER:' with no extra text."
     return f"{instruction}\n{question}"
+
+
+def _infer_rag_scope(rag_corpus_path: str) -> str:
+    lower_name = os.path.basename(rag_corpus_path).lower()
+    if "fullwiki" in lower_name:
+        return "fullwiki"
+    if "distractor" in lower_name:
+        return "distractor"
+    return "custom"
+
+
+def _normalize_title(title: Any) -> str:
+    return str(title or "").strip().lower()
+
+
+def _extract_retrieved_title(doc: Any) -> str:
+    if isinstance(doc, dict):
+        return _normalize_title(doc.get("title", ""))
+    return ""
+
+
+def _compute_retrieval_stats(
+    evidence_docs: List[Any],
+    supporting_facts: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    supporting_titles = {
+        _normalize_title(item.get("title", ""))
+        for item in (supporting_facts or [])
+        if isinstance(item, dict)
+    }
+    supporting_titles = {t for t in supporting_titles if t}
+    retrieved_titles = {
+        _extract_retrieved_title(doc) for doc in (evidence_docs or [])
+    }
+    retrieved_titles = {t for t in retrieved_titles if t}
+
+    overlap = supporting_titles.intersection(retrieved_titles)
+    gold_total = len(supporting_titles)
+    retrieved_total = len(retrieved_titles)
+    overlap_count = len(overlap)
+
+    return {
+        "gold_total": gold_total,
+        "retrieved_total": retrieved_total,
+        "overlap": overlap_count,
+        "precision": overlap_count / retrieved_total if retrieved_total else 0.0,
+        "recall": overlap_count / gold_total if gold_total else 0.0,
+    }
 
 
 def process_single_batch(
@@ -141,6 +192,11 @@ def process_single_batch(
             "question": question,
             "trace": serialized_trace,
         }
+        if args.method == "rag":
+            results[str(qid)]["retrieval"] = _compute_retrieval_stats(
+                evidence_docs=evidence_docs,
+                supporting_facts=ex.get("supporting_facts") or [],
+            )
         if args.method == "rag" and args.debug_evidence:
             results[str(qid)]["evidence"] = evidence_docs
 
@@ -169,7 +225,7 @@ def process_single_batch(
     if args.method == "rag":
         output["metadata"]["retrieval"] = {
             "backend": args.retrieval,
-            "scope": args.setting,
+            "scope": args.rag_scope,
             "k": args.rag_k,
         }
 
@@ -246,6 +302,14 @@ def main() -> None:
         action="store_true",
         help="Include retrieved evidence in saved preds for debugging",
     )
+    parser.add_argument(
+        "--rag-corpus-path",
+        default=None,
+        help=(
+            "Optional path to a HotpotQA/MuSiQue JSON or JSONL file to build a global RAG corpus. "
+            "For MuSiQue, you can pass 'hf:<split>' (e.g., hf:train) to build and cache a JSONL."
+        ),
+    )
 
     parser.add_argument("--model", default=None, help="LLM model name")
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
@@ -279,6 +343,75 @@ def main() -> None:
     )
     logger = logging.getLogger("run_agent")
 
+    if (
+        args.method == "rag"
+        and args.dataset == "hotpotqa"
+        and args.setting == "fullwiki"
+        and not args.rag_corpus_path
+    ):
+        args.rag_corpus_path = DEFAULT_FULLWIKI_CORPUS_PATH
+    if args.method == "rag" and args.dataset == "musique" and not args.rag_corpus_path:
+        args.rag_corpus_path = f"hf:{args.split}"
+        logger.info(
+            "MuSiQue RAG requires a global corpus; defaulting to %s",
+            args.rag_corpus_path,
+        )
+
+    rag_corpus = None
+    rag_corpus_path = args.rag_corpus_path
+    rag_scope = None
+    if (
+        args.method == "rag"
+        and args.dataset == "musique"
+        and isinstance(rag_corpus_path, str)
+        and rag_corpus_path.startswith("hf:")
+    ):
+        hf_split = rag_corpus_path.split(":", 1)[1].strip() or "train"
+        cache_dir = os.path.join(REPO_ROOT, "preds", "rag_corpus")
+        rag_corpus_path = os.path.join(cache_dir, f"musique_{hf_split}.jsonl")
+        logger.info(
+            "Building MuSiQue RAG corpus from HF split=%s and saving to %s",
+            hf_split,
+            rag_corpus_path,
+        )
+        count = write_musique_rag_corpus_jsonl(
+            path=rag_corpus_path,
+            split=hf_split,
+            limit=None,
+            seed=args.seed,
+        )
+        logger.info("Wrote %d unique RAG paragraphs to %s", count, rag_corpus_path)
+        rag_scope = f"hf_{hf_split}"
+
+    if args.method == "rag" and rag_corpus_path:
+        logger.info("Loading RAG corpus from %s", rag_corpus_path)
+        if args.dataset == "hotpotqa":
+            rag_corpus = load_hotpotqa_rag_corpus(rag_corpus_path)
+            logger.info(f"Loaded {len(rag_corpus)} unique RAG paragraphs from hotpotqa")
+        elif args.dataset == "musique":
+            rag_corpus = load_musique_rag_corpus(rag_corpus_path)
+            logger.info(f"Loaded {len(rag_corpus)} unique RAG paragraphs from musique")
+        else:
+            rag_corpus = []
+        
+        # if rag corpus loading fails
+        if not rag_corpus:
+            logger.warning(
+                "RAG corpus is empty after loading %s (check format and content).",
+                rag_corpus_path,
+            )
+            raise RuntimeError(
+                "RAG requires a non-empty global corpus; "
+                "please verify --rag-corpus-path or HF cache."
+            )
+
+    if rag_scope is None:
+        if args.method == "rag" and rag_corpus_path:
+            rag_scope = _infer_rag_scope(rag_corpus_path)
+        else:
+            rag_scope = args.setting
+    args.rag_scope = rag_scope
+
     # Load full dataset once (with seed for deterministic shuffling)
     full_dataset = get_dataset(args.dataset, args.setting, args.split, seed=args.seed)
     total = len(full_dataset)
@@ -288,8 +421,9 @@ def main() -> None:
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
 
     # Build directory structure: type/dataset_setting/model/
-    output_dir = base_output_dir
-    save_path = os.path.join(output_dir, f"{args.model_path.split('/')[-1]}_{args.split}_seed={args.seed}_bn={args.batch_number}_bs={args.batch_size}_{datetime.now().strftime('%Y-%m-%d_%H_%M')}.json")
+    dataset_setting = f"{args.dataset}_{args.setting}"
+    model_name = args.model or "unknown-model"
+    output_dir = os.path.join(base_output_dir, args.method, dataset_setting, model_name)
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -342,6 +476,7 @@ def main() -> None:
         "setting": args.setting,
         "retrieval": args.retrieval,
         "rag_k": args.rag_k,
+        "rag_corpus": rag_corpus,
         "top_k" : args.top_k,
         "max_steps": args.max_steps,
         "model_path": args.model_path,

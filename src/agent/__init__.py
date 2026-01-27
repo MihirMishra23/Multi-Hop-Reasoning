@@ -47,25 +47,22 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
         case "rag":
             # Extract parameters
             retrieval = agent_kwargs.get("retrieval", "bm25")
-            setting = agent_kwargs["setting"]
             rag_k = agent_kwargs.get("rag_k", 4)
             max_steps = agent_kwargs.get("max_steps", 5)
+            rag_corpus = agent_kwargs.get("rag_corpus")
 
             llm = agent_kwargs["llm"]
 
             # Guard against unsupported combinations (we only support bm25 + distractor for now)
             if retrieval != "bm25":
                 raise NotImplementedError("Only --retrieval bm25 is supported currently.")
-            if setting is not None and setting != "distractor":
-                raise NotImplementedError(
-                    "Only --setting distractor is supported currently for RAG."
-                )
 
             # Create RAG agent with empty contexts (will be reset per question)
             agent = RAGAgent(
                 llm=llm,
                 retriever_type=retrieval,
                 contexts=[],
+                corpus=rag_corpus,
                 rag_k=rag_k,
                 max_steps=max_steps,
             )
