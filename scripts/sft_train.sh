@@ -20,6 +20,7 @@ export TORCH_USE_CUDA_DSA=1
 OUTPUT_ROOT=/share/j_sun/lz586/checkpoints/lmlm_multi_hop
 MODEL_NAME_OR_PATH=Qwen/Qwen3-1.7B
 THRESHOLD=-1
+DATASET=hotpotqa
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -34,6 +35,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --threshold)
             THRESHOLD="$2"
+            shift 2
+            ;;
+        --dataset)
+            DATASET="$2"
             shift 2
             ;;
         *)
@@ -76,22 +81,37 @@ else
     exit 1
 fi
 
-if [ "${THRESHOLD}" = "0.8" ]; then
-    DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_0.8_len_12004.json"
-elif [ "${THRESHOLD}" = "-1" ]; then
-    # default
-    DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/12-19_rollouts_combined_12k_5743_examples_6000_triplets_filtered.json"
-elif [ "${THRESHOLD}" = "0.3" ]; then
-    DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_0.3_len_13796.json"
-elif [ "${THRESHOLD}" = "-2" ]; then
-    DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_-2_len_18351.json"
-elif [ "${THRESHOLD}" = "-3" ]; then
-    # return triplets
-    DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/12-19_rollouts_combined_5743_12k_return_triplets.json"
-elif [ "${THRESHOLD}" = "1.0" ]; then
-    DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_1.0_len_11308.json"
+if [ "${DATASET}" = "hotpotqa" ]; then
+    if [ "${THRESHOLD}" = "0.8" ]; then
+        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_0.8_len_12004.json"
+    elif [ "${THRESHOLD}" = "-1" ]; then
+        # default
+        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/12-19_rollouts_combined_12k_5743_examples_6000_triplets_filtered.json"
+    elif [ "${THRESHOLD}" = "0.3" ]; then
+        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_0.3_len_13796.json"
+    elif [ "${THRESHOLD}" = "-2" ]; then
+        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_-2_len_18351.json"
+    elif [ "${THRESHOLD}" = "-3" ]; then
+        # return triplets
+        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/12-19_rollouts_combined_5743_12k_return_triplets.json"
+    elif [ "${THRESHOLD}" = "1.0" ]; then
+        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_1.0_len_11308.json"
+    else
+        echo "Invalid threshold: ${THRESHOLD}"
+        exit 1
+    fi
+elif [ "${DATASET}" = "2wiki" ]; then
+    echo "not implemented"
+    exit 1
+elif [ "${DATASET}" = "mquake" ]; then
+    if [ "${THRESHOLD}" = "1.0" ]; then
+        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/mquake-remastered_rollouts_train_th_1.0_len_5258.json"
+    else
+        echo "Invalid threshold: ${THRESHOLD}"
+        exit 1
+    fi
 else
-    echo "Invalid threshold: ${THRESHOLD}"
+    echo "Invalid dataset: ${DATASET}"
     exit 1
 fi
 
@@ -103,7 +123,7 @@ ADD_DBLOOKUP_TOKENS=True
 # Compute effective batch size
 EFFECTIVE_BATCH_SIZE=$((PER_DEVICE_TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS * NUM_GPUS))
 
-export WANDB_NAME="${MODEL_NAME_OR_PATH##*/}-SFT_ep${NUM_TRAIN_EPOCHS}_bsz${EFFECTIVE_BATCH_SIZE}_th${THRESHOLD}"
+export WANDB_NAME="${MODEL_NAME_OR_PATH##*/}-SFT_${DATASET}_ep${NUM_TRAIN_EPOCHS}_bsz${EFFECTIVE_BATCH_SIZE}_th${THRESHOLD}"
 OUTPUT_DIR="${OUTPUT_ROOT}/${WANDB_NAME}"
 
 echo "Running for $DATASET_PATH"

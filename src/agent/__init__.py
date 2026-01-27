@@ -2,7 +2,7 @@
 
 from typing import Any, Dict
 
-from .agent import Agent
+from .agent_class import Agent
 from .rag_agent import RAGAgent
 from .icl_agent import ICLAgent
 from .lmlm_agent import LMLMAgent
