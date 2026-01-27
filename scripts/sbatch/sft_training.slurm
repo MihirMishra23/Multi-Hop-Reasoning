@@ -24,6 +24,6 @@ cd /home/lz586/icl/Multi-Hop-Reasoning/
 
 echo "Starting SFT training..."
 
-bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/sft_train.sh --model_size 1.7B --threshold 0.8
+bash ./scripts/sft_train.sh --model_size 1.7B --threshold 0.8
 
 echo "SFT complete!"

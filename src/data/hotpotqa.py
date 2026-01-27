@@ -125,6 +125,152 @@ def _normalize_examples_pylist(examples: List[Dict[str, Any]]) -> HFDataset:
     return HFDataset.from_list(rows)
 
 
+def _build_hotpotqa_rag_contexts_from_raw(examples: List[Dict[str, Any]]) -> List[str]:
+    """Build a global RAG corpus from raw HotpotQA JSON examples."""
+    contexts: List[str] = []
+    for ex in examples:
+        context_field = ex.get("context")
+        if isinstance(context_field, dict):
+            titles = context_field.get("title")
+            sentences = context_field.get("sentences")
+            if not isinstance(titles, list) or not isinstance(sentences, list):
+                continue
+            for i, title in enumerate(titles):
+                sents_i = sentences[i] if i < len(sentences) else []
+                sent_list = [s for s in (sents_i or [])]
+                paragraph = f"{title}: " + " ".join(sent_list).strip()
+                paragraph = paragraph.strip()
+                if paragraph:
+                    contexts.append(paragraph)
+            continue
+        if isinstance(context_field, list):
+            for item in context_field:
+                if not isinstance(item, (list, tuple)) or len(item) != 2:
+                    continue
+                title, sents_i = item
+                if not isinstance(sents_i, list):
+                    continue
+                sent_list = [s for s in (sents_i or [])]
+                paragraph = f"{title}: " + " ".join(sent_list).strip()
+                paragraph = paragraph.strip()
+                if paragraph:
+                    contexts.append(paragraph)
+    return contexts
+
+
+def _build_hotpotqa_rag_records_from_raw(examples: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Build structured corpus records from raw HotpotQA JSON examples."""
+    records: List[Dict[str, Any]] = []
+    for ex in examples:
+        context_field = ex.get("context")
+        if isinstance(context_field, dict):
+            titles = context_field.get("title")
+            sentences = context_field.get("sentences")
+            if not isinstance(titles, list) or not isinstance(sentences, list):
+                continue
+            for i, title in enumerate(titles):
+                sents_i = sentences[i] if i < len(sentences) else []
+                sent_list = [s for s in (sents_i or [])]
+                paragraph = " ".join(sent_list).strip()
+                records.append(
+                    {
+                        "title": str(title).strip(),
+                        "contents": paragraph,
+                    }
+                )
+            continue
+        if isinstance(context_field, list):
+            for item in context_field:
+                if not isinstance(item, (list, tuple)) or len(item) != 2:
+                    continue
+                title, sents_i = item
+                if not isinstance(sents_i, list):
+                    continue
+                sent_list = [s for s in (sents_i or [])]
+                paragraph = " ".join(sent_list).strip()
+                records.append(
+                    {
+                        "title": str(title).strip(),
+                        "contents": paragraph,
+                    }
+                )
+    return records
+
+
+def _dedupe_paragraph_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Deduplicate by (title, contents) while preserving order."""
+    seen = set()
+    output: List[Dict[str, Any]] = []
+    for record in records:
+        title = str(record.get("title", "")).strip()
+        contents = str(record.get("contents", "")).strip()
+        if not title and not contents:
+            continue
+        key = (title, contents)
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append({"title": title, "contents": contents})
+    return output
+
+
+def _dedupe_nonempty_paragraphs(paragraphs: List[str]) -> List[str]:
+    seen = set()
+    output: List[str] = []
+    for paragraph in paragraphs:
+        text = str(paragraph).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        output.append(text)
+    return output
+
+
+def _normalize_hotpotqa_corpus_record(record: Any) -> Optional[Dict[str, Any]]:
+    """Normalize various record shapes into {title, contents}."""
+    if isinstance(record, dict):
+        title = str(record.get("title", "")).strip()
+        contents = record.get("contents")
+        if contents is None:
+            contents = record.get("context")
+        if contents is None:
+            contents = record.get("paragraph_text", "")
+        return {"title": title, "contents": str(contents).strip()}
+    if isinstance(record, str):
+        title, article = _split_title_article(record)
+        return {"title": title, "contents": article}
+    return None
+
+
+def load_hotpotqa_rag_corpus(path: str) -> List[Dict[str, Any]]:
+    """Load and build a deduplicated HotpotQA RAG corpus from a JSON/JSONL file."""
+    _, ext = os.path.splitext(path)
+    records: List[Dict[str, Any]] = []
+    if ext.lower() == ".jsonl":
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                coerced = _normalize_hotpotqa_corpus_record(record)
+                if coerced:
+                    records.append(coerced)
+    else:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and "data" in data:
+            data = data["data"]
+        if not isinstance(data, list):
+            raise ValueError(f"Unexpected HotpotQA JSON format at {path}")
+        records = _build_hotpotqa_rag_records_from_raw(data)
+
+    deduped = _dedupe_paragraph_records(records)
+    for idx, record in enumerate(deduped):
+        record["id"] = idx
+    return deduped
+
+
 def _normalize_hf_dataset(ds: HFDataset) -> HFDataset:
     def _map(ex: Dict[str, Any]) -> Dict[str, Any]:
         ex_id = ex.get("_id") or ex.get("id") or ""
@@ -152,6 +298,7 @@ def load_hotpotqa(
     source: str = "auto",
     limit: Optional[int] = None,
     seed: Optional[int] = None,
+    sub_split: Optional[str] = None,
 ) -> HFDataset:
     """Load HotpotQA with unified schema.
 
@@ -195,6 +342,24 @@ def load_hotpotqa(
     # Shuffle with seed if provided
     if seed is not None:
         ds = ds.shuffle(seed=seed)
+        
+    if sub_split is not None:
+        MAGIC_START_IDX = 82347
+        MAGIC_TRAIN_MAX_SIZE = 8000
+        MAGIC_VAL_MAX_SIZE   = 100
+
+        n = len(ds)
+        assert MAGIC_START_IDX + MAGIC_TRAIN_MAX_SIZE + MAGIC_VAL_MAX_SIZE == len(ds)
+        
+        if sub_split == "train":
+            assert limit <= MAGIC_TRAIN_MAX_SIZE
+            ds = ds.select(range(n - MAGIC_VAL_MAX_SIZE - limit, n - MAGIC_VAL_MAX_SIZE))
+        if sub_split == "eval":
+            assert limit  <= MAGIC_VAL_MAX_SIZE
+            ds = ds.select(range(n - limit, n))
+
+        ds = ds.select(range(min(limit, len(ds))))
+        
     if limit is not None:
         ds = ds.select(range(min(limit, len(ds))))
     return ds
