@@ -18,7 +18,7 @@ class AgentStep:
 
 
 class Agent:
-    def __init__(self, llm: LLM, max_steps: int = 8) -> None:
+    def __init__(self, llm: LLM, max_steps: int = 8,  **kwargs,) -> None:
         self.llm = llm
         self.max_steps = max_steps
         self.trace: List[AgentStep] = []

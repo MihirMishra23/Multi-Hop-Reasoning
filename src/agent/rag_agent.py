@@ -29,11 +29,12 @@ class RAGAgent(Agent):
     def __init__(
         self,
         llm: LLM,
-        retriever_type: str,
-        contexts: List[Any],
+        retriever_type: str = "bm25",
+        contexts: List[Any] = [],
         corpus: Optional[List[Any]] = None,
         rag_k: int = 4,
         max_steps: int = 8,
+        **kwargs,
     ) -> None:
         super().__init__(llm=llm, max_steps=max_steps)
         # Initialize retriever by type

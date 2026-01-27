@@ -17,8 +17,9 @@ class ICLAgent(Agent):
     def __init__(
         self,
         llm: LLM,
-        contexts: List[str],
+        contexts: List[str] = [],
         max_steps: int = 8,
+        **kwargs,
     ) -> None:
         super().__init__(llm=llm, max_steps=max_steps)
         self.contexts = contexts or []
