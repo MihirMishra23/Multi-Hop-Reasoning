@@ -80,7 +80,12 @@ class Agent:
             step = AgentStep(prompt=prompt, answer=None, action="finish", error=str(e))
         return step
 
-    def run(self, question: str, **llm_kwargs: Any) -> Tuple[Optional[str], List[AgentStep]]:
+    def run(self, question: list[str] | str, **llm_kwargs: Any) -> Tuple[Optional[str], List[AgentStep]]:
+        if isinstance(question, list):
+            if len(question) > 1:
+                raise NotImplementedError("Agent class does not support batch inference. Please set the batch size to 1.")
+            question = question[0]
+
         query = self.build_query(question)
         trace = []
         final_answer: Optional[str] = None
@@ -92,6 +97,6 @@ class Agent:
                 final_answer = step.answer
                 break
         # Return a copy of the trace for the caller
-        return final_answer, list(self.trace)
+        return [final_answer], [list(self.trace)]
 
 

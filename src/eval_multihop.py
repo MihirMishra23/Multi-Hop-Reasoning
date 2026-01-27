@@ -350,7 +350,6 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
-    parser.add_argument("--batch-number", type=int, default=1, help="Batch number index (1-based)")
     parser.add_argument(
         "--start-index",
         type=int,
@@ -470,7 +469,7 @@ def main() -> None:
     args.rag_scope = rag_scope
 
     # Load full dataset once (with seed for deterministic shuffling)
-    full_dataset = get_dataset(dataset = args.dataset, setting = args.setting, split = args.split, seed = args.seed)
+    full_dataset = get_dataset(name = args.dataset, setting = args.setting, split = args.split, seed = args.seed)
     total_dataset_size = len(full_dataset)
 
     # Validate start_index
@@ -497,10 +496,10 @@ def main() -> None:
         save_path = os.path.join(output_dir, f"generations{args.save_version}", f"eval_{save_postfix}")
         save_results_path = os.path.join(output_dir, f"results{args.save_version}", f"results_{save_postfix}")
     else:
-        output_dir = os.path.join(base_output_dir, args.method, f"{args.dataset}_{args.setting}", model_name)
+        model_name = args.model or "unknown-model"
+        save_path = os.path.join(base_output_dir, args.method, f"{args.dataset}_{args.setting}", model_name, "generations")
+        save_results_path = os.path.join(base_output_dir, args.method, f"{args.dataset}_{args.setting}", model_name, "results")
 
-
-    os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     os.makedirs(os.path.dirname(save_results_path), exist_ok=True)
 

@@ -48,7 +48,7 @@ class TopkRetriever:
 
         self.index = None
         self.id_to_triplet = {}
-        print("initializing..")
+        logger.info("initializing..")
         if self.cache_dir and not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir, exist_ok=True)
 
@@ -63,8 +63,6 @@ class TopkRetriever:
             use_hf_cache=use_hf_cache,
             hf_repo_id=hf_repo_id,
         )
-        print("cached path: ", cached_path)
-        print("cache path: ", cache_path)
         if cached_path:
             self._load_from_cache(cached_path)
             logger.info(f"Loaded FAISS index of {len(self.id_to_triplet)} triplets from cache")
@@ -122,14 +120,12 @@ class TopkRetriever:
             self.id_to_triplet = pickle.load(f)
 
     def _build_index(self):
-        print("buijlding index")
+        logger.info("Building FAISS index")
         embedding_dim = self.model.get_sentence_embedding_dimension()
-        print("embedding dim")
         self.index = faiss.IndexIDMap(faiss.IndexFlatIP(embedding_dim))
-        print("init index")
+
         texts = [f"{self._normalize_text(ent)} {self._normalize_text(rel)}" for ent, rel, _ in self.database]
-        print('create embeddings')
-        logger.info(f"Building FAISS index with {len(texts)} triplets, which takes a long time...")
+        logger.info(f"Encoding {len(texts)} (entity, relationship) pairs, which may take a long time...")
         embeddings = self.model.encode(
             texts,
             batch_size=self.batch_size,
@@ -137,13 +133,12 @@ class TopkRetriever:
             normalize_embeddings=True,
             show_progress_bar=False
         )
-        print("arrange stuff")
-
+        
         ids = np.arange(len(self.database))
-        print("adding to index")
+        logger.info(f"Adding {len(texts)} triplets to Faiss index...")
         self.index.add_with_ids(embeddings, ids)
-        print("id to triplet or smth")
         self.id_to_triplet = {i: triplet for i, triplet in enumerate(self.database)}
+        logger.info("Finished building index!")
 
     def retrieve_top_k(self, entity: str, relation: str, threshold: Optional[float] = None, return_triplets: bool = False) -> List[str]:
         query_text = f"{self._normalize_text(entity)} {self._normalize_text(relation)}"
