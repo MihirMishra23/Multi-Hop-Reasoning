@@ -8,9 +8,9 @@ DB_PATH=""
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
 # Configuration
-DATASET="hotpotqa"              # hotpotqa or musique
+DATASET="2wiki"              # hotpotqa or musique
 HOTPOT_SETTING="distractor"      # distractor or fullwiki (only for hotpot_qa)
-SPLIT="validation"               # train, validation, test
+SPLIT="dev"               # train, validation, test
 MODEL="gemini-2.5-flash"     # Gemini model name
 NB_EXAMPLES=10   # Number of examples to process
 SAMPLE_FROM="start"              # start or end
