@@ -11,6 +11,11 @@ from constants import REPO_ROOT
 from data import get_dataset
 
 
+token_counter_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+def _count_tokens(contents, model: str):
+    return token_counter_client.models.count_tokens(model=model, contents=str(contents)).total_tokens
+
+
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract knowledge triplets from multi-hop QA datasets")
     parser.add_argument("--dataset", type=str, required=True, choices=["hotpotqa", "musique", "2wiki"],
@@ -29,6 +34,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--nb-parts-per-prompt", type = int, required = False, help = "How many parts to split the context into. If none provided, defaults to 1. Only for all context mode", default = 1)
     parser.add_argument("--database-path", type = str, required = False, help = "Output path which overrides the default", default = None)
     parser.add_argument("--debug", action=argparse.BooleanOptionalAction, help = "Store additional mapping from context to tripelts, useful for analyzing triplets quality and debugging.")
+    parser.add_argument("--count-tokens", action=argparse.BooleanOptionalAction, required=False, help="Whether or not to count input / output tokens, defaults to false", default=False)
     
     args = parser.parse_args(argv)
 
@@ -64,6 +70,8 @@ class ProcessedQuestion(BaseModel):
     golden_contexts : str
     knowledge_triplets: KnowledgeTriplets
     context_triplet_mappings: list[dict]
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 def split_into_parts(items: list, num_parts: int) -> list[list]:
@@ -101,6 +109,12 @@ async def process_context(example, idx: int, semaphore: asyncio.Semaphore, args:
     num_parts = 1 if args.use_context == "golden" else args.nb_parts_per_prompt
     context_parts = split_into_parts(contexts, num_parts)
 
+    input_tokens = None
+    output_tokens = None
+
+    if args.count_tokens:
+        input_tokens = 0
+        output_tokens = 0
 
     all_triplets = []
     context_triplet_mappings = []
@@ -135,6 +149,16 @@ async def process_context(example, idx: int, semaphore: asyncio.Semaphore, args:
                     )
                     kt = KnowledgeTriplets.model_validate_json(response.text)
                     all_triplets.extend(kt.triplets)
+
+                    if args.count_tokens:
+                        input_tokens += _count_tokens(
+                            model=args.model,
+                            contents=formatted_prompt,
+                        )
+                        output_tokens += _count_tokens(
+                            model=args.model,
+                            contents=response.text,
+                        )
 
                     context_triplet_mappings.append({
                         "index": idx,
@@ -178,7 +202,9 @@ async def process_context(example, idx: int, semaphore: asyncio.Semaphore, args:
         golden_contexts=golden_contexts_str,
         knowledge_triplets=KnowledgeTriplets(triplets=all_triplets),
         question=question,
-        context_triplet_mappings=context_triplet_mappings
+        context_triplet_mappings=context_triplet_mappings,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens
     )
 
 
@@ -244,8 +270,14 @@ async def main(args: argparse.Namespace):
         json.dump(lmlm_database, f, indent=4)
     print("saved database to:", database_path)
 
+    def _format_processed_question(q : ProcessedQuestion):
+        new_q = q.model_dump(mode = 'json')
+        new_q["triplets"] = q.knowledge_triplets.triplets
+        del new_q["knowledge_triplets"]
+        return new_q
+
     # Save metadata
-    metadata_json = [data.model_dump(mode = 'json')["knowledge_triplets"] for data in results]
+    metadata_json = [_format_processed_question(data) for data in results]
     metadata_path = os.path.join(output_dir, "metadata.json")
     with open(metadata_path, 'w') as f:
         json.dump(metadata_json, f, indent=4)

@@ -8,13 +8,13 @@ DB_PATH=""
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
 # Configuration
-DATASET="musique"              # hotpotqa or musique
+DATASET="hotpotqa"              # hotpotqa or musique
 HOTPOT_SETTING="distractor"      # distractor or fullwiki (only for hotpot_qa)
 SPLIT="validation"               # train, validation, test
 MODEL="gemini-2.5-flash"     # Gemini model name
-NB_EXAMPLES=1   # Number of examples to process
+NB_EXAMPLES=10   # Number of examples to process
 SAMPLE_FROM="start"              # start or end
-USE_CONTEXT=golden            # 'all'' or 'golden'
+USE_CONTEXT=all            # 'all'' or 'golden'
 PROMPT_NAME="default"            # Prompt name from prompts.json
 SEED=42                          
 MAX_CONCURRENT=150         
@@ -57,4 +57,5 @@ python "${SCRIPT_DIR}/build_database.py" \
   --max-concurrent ${MAX_CONCURRENT} \
   --nb-parts-per-prompt ${NB_PARTS_PER_PROMPT} \
   --use-context ${USE_CONTEXT} \
+  --count-tokens \
   ${DB_PATH_FLAG}
