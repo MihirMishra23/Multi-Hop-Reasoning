@@ -8,14 +8,15 @@ from pydantic import BaseModel
 from datasets import load_dataset
 from datetime import datetime
 from constants import REPO_ROOT
+from data import get_dataset
 
 
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract knowledge triplets from multi-hop QA datasets")
-    parser.add_argument("--dataset", type=str, required=True, choices=["hotpot_qa", "musique"],
-                        help="Dataset to use: hotpot_qa or musique")
+    parser.add_argument("--dataset", type=str, required=True, choices=["hotpotqa", "musique", "2wiki"],
+                        help="Dataset to use: hotpotqa or musique")
     parser.add_argument("--hotpot-setting", type=str, required=False, choices=["distractor", "fullwiki"],
-                        help="HotpotQA dataset setting (only for hotpot_qa): distractor or fullwiki")
+                        help="HotpotQA dataset setting (only for hotpotqa): distractor or fullwiki")
     parser.add_argument("--split", type=str, required=True, help="Dataset split to use")
     parser.add_argument("--model", type=str, required=True, help="Gemini model to use")
     parser.add_argument("--nb-examples", type=int, required=True, help="Number of examples to process")
@@ -26,12 +27,14 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, required=True, help="Random seed for shuffling")
     parser.add_argument("--max-concurrent", type=int, required=True, help="Maximum concurrent API requests")
     parser.add_argument("--nb-parts-per-prompt", type = int, required = False, help = "How many parts to split the context into. If none provided, defaults to 1. Only for all context mode", default = 1)
-
+    parser.add_argument("--database-path", type = str, required = False, help = "Output path which overrides the default", default = None)
+    parser.add_argument("--debug", action=argparse.BooleanOptionalAction, help = "Store additional mapping from context to tripelts, useful for analyzing triplets quality and debugging.")
+    
     args = parser.parse_args(argv)
 
-    # Validate hotpot-setting is provided for hotpot_qa
-    if args.dataset == "hotpot_qa" and args.hotpot_setting is None:
-        parser.error("--hotpot-setting is required when using --dataset hotpot_qa")
+    # Validate hotpot-setting is provided for hotpotqa
+    if args.dataset == "hotpotqa" and args.hotpot_setting is None:
+        parser.error("--hotpot-setting is required when using --dataset hotpotqa")
 
     # Load prompts from JSON
     prompts_path = os.path.join(REPO_ROOT, "data/prompts", "database_creation.json")
@@ -43,58 +46,12 @@ def parse_args(argv=None) -> argparse.Namespace:
 
     prompt_config = prompts_data[args.prompt_name]
     args.prompt = prompt_config["prompt"]
-    args.examples = prompt_config.get("examples", "")
 
     # Initialize client
     args.client = genai.Client()
 
     return args
 
-# Preprocess dataset to normalize format
-def preprocess_dataset(dataset, dataset_name):
-    """Normalize dataset format to match HotpotQA structure"""
-    if dataset_name == "hotpot_qa":
-        # Already in correct format
-        return dataset
-    elif dataset_name == "musique":
-        # Convert MuSiQue to HotpotQA format
-        def convert_musique_to_hotpot(example):
-            paragraphs = example.get('paragraphs', [])
-            supporting_para_ids = set(example.get('paragraph_support_idx', []))
-
-            # Extract titles and sentences
-            titles = []
-            sentences = []
-            supporting_titles = []
-
-            for i, para in enumerate(paragraphs):
-                title = para.get('title', '')
-                text = para.get('paragraph_text', '')
-                # Split paragraph into sentences (simple split by period)
-                para_sentences = [s.strip() + '.' for s in text.split('.') if s.strip()]
-
-                titles.append(title)
-                sentences.append(para_sentences)
-
-                # Track supporting titles
-                if i in supporting_para_ids:
-                    supporting_titles.append(title)
-
-            return {
-                'question': example['question'],
-                'context': {
-                    'title': titles,
-                    'sentences': sentences
-                },
-                'supporting_facts': {
-                    'title': supporting_titles,
-                    'sent_id': []  # MuSiQue doesn't have sentence-level support
-                }
-            }
-
-        return dataset.map(convert_musique_to_hotpot, remove_columns=dataset.column_names)
-    else:
-        raise ValueError(f"Unknown dataset: {dataset_name}")
 
 
 class KnowledgeTriplets(BaseModel):
@@ -106,6 +63,7 @@ class ProcessedQuestion(BaseModel):
     question : str
     golden_contexts : str
     knowledge_triplets: KnowledgeTriplets
+    context_triplet_mappings: list[dict]
 
 
 def split_into_parts(items: list, num_parts: int) -> list[list]:
@@ -133,31 +91,19 @@ def split_into_parts(items: list, num_parts: int) -> list[list]:
 # Async function to process a single context
 async def process_context(example, idx: int, semaphore: asyncio.Semaphore, args: argparse.Namespace, dataset_len: int, failed_indexes: list) -> ProcessedQuestion:
     question = example["question"]
-    supporting_facts = example["supporting_facts"]
+    all_contexts = example.get("contexts", [])
+    golden_contexts = example.get("golden_contexts", [])
 
-    supporting_titles = set(supporting_facts['title'])
-
-    # Get contexts
-    # Format: {'title': ['Title1', 'Title2', ...], 'sentences': [['sent1', 'sent2'], ['sent3'], ...]}
-    context_data = example.get('context', {})
-
-    titles = context_data.get('title', [])
-    sentences = context_data.get('sentences', [])
-
-    contexts = []
-    for i, title in enumerate(titles):
-        if args.use_context == "golden" and title not in supporting_titles:
-            continue
-        sents = sentences[i] if i < len(sentences) else []
-        paragraph = f"{title}: " + " ".join(sents).strip()
-        contexts.append(paragraph)
-
+    if args.use_context == "golden":
+        contexts = golden_contexts
+    else:
+        contexts = all_contexts
     num_parts = 1 if args.use_context == "golden" else args.nb_parts_per_prompt
     context_parts = split_into_parts(contexts, num_parts)
 
-    all_contexts_str = "\n\n".join(contexts)
 
     all_triplets = []
+    context_triplet_mappings = []
 
     async with semaphore:
         max_retries = 5
@@ -189,6 +135,13 @@ async def process_context(example, idx: int, semaphore: asyncio.Semaphore, args:
                     )
                     kt = KnowledgeTriplets.model_validate_json(response.text)
                     all_triplets.extend(kt.triplets)
+
+                    context_triplet_mappings.append({
+                        "index": idx,
+                        "context": part_context_str,
+                        "triplets": kt.triplets
+                    })
+
                     print(f"Completed request {part_label}")
                     break  
 
@@ -219,45 +172,29 @@ async def process_context(example, idx: int, semaphore: asyncio.Semaphore, args:
                             print(f"Failed request {part_label}: {e}")
                             raise
 
+    golden_contexts_str = "\n\n".join(golden_contexts)
     return ProcessedQuestion(
         index=idx,
-        golden_contexts=all_contexts_str,
+        golden_contexts=golden_contexts_str,
         knowledge_triplets=KnowledgeTriplets(triplets=all_triplets),
-        question=question
+        question=question,
+        context_triplet_mappings=context_triplet_mappings
     )
 
 
 async def main(args: argparse.Namespace):
     # Load dataset
-    print(f"Loading {args.dataset} dataset from HuggingFace...")
-    if args.dataset == "hotpot_qa":
-        raw_dataset = load_dataset("hotpot_qa", args.hotpot_setting, split=args.split)
-        print(f"Using HotpotQA setting: {args.hotpot_setting}")
-    elif args.dataset == "musique":
-        raw_dataset = load_dataset("dgslibisey/MuSiQue", split=args.split)
-    else:
-        raise ValueError(f"Unknown dataset: {args.dataset}")
-
-    # Shuffle dataset
-    raw_dataset = raw_dataset.shuffle(seed=args.seed)
-
-    print(f"Length of the dataset is: {len(raw_dataset)}")
-
-    # Select examples based on sample-from parameter
+    dataset = get_dataset(args.dataset, args.hotpot_setting, split=args.split, seed = args.seed)
     if args.sample_from == "end":
-        start_idx = len(raw_dataset) - args.nb_examples
-        raw_dataset = raw_dataset.select(range(start_idx, len(raw_dataset)))
+        start_idx = len(dataset) - args.nb_examples
+        dataset = dataset.select(range(start_idx, len(dataset)))
         print(f"Sampling {args.nb_examples} examples from END (start_idx={start_idx})")
     else:  # start
         start_idx = 0
-        raw_dataset = raw_dataset.select(range(0, args.nb_examples))
+        dataset = dataset.select(range(0, args.nb_examples))
         print(f"Sampling {args.nb_examples} examples from START")
 
-    print(f"Loaded {len(raw_dataset)} examples")
-
-    print("Preprocessing dataset to normalize format...")
-    raw_dataset = preprocess_dataset(raw_dataset, args.dataset)
-    print("Dataset preprocessing complete")
+    print(f"Loaded {len(dataset)} examples")
 
     output_path = f"{args.dataset}_output_{args.split}_seed_{args.seed}_sample_from_{args.sample_from}_nb_{args.nb_examples}_date_{datetime.today().strftime('%m-%d')}"
 
@@ -268,8 +205,8 @@ async def main(args: argparse.Namespace):
         # Limit concurrent requests to avoid rate limiting (adjust as needed)
         semaphore = asyncio.Semaphore(args.max_concurrent)
         tasks = []
-        for idx, example in enumerate(raw_dataset):
-            tasks.append(process_context(example, idx, semaphore, args, len(raw_dataset), failed_indexes))
+        for idx, example in enumerate(dataset):
+            tasks.append(process_context(example, idx, semaphore, args, len(dataset), failed_indexes))
         return await asyncio.gather(*tasks)
 
     # Run async processing
@@ -299,7 +236,10 @@ async def main(args: argparse.Namespace):
     os.makedirs(output_dir, exist_ok=True)
 
     # Save database
-    database_path = os.path.join(output_dir, "database.json")
+    if args.database_path is not None:
+        database_path = args.database_path
+    else:
+        database_path = os.path.join(output_dir, "database.json")
     with open(database_path, "w") as f:
         json.dump(lmlm_database, f, indent=4)
     print("saved database to:", database_path)
@@ -310,6 +250,15 @@ async def main(args: argparse.Namespace):
     with open(metadata_path, 'w') as f:
         json.dump(metadata_json, f, indent=4)
     print("saved metadata to:", metadata_path)
+
+    if args.debug:
+        context_triplet_mappings = []
+        for processed_question in results:
+            context_triplet_mappings.extend(processed_question.context_triplet_mappings)
+        mapping_path = os.path.join(output_dir, "context_to_triplets.json")
+        with open(mapping_path, 'w') as f:
+            json.dump(context_triplet_mappings, f, indent=4)
+        print("saved context to triplets mapping to:", mapping_path)
 
 
 if __name__ == '__main__':
