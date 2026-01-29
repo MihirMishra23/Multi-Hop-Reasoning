@@ -109,6 +109,25 @@ def _dedupe_paragraph_records(records: List[Dict[str, Any]]) -> List[Dict[str, A
     return deduped
 
 
+def _build_golden_contexts(paragraphs: Any) -> List[str]:
+    """Build golden context strings - only contexts marked as is_supporting."""
+    if not paragraphs:
+        return []
+    result: List[str] = []
+    for p in paragraphs:
+        if not isinstance(p, dict):
+            continue
+        if not p.get("is_supporting"):
+            continue
+        title = str(p.get("title", "")).strip()
+        text = str(p.get("paragraph_text", "")).strip()
+        if title:
+            result.append(f"{title}: {text}".strip())
+        else:
+            result.append(text)
+    return result
+
+
 def _normalize_hf_dataset(ds: HFDataset) -> HFDataset:
     def _map(ex: Dict[str, Any]) -> Dict[str, Any]:
         ex_id = ex.get("id") or ex.get("_id") or ""
@@ -126,6 +145,7 @@ def _normalize_hf_dataset(ds: HFDataset) -> HFDataset:
             "question": str(ex.get("question", "")),
             "answers": answers,
             "contexts": _build_contexts(paragraphs),
+            "golden_contexts": _build_golden_contexts(paragraphs),
             "supporting_facts": _build_supporting_facts(paragraphs),
         }
 

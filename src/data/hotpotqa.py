@@ -271,6 +271,30 @@ def load_hotpotqa_rag_corpus(path: str) -> List[Dict[str, Any]]:
     return deduped
 
 
+def _build_golden_contexts(context_field: Any, sf_field: Any) -> List[str]:
+    """Build golden context strings - only contexts whose title is in supporting_facts."""
+    if not isinstance(context_field, dict) or not sf_field:
+        return []
+
+    # Get supporting titles
+    supporting_titles = set(sf_field.get('title', []))
+
+    titles = context_field.get("title")
+    sentences = context_field.get("sentences")
+    if not isinstance(titles, list) or not isinstance(sentences, list):
+        return []
+
+    golden: List[str] = []
+    for i, title in enumerate(titles):
+        if title not in supporting_titles:
+            continue
+        sents_i = sentences[i] if i < len(sentences) else []
+        sent_list = [s for s in (sents_i or [])]
+        paragraph = f"{title}: " + " ".join(sent_list).strip()
+        golden.append(paragraph.strip())
+    return golden
+
+
 def _normalize_hf_dataset(ds: HFDataset) -> HFDataset:
     def _map(ex: Dict[str, Any]) -> Dict[str, Any]:
         ex_id = ex.get("_id") or ex.get("id") or ""
@@ -286,6 +310,7 @@ def _normalize_hf_dataset(ds: HFDataset) -> HFDataset:
             "question": str(ex.get("question", "")),
             "answers": answers,
             "contexts": _build_contexts(ex.get("context")),
+            "golden_contexts": _build_golden_contexts(ex.get("context"), ex.get("supporting_facts")),
             "supporting_facts": _build_supporting_facts(ex.get("supporting_facts")),
         }
 
