@@ -41,6 +41,7 @@ TOP_P=0.95
 TEMPERATURE=1.3
 TOP_K=0
 IS_ADAPTIVE_K=True
+RETRIEVAL_THRESHOLD=0.9
 
 
 
@@ -208,6 +209,7 @@ accelerate launch \
   --save_steps=0.2 \
   ${RESUME_FROM_CHECKPOINT} \
   --use-inverses \
+  --retrieval-threshold ${RETRIEVAL_THRESHOLD} \
   ${RETURN_TRIPLES} \
   ${ADAPTIVE_K}
 

@@ -48,6 +48,10 @@ class LMLMArguments:
         default = False,
         metadata={"help" : "When building the db, augment (e,r,v) -> (v,r,e) for each triplet"}
     )
+    retrieval_threshold : bool = field(
+        default = 0.6,
+        metadata = {"help" : "cosing similarity threshold"}
+    )
 
 
 def extract_answer_from_tags(text: str):
@@ -121,7 +125,8 @@ def main():
     # Initialize trainer
     print("Initializing LMLMGRPOTrainer...")
     trainer = LMLMGRPOTrainer(
-        use_inverses = args.use_inverses,
+        retrieval_threshold = lmlm_args.retrieval_threshold,
+        use_inverses = lmlm_args.use_inverses,
         model=script_args.model_path,
         reward_funcs=em_accuracy,
         lmlm_database_path=script_args.database_path,

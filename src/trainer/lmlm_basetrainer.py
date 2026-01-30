@@ -266,8 +266,11 @@ class LMLMGRPOTrainer(BaseTrainer):
         optimizers: tuple[torch.optim.Optimizer | None, torch.optim.lr_scheduler.LambdaLR | None] = (None, None),
         tools: list[Callable] | None = None,
         rollout_func: RolloutFunc | None = None,
+        use_inverses: bool = False,
+        retrieval_threshold : float = 0.6,
     ):
         #LMLM db initialization
+        self.retrieval_threshold = retrieval_threshold
         self.db = DatabaseManager()
         self.db.load_database(lmlm_database_path, adaptive= adaptive_k, use_inverses = use_inverses)
         self.return_triples = return_triples
@@ -1422,7 +1425,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                 prompt_completion_tools[idx] += completions[idx_with_tool]
                 tool_call_count += 1
                 try:
-                    result = ", ".join(self.db.retrieve_from_database(tool_call, return_triplets = self.return_triples)) + DB_END_TOKEN
+                    result = ", ".join(self.db.retrieve_from_database(tool_call, return_triplets = self.return_triples), threshold = self.retrieval_threshold) + DB_END_TOKEN
                 except Exception as e:
                     print("db lookup failed :", str(e))
                     tool_failure_count += 1
