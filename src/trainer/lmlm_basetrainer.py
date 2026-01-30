@@ -269,7 +269,7 @@ class LMLMGRPOTrainer(BaseTrainer):
     ):
         #LMLM db initialization
         self.db = DatabaseManager()
-        self.db.load_database(lmlm_database_path, adaptive= adaptive_k)
+        self.db.load_database(lmlm_database_path, adaptive= adaptive_k, use_inverses = use_inverses)
         self.return_triples = return_triples
 
         # Args

@@ -44,6 +44,10 @@ class LMLMArguments:
         default=False,
         metadata={"help": "Return triples for tool calling"}
     )
+    use_inverses : bool = field(
+        default = False,
+        metadata={"help" : "When building the db, augment (e,r,v) -> (v,r,e) for each triplet"}
+    )
 
 
 def extract_answer_from_tags(text: str):
@@ -117,6 +121,7 @@ def main():
     # Initialize trainer
     print("Initializing LMLMGRPOTrainer...")
     trainer = LMLMGRPOTrainer(
+        use_inverses = args.use_inverses,
         model=script_args.model_path,
         reward_funcs=em_accuracy,
         lmlm_database_path=script_args.database_path,
