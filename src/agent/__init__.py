@@ -29,9 +29,6 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
             # Extract parameters
             dataset = agent_kwargs["dataset"]
             setting = agent_kwargs["setting"]
-            max_steps = agent_kwargs.get("max_steps", 5)
-
-            llm = agent_kwargs["llm"]
 
             # Guard against unsupported setting
             if dataset == "hotpotqa" and setting == "fullwiki":
@@ -39,19 +36,13 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
 
             # Create ICL agent with empty contexts (will be reset per question)
             agent = ICLAgent(
-                llm=llm,
-                contexts=[],
-                max_steps=max_steps,
+                **agent_kwargs
             )
 
         case "rag":
             # Extract parameters
             retrieval = agent_kwargs.get("retrieval", "bm25")
-            rag_k = agent_kwargs.get("rag_k", 4)
-            max_steps = agent_kwargs.get("max_steps", 5)
-            rag_corpus = agent_kwargs.get("rag_corpus")
 
-            llm = agent_kwargs["llm"]
 
             # Guard against unsupported combinations (we only support bm25 + distractor for now)
             if retrieval != "bm25":
@@ -59,22 +50,8 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
 
             # Create RAG agent with empty contexts (will be reset per question)
             agent = RAGAgent(
-                llm=llm,
-                retriever_type=retrieval,
-                contexts=[],
-                corpus=rag_corpus,
-                rag_k=rag_k,
-                max_steps=max_steps,
+                **agent_kwargs,
             )
-
-        case "db":
-            # Extract parameters
-            max_steps = agent_kwargs.get("max_steps", 5)
-
-            llm = agent_kwargs["llm"]
-
-            agent = Agent(llm=llm, max_steps=max_steps)
-
         case "lmlm":
             # Extract parameters
             model_path = agent_kwargs.get("model_path")

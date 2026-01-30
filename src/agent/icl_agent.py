@@ -17,8 +17,9 @@ class ICLAgent(Agent):
     def __init__(
         self,
         llm: LLM,
-        contexts: List[str],
+        contexts: List[str] = [],
         max_steps: int = 8,
+        **kwargs,
     ) -> None:
         super().__init__(llm=llm, max_steps=max_steps)
         self.contexts = contexts or []
@@ -28,7 +29,12 @@ class ICLAgent(Agent):
         self.contexts = contexts or []
         self.trace = []
 
-    def build_prompt(self, query: str) -> str:
+    def build_prompt(self, query: str | list[str]) -> str:
+        if isinstance(query, list):
+            if len(query) > 1:
+                raise NotImplementedError("Agent class does not support batch inference. Please set the batch size to 1.")
+            query = query[0]
+
         # Build step history (same style as base Agent)
         history = "\n".join(
             f"Step {i + 1} [{s.action}]: {s.answer or s.error or ''}".strip() for i, s in enumerate(self.trace)

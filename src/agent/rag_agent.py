@@ -29,11 +29,12 @@ class RAGAgent(Agent):
     def __init__(
         self,
         llm: LLM,
-        retriever_type: str,
-        contexts: List[Any],
+        retriever_type: str = "bm25",
+        contexts: List[Any] = [],
         corpus: Optional[List[Any]] = None,
         rag_k: int = 4,
         max_steps: int = 8,
+        **kwargs,
     ) -> None:
         super().__init__(llm=llm, max_steps=max_steps)
         # Initialize retriever by type
@@ -79,9 +80,13 @@ class RAGAgent(Agent):
         self._evidence_docs = []
         self.trace = []
 
-
     # NOTE: We compute evidence once per run to avoid repeated indexing within multi-step loops
-    def run(self, question: str, **llm_kwargs: Any) -> Tuple[Optional[str], List[AgentStep]]:
+    def run(self, question: str | list[str], **llm_kwargs: Any) -> Tuple[Optional[str], List[AgentStep]]:
+        if isinstance(question, list):
+            if len(question) > 1:
+                print("DEBUG: ", question)
+                raise NotImplementedError("RAGAgent does not support batch inference. Please set the batch size to 1.")
+
         query = self.build_query(question)
         self._evidence_docs = []
         self.gather_evidence(query)

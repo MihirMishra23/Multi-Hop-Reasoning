@@ -66,13 +66,13 @@ export OPENAI_API_KEY="<your-key>"
 5) Generate predictions (writes to `preds/<method>/<dataset>_<setting>/<model>/...`):
 
 ```bash
-python scripts/run_agent.py \
+python scripts/eval_multihop.py \
   --dataset hotpotqa \
   --setting distractor \
   --split validation \
   --method icl \
   --model gpt-4 \
-  --batch-number 1 \
+  --start_idx \
   --batch-size 10
 ```
 
@@ -80,7 +80,7 @@ RAG examples:
 
 ```bash
 # Per-example distractor RAG (current behavior)
-python scripts/run_agent.py \
+python scripts/eval_multihop.py \
   --dataset hotpotqa \
   --setting distractor \
   --split validation \
@@ -90,7 +90,7 @@ python scripts/run_agent.py \
 
 ```bash
 # FullWiki RAG (defaults to fullwiki corpus path when setting=fullwiki)
-python scripts/run_agent.py \
+python scripts/eval_multihop.py \
   --dataset hotpotqa \
   --setting fullwiki \
   --split validation \
