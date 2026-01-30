@@ -281,7 +281,7 @@ def save_results_to_file(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run agent over a dataset and save predictions.")
-    parser.add_argument("--dataset", choices=["hotpotqa", "musique"], help="Dataset name")
+    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki"], help="Dataset name")
     parser.add_argument(
         "--setting",
         default="distractor",
@@ -467,6 +467,8 @@ def main() -> None:
         else:
             rag_scope = args.setting
     args.rag_scope = rag_scope
+
+    print("split is :", args.split)
 
     # Load full dataset once (with seed for deterministic shuffling)
     full_dataset = get_dataset(name = args.dataset, setting = args.setting, split =  args.split, seed=args.seed)
