@@ -207,6 +207,7 @@ accelerate launch \
   --save_total_limit=5 \
   --save_steps=0.2 \
   ${RESUME_FROM_CHECKPOINT} \
+  --use-inverses \
   ${RETURN_TRIPLES} \
   ${ADAPTIVE_K}
 
