@@ -167,11 +167,25 @@ def process_single_batch(
     if args.method in ("rag", "icl"):
         agent.reset(contexts)  # type: ignore
 
-    answers, traces = agent.run(
-        queries,
-        temperature=args.temperature,
-        max_tokens=args.max_tokens,
-    )
+    if args.method == "direct":
+        answers = []
+        traces = []
+        for query in queries:
+            # Ensure each question starts with a fresh trace
+            agent.trace = []
+            answer_list, trace_list = agent.run(
+                [query],
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+            )
+            answers.append(answer_list[0] if answer_list else None)
+            traces.append(trace_list[0] if trace_list else None)
+    else:
+        answers, traces = agent.run(
+            queries,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+        )
 
     # Format results
     for idx, metadata in tqdm(enumerate(examples_metadata), total=len(examples_metadata), desc="Processing queries"):
@@ -213,6 +227,10 @@ def process_single_batch(
             "question": metadata["question"],
             "trace": serialized_trace,
         }
+        if args.method == "lmlm":
+            lookup_logs = getattr(agent, "_lookup_logs", [])
+            if idx < len(lookup_logs):
+                results[str(metadata["qid"])]["lookup_logs"] = lookup_logs[idx]
         if args.method == "rag":
             results[str(qid)]["retrieval"] = _compute_retrieval_stats(
                 evidence_docs=evidence_docs,
@@ -297,7 +315,7 @@ def main() -> None:
     parser.add_argument(
         "--method",
         default="icl",
-        choices=["db", "rag", "icl", "lmlm"],
+        choices=["db", "rag", "icl", "lmlm", "direct"],
         help="Agent method label (for output path)",
     )
     parser.add_argument("--model-path", default=None, help="Local model path")

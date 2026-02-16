@@ -2,7 +2,7 @@
 
 # Script to build knowledge database from multi-hop QA datasets
 
-DB_PATH=""
+DB_PATH="/share/j_sun/as2637/database/2wiki_db.json"
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
@@ -12,13 +12,14 @@ DATASET="2wiki"              # hotpotqa or musique
 HOTPOT_SETTING="distractor"      # distractor or fullwiki (only for hotpot_qa)
 SPLIT="dev"               # train, validation, test
 MODEL="gemini-2.5-flash"     # Gemini model name
-NB_EXAMPLES=10   # Number of examples to process
+NB_EXAMPLES=   # Number of examples to process
 SAMPLE_FROM="start"              # start or end
 USE_CONTEXT=all            # 'all'' or 'golden'
 PROMPT_NAME="default"            # Prompt name from prompts.json
 SEED=42                          
 MAX_CONCURRENT=150         
 NB_PARTS_PER_PROMPT=5 # Only applies when using all contexts
+
 
 echo "Running database extraction with the following configuration:"
 echo "  Dataset: ${DATASET}"
@@ -38,6 +39,7 @@ echo ""
 
 if [ -n "${DB_PATH}" ]; then
   echo "Output database bath set to: ${DB_PATH}"
+  mkdir -p "$(dirname "${DB_PATH}")"
   DB_PATH_FLAG="--database-path ${DB_PATH}"
 else 
   DB_PATH_FLAG=""
@@ -45,7 +47,8 @@ fi
 
 
 # Run the python script
-python "${SCRIPT_DIR}/build_database.py" \
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PYTHONPATH="${REPO_ROOT}/src" python "${SCRIPT_DIR}/build_database.py" \
   --dataset "${DATASET}" \
   --hotpot-setting "${HOTPOT_SETTING}" \
   --split "${SPLIT}" \
