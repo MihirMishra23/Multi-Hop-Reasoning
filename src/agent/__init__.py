@@ -63,6 +63,12 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
 
             agent = LMLMAgent(**agent_kwargs)
 
+        case "direct":
+            llm = agent_kwargs.get("llm")
+            if llm is None:
+                raise Exception("You must set an LLM for direct inference.")
+            agent = Agent(llm=llm, max_steps=agent_kwargs.get("max_steps", 8))
+
         case _:
             raise NotImplementedError(f"Method '{method}' is not implemented.")
 
