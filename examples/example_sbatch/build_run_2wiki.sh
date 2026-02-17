@@ -14,11 +14,7 @@ set -euo pipefail
 # --- fix conda deactivate hook + nounset ---
 export CONDA_BACKUP_CXX="${CONDA_BACKUP_CXX:-}"
 
-# Load conda properly (guard against nounset issues in conda scripts)
-set +u
-source /home/as2637/miniconda/etc/profile.d/conda.sh
-conda activate lmlm_multihop
-set -u
+source /share/apps/software/anaconda3/etc/profile.d/conda.sh
 
 # Export API keys (FYI: avoid hardcoding real keys in scripts)
 export GEMINI_API_KEY=""
