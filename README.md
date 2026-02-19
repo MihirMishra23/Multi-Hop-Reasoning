@@ -1,6 +1,14 @@
 ## Limited Memory Language Models with Multi-Hop Reasoning
 
-### Overview
+### Project Overview
+Classical language models entangle parametric memory with reasoning. This projects seeks to answer the question: Does triplet-based augmentation prevent models from relying on parametric knowledge during reasoning?
+To investigate this, we built the following pipeline:
+- Generate synthetic SFT data using Gemini, creating examples of building and retrieving from a database of knowledge triplets e.g ("Napoleon", "birthday", "August 15, 1769")
+- Finetune Qwen models to learn to create the database and issue multiple lookups to answer multi-hop questions
+- Perform GRPO training over hotpotqa to improve reasoning ability accross building the database and retrieving from it
+- Evaluating models over other multi-hop datasets (e.g Musique, 2wiki)
+
+### Repository contents
 
 This repository provides a lightweight toolkit for experimenting with limited-memory LLMs that perform multi-hop reasoning. It includes:
 - An extensible agent loop for iterative reasoning with a constrained memory trace
