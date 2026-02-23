@@ -21,6 +21,7 @@ No caching is performed here.
 import json
 import os
 import random
+import tempfile
 from typing import Any, Dict, List, Optional
 
 from datasets import Dataset as HFDataset  # type: ignore
@@ -314,7 +315,15 @@ def _normalize_hf_dataset(ds: HFDataset) -> HFDataset:
             "supporting_facts": _build_supporting_facts(ex.get("supporting_facts")),
         }
 
-    return ds.map(_map, remove_columns=ds.column_names, desc="normalize hotpotqa")
+    # In distributed runs, multiple ranks may call this simultaneously. Avoid shared on-disk
+    # map cache writes, which can race and fail with FileNotFoundError in shutil.move.
+    return ds.map(
+        _map,
+        remove_columns=ds.column_names,
+        desc="normalize hotpotqa",
+        load_from_cache_file=False,
+        keep_in_memory=True,
+    )
 
 
 def load_hotpotqa(
@@ -360,9 +369,30 @@ def load_hotpotqa(
     try:
         raw = load_dataset("hotpot_qa", setting, split=hf_split)  # type: ignore
     except Exception as e:
-        raise RuntimeError(
-            f"Failed to load HotpotQA from Hugging Face (setting={setting}, split={hf_split}): {e}"
-        )
+        # Common failure mode: stale/incompatible cached dataset metadata across datasets versions.
+        # Retry with forced redownload, then with a fresh isolated cache directory.
+        try:
+            raw = load_dataset(
+                "hotpot_qa",
+                setting,
+                split=hf_split,
+                download_mode="force_redownload",
+            )  # type: ignore
+        except Exception:
+            try:
+                isolated_cache_dir = os.path.join(tempfile.gettempdir(), "hf_datasets_hotpotqa_clean_cache")
+                os.makedirs(isolated_cache_dir, exist_ok=True)
+                raw = load_dataset(
+                    "hotpot_qa",
+                    setting,
+                    split=hf_split,
+                    cache_dir=isolated_cache_dir,
+                    download_mode="force_redownload",
+                )  # type: ignore
+            except Exception:
+                raise RuntimeError(
+                    f"Failed to load HotpotQA from Hugging Face (setting={setting}, split={hf_split}): {e}"
+                )
     ds = _normalize_hf_dataset(raw)
     # Shuffle with seed if provided
     if seed is not None:
