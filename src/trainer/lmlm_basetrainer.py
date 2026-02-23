@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import datasets
-from multi_lmlm.database.database_manager import DatabaseManager
+from multi_lmlm.database.database_manager import DatabaseManager, PerExampleRetriever
 from multi_lmlm.constants import DB_START_TOKEN, DB_END_TOKEN, DB_RETRIEVE_TOKEN
 import pandas as pd
 import torch
@@ -105,6 +105,41 @@ if is_wandb_available():
 
 if is_bitsandbytes_available():
     import bitsandbytes as bnb
+
+def parse_triplets(text: str) -> list[tuple[str, str, str]]:
+    """Parse triplets from Phase 1 model output.
+
+    Supports two formats:
+      1. Parenthesized: ``(entity, relationship, value)`` — one per line.
+      2. Tab-separated:  ``entity\\trelationship\\tvalue``   — one per line.
+
+    Lines that don't match either format are silently skipped.
+    Returns a list of (entity, relationship, value) tuples.
+    """
+    import re
+
+    triplets: list[tuple[str, str, str]] = []
+    # Pattern for parenthesized triplets: (entity, relationship, value)
+    paren_pattern = re.compile(r"\(\s*([^,]+?)\s*,\s*([^,]+?)\s*,\s*(.+?)\s*\)")
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        # Try parenthesized format first
+        match = paren_pattern.search(line)
+        if match:
+            triplets.append((match.group(1).strip(), match.group(2).strip(), match.group(3).strip()))
+            continue
+
+        # Fall back to tab-separated format
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            triplets.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
+
+    return triplets
+
 
 def extract_db_lookup_last(text : str) -> str | None:
     # BUG: does it need to extract all the db_lookup or the last one?
@@ -268,12 +303,24 @@ class LMLMGRPOTrainer(BaseTrainer):
         rollout_func: RolloutFunc | None = None,
         use_inverses: bool = False,
         retrieval_threshold : float = 0.6,
+        two_phase: bool = False,
     ):
         #LMLM db initialization
         self.retrieval_threshold = retrieval_threshold
         self.db = DatabaseManager()
         self.db.load_database(lmlm_database_path, adaptive= adaptive_k, use_inverses = use_inverses)
         self.return_triples = return_triples
+
+        # Two-phase mode: Phase 1 generates triplets from contexts, Phase 2 does QA with per-example DB
+        self.two_phase = two_phase
+        if two_phase:
+            prompt_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "data", "prompts", "database_creation.json"
+            )
+            with open(prompt_path) as f:
+                self._phase1_prompt_template = json.load(f)["default"]["prompt"]
+            logger.info("Two-phase mode enabled: loaded Phase 1 prompt template from %s", prompt_path)
 
         # Args
         if args is None:
@@ -725,7 +772,10 @@ class LMLMGRPOTrainer(BaseTrainer):
         # and "attention_mask"). In GRPOTrainer, we preprocess data, so using the model's signature columns doesn't
         # work. Instead, we set them to the columns expected by the `training_step` method, hence the override.
         if self._signature_columns is None:
-            self._signature_columns = ["prompt"]
+            cols = ["prompt"]
+            if getattr(self, "two_phase", False):
+                cols.append("contexts")
+            self._signature_columns = cols
 
     # This method overrides `Trainer.get_train_dataloader` to support our custom batching strategy.
     # Instead of returning a standard per-step batch (i.e., `per_device_batch_size), our dataloader loads an
@@ -1398,44 +1448,56 @@ class LMLMGRPOTrainer(BaseTrainer):
 
         return prompt_ids, completion_ids, logprobs, extra_fields
 
-    def _tool_call_loop(self, prompts, prompt_ids, completion_ids, completions, logprobs):
-        # BUG: potential issue of chat template.
-        print(f">>> tool call loop {len(prompts)}")
-        # Tool execution loop: execute tools, then regenerate completions with tool results appended to the prompt
-        tool_calls = [extract_db_lookup_last(completion) for completion in completions]
-        # idx list with tool calls
-        idxs_with_tool = [idx for idx, tool_call in enumerate(tool_calls) if tool_call]
+    def _tool_call_loop(self, prompts, prompt_ids, completion_ids, completions, logprobs, per_example_dbs=None):
+        """Multi-turn tool execution loop with database lookups.
 
-        #trim completions, completion ids, logprobs, based on the first tool call
+        When ``per_example_dbs`` is supplied (two-phase mode, Phase 2), each
+        sample uses its own :class:`PerExampleRetriever` built from Phase 1
+        triplets.  Otherwise the shared ``self.db`` (global DatabaseManager)
+        is used.
+
+        Args:
+            per_example_dbs: Optional list of :class:`PerExampleRetriever`
+                instances, one per sample. ``None`` → use ``self.db``.
+        """
+        print(f">>> tool call loop {len(prompts)}")
+
+        # Step 1: Initialize tool_mask with 1s for the initial Phase 1 completion tokens (model-generated)
+        tool_mask = [[1] * len(cids) for cids in completion_ids]
+
+        tool_calls = [extract_db_lookup_last(completion) for completion in completions]
+        idxs_with_tool = [idx for idx, tool_call in enumerate(tool_calls) if tool_call]
         tool_calls = [tool_calls[idx] for idx in idxs_with_tool]
         tool_call_count = 0
         tool_failure_count = 0
 
         while idxs_with_tool:
-            prompt_completion_tools = [prompts[i] for i in idxs_with_tool]  # select only prompts that need tool calls
+            prompt_completion_tools = [prompts[i] for i in idxs_with_tool]
 
-            ## Stage 1
-            # Call the tools, and build the new prompt for generation
+            ## Stage 1: DB Injection — call the database and inject results (mask=0)
             for idx in range(len(idxs_with_tool)):
                 idx_with_tool = idxs_with_tool[idx]
                 tool_call = tool_calls[idx]
 
-                ## NOTE: p = prompt + query1, c = query1, completion_ids = query1, logprobs = query1
-                # Append the last assistant message (which triggered tool_calls) to the prompt
                 prompt_completion_tools[idx] += completions[idx_with_tool]
                 tool_call_count += 1
                 try:
-                    result = ", ".join(self.db.retrieve_from_database(tool_call, return_triplets = self.return_triples), threshold = self.retrieval_threshold) + DB_END_TOKEN
+                    # Use per-example DB (two-phase) or the global shared DB
+                    db = per_example_dbs[idx_with_tool] if per_example_dbs is not None else self.db
+                    result = ", ".join(db.retrieve_from_database(
+                        tool_call, return_triplets=self.return_triples, threshold=self.retrieval_threshold
+                    )) + DB_END_TOKEN
                 except Exception as e:
-                    print("db lookup failed :", str(e))
+                    print("db lookup failed:", str(e))
                     tool_failure_count += 1
                     result = "unknown" + DB_END_TOKEN
 
                 ## NOTE: p = prompt + query1 + value1, c = query1 + value1, cids = query1, logprobs = query1 + value1
                 prompt_completion_tools[idx] += result
                 completions[idx_with_tool] += result
-                value_ids = self.processing_class(result, add_special_tokens = False)["input_ids"]
+                value_ids = self.processing_class(result, add_special_tokens=False)["input_ids"]
                 completion_ids[idx_with_tool] += value_ids
+                tool_mask[idx_with_tool] += [0] * len(value_ids)  # DB-injected tokens: not trainable
                 if logprobs is not None:
                     logprobs[idx_with_tool] += [0.0] * len(value_ids)
 
@@ -1452,13 +1514,16 @@ class LMLMGRPOTrainer(BaseTrainer):
                     f"Unsupported mode detected: use_vllm={self.use_vllm}, vllm_mode={self.vllm_mode}"
                 )
 
-            # check if prompt_completion_tools is overlong
-            # pct_ids = self.processing_class(
-            #     prompt_completion_tools
-            # )["input_ids"]
-            overlong = [len(prompt_ids[idx]) + len(completion_ids[idx]) >= max_model_len or len(completion_ids[idx]) >= self.max_completion_length for idx in idxs_with_tool]
-            assert len(overlong) == len(prompt_completion_tools), f"overlong of length {len(overlong)} and prompt_completion_tools of length {len(prompt_completion_tools)} are not the same length"
-            
+            overlong = [
+                len(prompt_ids[idx]) + len(completion_ids[idx]) >= max_model_len
+                or len(completion_ids[idx]) >= self.max_completion_length
+                for idx in idxs_with_tool
+            ]
+            assert len(overlong) == len(prompt_completion_tools), (
+                f"overlong of length {len(overlong)} and prompt_completion_tools of length "
+                f"{len(prompt_completion_tools)} are not the same length"
+            )
+
             for idx in range(len(idxs_with_tool)):
                 idx_with_tool = idxs_with_tool[idx]
                 if overlong[idx]:
@@ -1467,25 +1532,27 @@ class LMLMGRPOTrainer(BaseTrainer):
                     # ct = pct_ids[idx][prompt_length : prompt_length + self.max_completion_length]
                     per_max_completion_length = min(self.max_completion_length, max_model_len - prompt_length)
                     completion_ids[idx_with_tool] = completion_ids[idx_with_tool][:per_max_completion_length]
+                    tool_mask[idx_with_tool] = tool_mask[idx_with_tool][:per_max_completion_length]
                     if logprobs is not None:
                         logprobs[idx_with_tool] = logprobs[idx_with_tool][:per_max_completion_length]
+
             # Keep only non-overlong items for further processing
             idxs_with_tool = [idx for idx, o in zip(idxs_with_tool, overlong, strict=True) if not o]
             prompt_completion_tools = [pct for pct, o in zip(prompt_completion_tools, overlong, strict=True) if not o]
             if not idxs_with_tool:
                 print("all overlong, exit tool loop")
-                break  # all overlong, exit tool loop
-            
-            ## Stage 2
-            # Generate new completions after tool execution
-            # BUG: prompt_completion_tool_ids has been compressed.
-            ## NOTE: p = prompt + query1 + value1, c = query1 + value1, cids = query1 + value1, lp = query1 + value1, prompt_completion_tool_ids = prompt + query1 + value1 + query2. post_tool_ids = query2
+                break
+
+            ## Stage 2: QA Generation — generate post-retrieval reasoning (mask=1)
             prompt_completion_tool_ids, post_tool_ids, post_tool_logprobs, _ = self._generate_single_turn(
                 prompt_completion_tools
             )
 
             for i in range(len(post_tool_logprobs)):
-                assert len(post_tool_ids[i]) == len(post_tool_logprobs[i]), f"prompt_completion_tool_ids of length {len(prompt_completion_tool_ids[i])} and post_tool_ids of length {len(post_tool_ids[i])} are not the same length"
+                assert len(post_tool_ids[i]) == len(post_tool_logprobs[i]), (
+                    f"post_tool_ids of length {len(post_tool_ids[i])} and post_tool_logprobs of length "
+                    f"{len(post_tool_logprobs[i])} are not the same length"
+                )
 
             # Sanity check: from experience, this is useful to catch bugs in the chat template
             ## TODO: for debug. comment out
@@ -1526,37 +1593,50 @@ class LMLMGRPOTrainer(BaseTrainer):
 
             # Update completion_ids with the new completions (after tool execution)
             ## NOTE: prompt_ids = prompt. prompt_completion_tool_ids = prompt + query1 + value1 + query2. post_tool_ids = query2
+            
+            # Update completion_ids and tool_mask with Phase 2 tokens
             for idx in range(len(idxs_with_tool)):
                 idx_with_tool = idxs_with_tool[idx]
                 # prompt_length = len(prompt_ids[idx_with_tool])
                 ## NOTE: completion_ids = query1 + value1 + query2
                 # completion_ids[idx_with_tool] = prompt_completion_tool_ids[idx][prompt_length:] + post_tool_ids[idx] # BUG: this is wrong due to different tokenization
                 completion_ids[idx_with_tool] += post_tool_ids[idx]
+                tool_mask[idx_with_tool] += [1] * len(post_tool_ids[idx])  # Model-generated tokens: trainable
                 if logprobs is not None:
                     ## NOTE: logprobs = query1 + value1 + query2
                     logprobs[idx_with_tool] += post_tool_logprobs[idx]
-                    assert len(logprobs[idx_with_tool]) == len(completion_ids[idx_with_tool]), f"logprobs of length {len(logprobs[idx_with_tool])} and completion_ids of length {len(completion_ids[idx_with_tool])} are not the same length"
-                
-                # truncate
-                if len(completion_ids[idx_with_tool]) > self.max_completion_length:
-                    completion_ids[idx_with_tool] = completion_ids[idx_with_tool][:self.max_completion_length]            
+                    assert len(logprobs[idx_with_tool]) == len(completion_ids[idx_with_tool]), (
+                        f"logprobs of length {len(logprobs[idx_with_tool])} and completion_ids of length "
+                        f"{len(completion_ids[idx_with_tool])} are not the same length"
+                    )
 
+                # Truncate if exceeding max_completion_length (tool_mask truncated in lockstep)
+                if len(completion_ids[idx_with_tool]) > self.max_completion_length:
+                    # Compute excess BEFORE truncation so downstream post_tool_ids stays consistent
+                    excess = len(completion_ids[idx_with_tool]) - self.max_completion_length
+                    completion_ids[idx_with_tool] = completion_ids[idx_with_tool][:self.max_completion_length]
+                    tool_mask[idx_with_tool] = tool_mask[idx_with_tool][:self.max_completion_length]
                     if logprobs is not None:
                         logprobs[idx_with_tool] = logprobs[idx_with_tool][:self.max_completion_length]
+                    # Also truncate post_tool_ids for consistent downstream decoding
+                    if excess >= len(post_tool_ids[idx]):
+                        post_tool_ids[idx] = []
+                        if post_tool_logprobs is not None:
+                            post_tool_logprobs[idx] = []
+                    else:
+                        post_tool_ids[idx] = post_tool_ids[idx][:-excess]
+                        if post_tool_logprobs is not None:
+                            post_tool_logprobs[idx] = post_tool_logprobs[idx][:-excess]
 
-                    truncate_length = len(completion_ids[idx_with_tool]) - self.max_completion_length
-                    if truncate_length > 0:
-                        if truncate_length >= len(post_tool_ids[idx]):
-                            post_tool_ids[idx] = []
-                            if post_tool_logprobs is not None:
-                                post_tool_logprobs[idx] = []
-                        else:
-                            post_tool_ids[idx] = post_tool_ids[idx][:-truncate_length]
-                            if post_tool_logprobs is not None:
-                                post_tool_logprobs[idx] = post_tool_logprobs[idx][:-truncate_length]
-                    if post_tool_logprobs is not None:
-                        assert len(post_tool_ids[idx]) == len(post_tool_logprobs[idx]), f"post_tool_ids of length {len(post_tool_ids[idx])} and post_tool_logprobs of length {len(post_tool_logprobs[idx])} are not the same length"
-
+            # Decode completions from completion_ids
+            completions = [
+                self.processing_class.decode(completion_ids[idx], skip_special_tokens=False)
+                for idx in range(len(completion_ids))
+            ]
+            post_tool_completions = [
+                self.processing_class.decode(post_tool_ids[idx], skip_special_tokens=False) if len(post_tool_ids[idx]) > 0 else ""
+                for idx in range(len(post_tool_ids))
+            ]
 
             
             debug_example(completion_ids, completions, logprobs, "after tool call loop")
@@ -1576,68 +1656,90 @@ class LMLMGRPOTrainer(BaseTrainer):
             #         ## NOTE: completions = query1 + value1 + query2
             #         completions[idx_with_tool] += (post_tool_completions[idx])
 
-            # Check for further tool calls
+            # Check for further tool calls in the Phase 2 completions
             tool_calls = [extract_db_lookup_last(completion) for completion in post_tool_completions]
             idxs_with_tool = [idx for idx, tool_call in zip(idxs_with_tool, tool_calls, strict=True) if tool_call]
             tool_calls = [tool_call for tool_call in tool_calls if tool_call]
 
-        
-        # mask anything in between retrieve tokens and end tokens
-        tool_mask = [[] for _ in range(len(completion_ids))]
-
-        # for j in range(len(completion_ids)):
-        #     mask_val = 1
-        #     for i in completion_ids[j]:
-        #         if i == self.db_retrieve_token_id:
-        #             mask_val = 0
-        #             tool_mask[j].append(1)
-        #             continue
-        #         if i == self.db_end_token_id:
-        #             mask_val = 1
-        #             tool_mask[j].append(0)
-        #             continue
-        #         tool_mask[j].append(mask_val)
-
-        # a faster way to do this
-        # completion_ids_tensor = torch.tensor(completion_ids)
-
-        # is_ret = completion_ids_tensor == self.db_retrieve_token_id
-        # is_end = completion_ids_tensor == self.db_end_token_id
-
-        # delta = is_ret.int() - is_end.int()
-        # state = torch.cumsum(delta, dim=1)
-
-        # tool_mask = (state == 0)
-
-        # TODO: need to check if this is correct
+        # Validate lengths
         for i in range(len(completion_ids)):
-            tool_mask[i] = compute_pretrain_mask(torch.tensor(completion_ids[i]).unsqueeze(0), include_eos=True).squeeze(0).tolist()
-
-        debug_example(completion_ids, completions, logprobs, "after mask")
-        
+            assert len(tool_mask[i]) == len(completion_ids[i]), (
+                f"tool_mask of length {len(tool_mask[i])} and completion_ids of length "
+                f"{len(completion_ids[i])} are not the same length"
+            )
         if logprobs is not None:
             for i in range(len(completion_ids)):
-                assert len(logprobs[i]) == len(completion_ids[i]), f"logprobs of length {len(logprobs[i])} and completion_ids of length {len(completion_ids[i])} are not the same length"
+                assert len(logprobs[i]) == len(completion_ids[i]), (
+                    f"logprobs of length {len(logprobs[i])} and completion_ids of length "
+                    f"{len(completion_ids[i])} are not the same length"
+                )
         return tool_mask, completions, completion_ids, logprobs, tool_call_count, tool_failure_count
 
-    def _generate(self, prompts: list):
-        device = self.accelerator.device
-        mode = "train" if self.model.training else "eval"
+    def _generate_two_phase(self, qa_prompts: list[str], contexts: list[list[str]]):
+        """Two-phase generation: Phase 1 (triplet gen) → Phase 2 (QA with per-example DB).
 
-        # Copy the prompts to avoid modifying the original list
-        prompts = copy.deepcopy(prompts)
+        Phase 1: Model generates knowledge triplets from context paragraphs.
+                 Output is parsed into per-example PerExampleRetriever instances.
+        Phase 2: Model answers questions using DB lookups against the per-example
+                 databases built in Phase 1.
 
-        prompt_ids, completion_ids, logprobs, extra_fields = self._generate_single_turn(prompts)
+        Only Phase 2 tokens are included in the returned completion_ids / logprobs /
+        tool_mask.  Phase 1 acts as a reward-shaping preprocessing step: bad
+        triplets → failed lookups → wrong answer → low reward.
 
-        completions = self.processing_class.batch_decode(completion_ids, skip_special_tokens=False)
+        Returns:
+            Tuple of (prompt_ids, completion_ids, tool_mask, completions,
+            logprobs, tool_call_count, tool_failure_count, extra_fields).
+        """
+        # ===== Phase 1: Generate triplets from contexts =====
+        phase1_prompts = [
+            self._phase1_prompt_template.format(context="\n\n".join(ctx_list))
+            for ctx_list in contexts
+        ]
 
-        debug_example(completion_ids, completions, logprobs, "in _generate")
-        # for i in range(len(completion_ids)):
-        #     self.check_length(completion_ids, logprobs, i)
-            # assert len(logprobs[i]) == len(completion_ids[i]), f"logprobs of length {len(logprobs[i])} and completion_ids of length {len(completion_ids[i])} are not the same length"
+        (
+            _phase1_prompt_ids,
+            phase1_completion_ids,
+            _phase1_logprobs,
+            _,
+        ) = self._generate_single_turn(phase1_prompts)
 
+        phase1_completions = self.processing_class.batch_decode(
+            phase1_completion_ids, skip_special_tokens=False
+        )
 
-        # Extract tool calls from the completions and (possibly) execute them
+        logger.info(
+            "Phase 1: generated %d completions", len(phase1_completions)
+        )
+
+        # Parse triplets and build per-example DBs
+        per_example_dbs: list[PerExampleRetriever] = []
+        total_triplets = 0
+        for comp_text in phase1_completions:
+            triplets = parse_triplets(comp_text)
+            total_triplets += len(triplets)
+            per_example_dbs.append(PerExampleRetriever(triplets))
+        logger.info(
+            "Phase 1: parsed %d total triplets across %d examples",
+            total_triplets,
+            len(per_example_dbs),
+        )
+
+        # ===== Phase 2: QA with per-example DB lookups =====
+        (
+            prompt_ids,
+            completion_ids,
+            logprobs,
+            extra_fields,
+        ) = self._generate_single_turn(qa_prompts)
+
+        completions = self.processing_class.batch_decode(
+            completion_ids, skip_special_tokens=False
+        )
+
+        debug_example(completion_ids, completions, logprobs, "in _generate_two_phase (Phase 2)")
+
+        # Run tool call loop with per-example DBs
         if self.tools:
             (
                 tool_mask,
@@ -1646,9 +1748,94 @@ class LMLMGRPOTrainer(BaseTrainer):
                 logprobs,
                 tool_call_count,
                 tool_failure_count,
-            ) = self._tool_call_loop(prompts, prompt_ids, completion_ids, completions, logprobs)
+            ) = self._tool_call_loop(
+                qa_prompts,
+                prompt_ids,
+                completion_ids,
+                completions,
+                logprobs,
+                per_example_dbs=per_example_dbs,
+            )
         else:
             tool_mask = None
+            tool_call_count = 0
+            tool_failure_count = 0
+
+        # Log Phase 1 stats
+        mode = "train" if self.model.training else "eval"
+        self._metrics[mode]["phase1/total_triplets"].append(total_triplets)
+        self._metrics[mode]["phase1/mean_triplets_per_example"].append(
+            total_triplets / max(len(per_example_dbs), 1)
+        )
+
+        return (
+            prompt_ids,
+            completion_ids,
+            tool_mask,
+            completions,
+            logprobs,
+            tool_call_count,
+            tool_failure_count,
+            extra_fields,
+        )
+
+    def _generate(self, prompts: list, contexts: list[list[str]] | None = None):
+        """Generate completions, optionally using two-phase flow.
+
+        When ``self.two_phase`` is True and *contexts* are provided:
+          **Phase 1** – generate knowledge triplets from *contexts* using
+          ``_phase1_prompt_template``, parse them, and build a lightweight
+          :class:`PerExampleRetriever` per sample.
+          **Phase 2** – answer the question (original *prompts*) using
+          ``_tool_call_loop`` with the per-example databases from Phase 1.
+
+        Only Phase 2 tokens contribute to the GRPO loss; Phase 1 acts as
+        a differentiable-through-reward preprocessing step (the reward depends
+        on Phase 1 quality because bad triplets ⇒ failed lookups ⇒ wrong answer).
+
+        Args:
+            prompts: QA prompts (one per example).
+            contexts: Per-example context paragraphs for Phase 1. Ignored
+                when ``self.two_phase`` is False.
+        """
+        device = self.accelerator.device
+        mode = "train" if self.model.training else "eval"
+
+        # Copy the prompts to avoid modifying the original list
+        prompts = copy.deepcopy(prompts)
+
+        # ---------- Two-phase dispatch ----------
+        if self.two_phase and contexts is not None:
+            (
+                prompt_ids,
+                completion_ids,
+                tool_mask,
+                completions,
+                logprobs,
+                tool_call_count,
+                tool_failure_count,
+                extra_fields,
+            ) = self._generate_two_phase(prompts, contexts)
+        else:
+            # ---------- Standard single-phase path ----------
+            prompt_ids, completion_ids, logprobs, extra_fields = self._generate_single_turn(prompts)
+
+            completions = self.processing_class.batch_decode(completion_ids, skip_special_tokens=False)
+
+            debug_example(completion_ids, completions, logprobs, "in _generate")
+
+            # Extract tool calls from the completions and (possibly) execute them
+            if self.tools:
+                (
+                    tool_mask,
+                    completions,
+                    completion_ids,
+                    logprobs,
+                    tool_call_count,
+                    tool_failure_count,
+                ) = self._tool_call_loop(prompts, prompt_ids, completion_ids, completions, logprobs)
+            else:
+                tool_mask = None
 
         # Get completion length per sequence, used for logging
         prompt_lengths = torch.tensor([len(ids) for ids in prompt_ids], device=device)
@@ -1711,6 +1898,11 @@ class LMLMGRPOTrainer(BaseTrainer):
 
         prompts = [x["prompt"] for x in inputs]
 
+        # Extract contexts for two-phase mode (may be absent for single-phase)
+        contexts = None
+        if self.two_phase:
+            contexts = [x.get("contexts", []) for x in inputs]
+
         (
             prompt_ids_list,
             completion_ids_list,
@@ -1719,7 +1911,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             num_items_in_batch,
             sampling_per_token_logps_list,
             extra_fields,
-        ) = self._generate(prompts)
+        ) = self._generate(prompts, contexts=contexts)
 
         # Convert lists of token IDs to padded tensors
         prompt_ids = [torch.tensor(ids, device=device) for ids in prompt_ids_list]

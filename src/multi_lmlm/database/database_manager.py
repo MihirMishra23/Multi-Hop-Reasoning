@@ -172,6 +172,81 @@ class DatabaseManager:
             json.dump(serializable, f, indent=4)
         logger.info(f"Database saved at {save_path}.")
 
+class PerExampleRetriever:
+    """Lightweight per-example database for two-phase generation.
+
+    Stores triplets from Phase 1 (model-generated) and retrieves values
+    via normalized string matching. No FAISS or sentence-transformers needed.
+    """
+
+    def __init__(self, triplets: list[tuple[str, str, str]]):
+        """
+        Args:
+            triplets: List of (entity, relationship, value) tuples produced by Phase 1.
+        """
+        # Build lookup dict: (norm_entity, norm_relationship) -> value
+        self._lookup: dict[tuple[str, str], str] = {}
+        self._raw_triplets = list(triplets)
+        for entity, relationship, value in triplets:
+            key = (self._normalize(entity), self._normalize(relationship))
+            # Keep the first value if duplicates exist
+            if key not in self._lookup:
+                self._lookup[key] = value
+
+    @staticmethod
+    def _normalize(s: str) -> str:
+        """Lowercase, strip, collapse whitespace."""
+        return " ".join(s.lower().strip().split())
+
+    def retrieve(self, entity: str, relationship: str) -> str | None:
+        """Return the value for (entity, relationship) or None if not found."""
+        key = (self._normalize(entity), self._normalize(relationship))
+        return self._lookup.get(key)
+
+    def retrieve_from_database(self, prompt: str, return_triplets: bool = False, threshold: float | None = None) -> list[str]:
+        """Drop-in replacement for DatabaseManager.retrieve_from_database.
+
+        Parses the db-lookup tokens from *prompt*, looks up (entity, relationship)
+        in the per-example store, and returns the value wrapped in a list.
+        Raises DatabaseLookupError on failure (same contract as DatabaseManager).
+        """
+        import re
+        pattern_lst = [
+            r"\[dblookup\('((?:[^'\\]|\\.)+)',\s*'((?:[^'\\]|\\.)+)'\)\s*->",
+            r"\[dblookup\('(.+?)',\s*'(.+?)'\)\s*->",
+            r"<\|db_entity\|>(.+?)<\|db_relationship\|>(.+?)<\|db_return\|>",
+        ]
+        matches = {tuple(match) for pattern in pattern_lst for match in re.findall(pattern, prompt)}
+
+        if not matches:
+            raise DatabaseLookupError(
+                f"[per_example_fail] No valid dblookup pattern found in prompt: {prompt}",
+                "no_match_found",
+            )
+        if len(matches) > 1:
+            raise DatabaseLookupError(
+                f"[per_example_fail] Multiple dblookup matches found: {matches}",
+                "multiple_matches",
+            )
+
+        entity, relationship = matches.pop()
+        value = self.retrieve(entity, relationship)
+        if value is None:
+            raise DatabaseLookupError(
+                f"[per_example_fail] No result for entity='{entity}', relationship='{relationship}'",
+                "no_retrieval_data_found",
+            )
+        if return_triplets:
+            return [f"({entity}, {relationship}, {value})"]
+        return [value]
+
+    def __len__(self) -> int:
+        return len(self._raw_triplets)
+
+    def __repr__(self) -> str:
+        return f"PerExampleRetriever({len(self._raw_triplets)} triplets)"
+
+
 def load_current_database(database_dir: str) -> DatabaseManager:
     """Load all database files from directory."""
     db_manager = DatabaseManager()

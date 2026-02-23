@@ -48,9 +48,13 @@ class LMLMArguments:
         default = False,
         metadata={"help" : "When building the db, augment (e,r,v) -> (v,r,e) for each triplet"}
     )
-    retrieval_threshold : bool = field(
+    retrieval_threshold : float = field(
         default = 0.6,
         metadata = {"help" : "cosing similarity threshold"}
+    )
+    two_phase: bool = field(
+        default=False,
+        metadata={"help": "Enable two-phase generation (Phase 1: DB creation from contexts, Phase 2: QA with per-example DB)"}
     )
 
 
@@ -72,6 +76,7 @@ def process_example(example):
     """Process HotpotQA example into prompt-solution format."""
     return {
         "prompt": f"Question:\n{example['question']}\nAnswer:\n",
+        "contexts": example.get("contexts", []),
         "solution": example["answers"][0]
     }
 
@@ -137,6 +142,7 @@ def main():
         train_dataset=train_set,
         eval_dataset=eval_set,
         args=grpo_config,
+        two_phase=lmlm_args.two_phase,
     )
     
     # Start training
