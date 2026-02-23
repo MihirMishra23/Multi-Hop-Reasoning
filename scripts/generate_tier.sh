@@ -1,36 +1,43 @@
 #
-# Setup instructions — eval_lmlm_multihop.sh
-#
-# Methods supported: direct, icl, rag, lmlm
+# Setup instructions — generate_tier.sh
 #
 # Prereqs:
 # - Activate your environment and install repo deps:
 #   pip install -e .
-# - (RAG only) Install FlashRAG:
-#   cd src/tools
-#   git clone https://github.com/RUC-NLPIR/FlashRAG.git
-#   cd FlashRAG
-#   pip install -e .
+# - If you want a plot, install matplotlib:
+#   pip install matplotlib
 #
-# Run:
-#   bash scripts/eval_lmlm_multihop.sh --method direct
+# Usage:
+# - Set defaults in this file, or override via CLI args.
+# - Run:
+#   bash scripts/generate_tier.sh
 #
-# Common overrides:
-#   bash scripts/eval_lmlm_multihop.sh \
-#     --method icl \
-#     --llm_model gpt-4 \
+# Example override:
+#   bash scripts/generate_tier.sh \
+#     --model_path /path/to/checkpoint \
 #     --dataset 2wiki \
 #     --split dev \
-#     --num_samples 100
+#     --num_samples 200 \
+#     --num_rollouts 8 \
+#     --answer_threshold 0.7 \
+#     --save_version v2 \
+#     --plot_path ./output/tiers/2wiki_score_dist_v2.png
 #
-MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48
-LLM_MODEL=gpt-4
+# Output:
+# - JSON with id/questions/answers/traces + score (0..num_rollouts)
+# - Optional score distribution plot at --plot_path
+#
+# Compatibility with eval:
+# - Uses get_dataset with seed; subset defined by start-index + total-count
+#
+MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48-grpo-g8-bs16-s8-b0.0-ep5-n8000/checkpoint-1250/
 DATASET=2wiki
 SPLIT=dev
-USE_INVERSES="" # or "--use-inverses"
-NUM_SAMPLES=12
+NUM_SAMPLES=100
 SAVE_VERSION="v1"
-METHODS=("direct" "icl" "rag" "lmlm")
+NUM_ROLLOUTS=8
+ANSWER_THRESHOLD=0.6
+PLOT_PATH=./output/tiers/2wiki_score_dist.png
 
 
 # Parse command line arguments
@@ -44,14 +51,6 @@ while [[ $# -gt 0 ]]; do
             DATASET="$2"
             shift 2
             ;;
-        --method)
-            METHODS=("$2")
-            shift 2
-            ;;
-        --llm_model)
-            LLM_MODEL="$2"
-            shift 2
-            ;;
         --split)
             SPLIT="$2"
             shift 2
@@ -60,12 +59,20 @@ while [[ $# -gt 0 ]]; do
             NUM_SAMPLES="$2"
             shift 2
             ;;
-        --use-inverses)
-            USE_INVERSES="--use-inverses"
-            shift
+        --num_rollouts)
+            NUM_ROLLOUTS="$2"
+            shift 2
+            ;;
+        --answer_threshold)
+            ANSWER_THRESHOLD="$2"
+            shift 2
             ;;
         --save_version)
             SAVE_VERSION="$2"
+            shift 2
+            ;;
+        --plot_path)
+            PLOT_PATH="$2"
             shift 2
             ;;
         *)
@@ -74,7 +81,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
 
 if [ "${DATASET}" = "hotpotqa" ]; then
     if [ "${SPLIT}" = "dev" ]; then
@@ -138,76 +144,27 @@ if [ "${NUM_SAMPLES}" -gt "${DEFAULT_NUM_SAMPLES}" ]; then
     NUM_SAMPLES="${DEFAULT_NUM_SAMPLES}"
 fi
 
+METHOD=lmlm
 MAX_TOKENS=1024
-BATCH_SIZE_DIRECT=32
-BATCH_SIZE_ICL=1
-BATCH_SIZE_RAG=1
-BATCH_SIZE_LMLM=32
+BATCH_SIZE=32
 OUTPUT_DIR=./output
 SETTING=distractor
-SAVE_EVERY=64
-SEED=42
+SEED="${SEED:-42}"
 
-
-if [[ "${MODEL_PATH}" == *"-nak"* ]]; then
-    ADAPTIVE_K=""
-else
-    ADAPTIVE_K="--adaptive-k"
-fi
-
-# th-3
-if [[ "${MODEL_PATH}" == *"-th-3"* ]]; then
-    RETURN_TRIPLETS="--return-triplets"
-else
-    RETURN_TRIPLETS=""
-fi
-
-
-for METHOD in "${METHODS[@]}"; do
-    echo "Running method: ${METHOD}"
-    if [ "${METHOD}" = "lmlm" ]; then
-        python src/eval_multihop.py \
-            --model-path ${MODEL_PATH} \
-            --database-path ${DATABASE_PATH} \
-            --method ${METHOD} \
-            --max-tokens ${MAX_TOKENS} \
-            --batch-size ${BATCH_SIZE_LMLM} \
-            --total-count ${NUM_SAMPLES} \
-            --output-dir ${OUTPUT_DIR}/ \
-            --save-version ${SAVE_VERSION} \
-            --split ${SPLIT} \
-            --setting ${SETTING} \
-            --dataset ${DATASET} \
-            --seed ${SEED} \
-            --save-every ${SAVE_EVERY} \
-            --start-index ${START_IDX} \
-            ${ADAPTIVE_K} \
-            ${RETURN_TRIPLETS} \
-            ${USE_INVERSES} \
-            --eval \
-            --resume
-    else
-        if [ "${METHOD}" = "icl" ]; then
-            BATCH_SIZE=${BATCH_SIZE_ICL}
-        elif [ "${METHOD}" = "rag" ]; then
-            BATCH_SIZE=${BATCH_SIZE_RAG}
-        else
-            BATCH_SIZE=${BATCH_SIZE_DIRECT}
-        fi
-        python src/eval_multihop.py \
-            --method ${METHOD} \
-            --model ${LLM_MODEL} \
-            --max-tokens ${MAX_TOKENS} \
-            --batch-size ${BATCH_SIZE} \
-            --total-count ${NUM_SAMPLES} \
-            --output-dir ${OUTPUT_DIR}/ \
-            --split ${SPLIT} \
-            --setting ${SETTING} \
-            --dataset ${DATASET} \
-            --seed ${SEED} \
-            --save-every ${SAVE_EVERY} \
-            --start-index ${START_IDX} \
-            --eval \
-            --resume
-    fi
-done
+python scripts/generate_tier.py \
+    --model-path ${MODEL_PATH} \
+    --database-path ${DATABASE_PATH} \
+    --method ${METHOD} \
+    --max-tokens ${MAX_TOKENS} \
+    --batch-size ${BATCH_SIZE} \
+    --total-count ${NUM_SAMPLES} \
+    --output-dir ${OUTPUT_DIR}/ \
+    --save-version ${SAVE_VERSION} \
+    --split ${SPLIT} \
+    --setting ${SETTING} \
+    --dataset ${DATASET} \
+    --seed ${SEED} \
+    --start-index ${START_IDX} \
+    --num-rollouts ${NUM_ROLLOUTS} \
+    --answer-threshold ${ANSWER_THRESHOLD} \
+    --plot-path ${PLOT_PATH}

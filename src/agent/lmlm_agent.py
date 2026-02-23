@@ -115,6 +115,7 @@ class LMLMAgent(Agent):
         # Track which queries are still generating
         active = [True] * len(queries)
         results = [(None, None) for _ in range(len(queries))]
+        self._lookup_logs = [[] for _ in range(len(queries))]
 
         # Generation loop - continue until all queries complete
         # Max iterations to prevent infinite loops (in case of malformed outputs)
@@ -191,18 +192,29 @@ class LMLMAgent(Agent):
                 if DB_RETRIEVE_TOKEN in generated_text:
                     # Extract database query
                     return_value = "unknown"
+                    lookup_log = {
+                        "query": None,
+                        "success": False,
+                        "returned_count": 0,
+                        "error": None,
+                    }
                     try:
                         split = prompts[i].rsplit(DB_START_TOKEN)
                         db_query = split[-1]
+                        lookup_log["query"] = db_query
                         return_values = self.db.retrieve_from_database(
                             DB_START_TOKEN + db_query,
                             self.similarity_threshold,
                             return_triplets=self.return_triplets,
                             top_k=self.top_k
                         )
+                        lookup_log["returned_count"] = len(return_values)
+                        lookup_log["success"] = len(return_values) > 0
                         return_value = ", ".join(return_values)
                     except Exception as e:
+                        lookup_log["error"] = str(e)
                         print(f"Database lookup failed: {e}")
+                    self._lookup_logs[i].append(lookup_log)
 
                     # Append retrieved value and db_end token
                     prompts[i] += return_value + DB_END_TOKEN
