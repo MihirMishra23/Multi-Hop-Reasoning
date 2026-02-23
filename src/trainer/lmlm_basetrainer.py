@@ -1715,10 +1715,19 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Parse triplets and build per-example DBs
         per_example_dbs: list[PerExampleRetriever] = []
         total_triplets = 0
-        for comp_text in phase1_completions:
+        for i, comp_text in enumerate(phase1_completions):
             triplets = parse_triplets(comp_text)
             total_triplets += len(triplets)
             per_example_dbs.append(PerExampleRetriever(triplets))
+            # Log the actual triplets for debugging
+            if triplets:
+                logger.info("Phase 1 example %d: %d triplets extracted", i, len(triplets))
+                for ent, rel, val in triplets[:10]:  # cap at 10 to avoid log spam
+                    logger.info("  (%s, %s, %s)", ent, rel, val)
+                if len(triplets) > 10:
+                    logger.info("  ... and %d more", len(triplets) - 10)
+            else:
+                logger.info("Phase 1 example %d: 0 triplets (raw output: %.200s...)", i, comp_text)
         logger.info(
             "Phase 1: parsed %d total triplets across %d examples",
             total_triplets,
@@ -1761,11 +1770,28 @@ class LMLMGRPOTrainer(BaseTrainer):
             tool_call_count = 0
             tool_failure_count = 0
 
-        # Log Phase 1 stats
+        # Log Phase 1 stats + per-example retriever diagnostics
         mode = "train" if self.model.training else "eval"
         self._metrics[mode]["phase1/total_triplets"].append(total_triplets)
         self._metrics[mode]["phase1/mean_triplets_per_example"].append(
             total_triplets / max(len(per_example_dbs), 1)
+        )
+        # Aggregate fuzzy-match diagnostics across all per-example DBs
+        agg_exact = sum(db._exact_hits for db in per_example_dbs)
+        agg_fuzzy = sum(db._fuzzy_hits for db in per_example_dbs)
+        agg_miss = sum(db._misses for db in per_example_dbs)
+        agg_total = agg_exact + agg_fuzzy + agg_miss
+        self._metrics[mode]["phase2/retrieval_exact_hits"].append(agg_exact)
+        self._metrics[mode]["phase2/retrieval_fuzzy_hits"].append(agg_fuzzy)
+        self._metrics[mode]["phase2/retrieval_misses"].append(agg_miss)
+        if agg_total > 0:
+            self._metrics[mode]["phase2/retrieval_hit_rate"].append(
+                (agg_exact + agg_fuzzy) / agg_total
+            )
+        logger.info(
+            "Phase 2 retrieval stats: exact=%d, fuzzy=%d, miss=%d (hit rate=%.1f%%)",
+            agg_exact, agg_fuzzy, agg_miss,
+            100.0 * (agg_exact + agg_fuzzy) / max(agg_total, 1),
         )
 
         return (
