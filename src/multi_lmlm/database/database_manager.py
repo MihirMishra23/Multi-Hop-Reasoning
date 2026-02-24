@@ -153,8 +153,6 @@ class DatabaseManager:
             logger.info(f"Top-k retriever initialized with {len(self)} triplets and threshold {self.topk_retriever.default_threshold}.")
 
     def retrieve_from_database(self, prompt: str, threshold: Optional[float] = None, top_k : int  = 4, return_triplets : bool = False):
-        print("retrieving using prompt:", prompt)
-        print("current database triplets is:", self.database["triplets"])
         """Retrieve a single top-1 database result from a prompt containing dblookup. If lookup fails, raise an error."""
         pattern_lst = [
             r"\[dblookup\('((?:[^'\\]|\\.)+)',\s*'((?:[^'\\]|\\.)+)'\)\s*->",
