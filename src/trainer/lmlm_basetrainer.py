@@ -1687,13 +1687,10 @@ class LMLMGRPOTrainer(BaseTrainer):
         Phase 2: Model answers questions using DB lookups against the per-example
                  databases built in Phase 1.
 
-        Only Phase 2 tokens are included in the returned completion_ids / logprobs /
-        tool_mask.  Phase 1 acts as a reward-shaping preprocessing step: bad
-        triplets → failed lookups → wrong answer → low reward.
 
         Returns:
             Tuple of (prompt_ids, completion_ids, tool_mask, completions,
-            logprobs, tool_call_count, tool_failure_count, extra_fields).
+            logprobs, tool_call_count, tool_failure_count, extra_fields). For both phases.
         """
         # ===== Phase 1: Generate triplets from contexts =====
         phase1_prompts = [
@@ -1702,10 +1699,10 @@ class LMLMGRPOTrainer(BaseTrainer):
         ]
 
         (
-            _phase1_prompt_ids,
+            phase1_prompt_ids,
             phase1_completion_ids,
-            _phase1_logprobs,
-            _,
+            phase1_logprobs,
+            extra_fields,
         ) = self._generate_single_turn(phase1_prompts)
 
         phase1_completions = self.processing_class.batch_decode(
@@ -1807,12 +1804,27 @@ class LMLMGRPOTrainer(BaseTrainer):
         #     100.0 * (agg_exact + agg_fuzzy) / max(agg_total, 1),
         # )
 
+        # Combine Phase 1 and Phase 2 outputs
+        # Phase 1 entries have tool_mask with all 1s (all tokens are model-generated)
+        combined_prompt_ids = phase1_prompt_ids + prompt_ids
+        combined_completion_ids = phase1_completion_ids + completion_ids
+        combined_completions = phase1_completions + completions
+        combined_logprobs = phase1_logprobs + logprobs
+
+        phase1_tool_mask = [[1] * len(cids) for cids in phase1_completion_ids]
+        # Phase 2 tool masks: from _tool_call_loop if tools enabled, else all 1s. Tool calls should always be enabled for LMLM.
+        if tool_mask is not None:
+            phase2_tool_mask = tool_mask
+        else:
+            phase2_tool_mask = [[1] * len(cids) for cids in completion_ids]
+        combined_tool_mask = phase1_tool_mask + phase2_tool_mask
+
         return (
-            prompt_ids,
-            completion_ids,
-            tool_mask,
-            completions,
-            logprobs,
+            combined_prompt_ids,
+            combined_completion_ids,
+            combined_tool_mask,
+            combined_completions,
+            combined_logprobs,
             tool_call_count,
             tool_failure_count,
             extra_fields,
