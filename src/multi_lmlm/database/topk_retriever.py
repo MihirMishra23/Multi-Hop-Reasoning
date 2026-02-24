@@ -117,7 +117,6 @@ class TopkRetriever:
             self.id_to_triplet = pickle.load(f)
 
     def _build_index(self, precomputed_embeddings=None):
-        logger.info("Building FAISS index")
         self.index = faiss.IndexIDMap(faiss.IndexFlatIP(self.embedding_dim))
 
         texts = [f"{self._normalize_text(ent)} {self._normalize_text(rel)}" for ent, rel, _ in self.database]
@@ -126,7 +125,6 @@ class TopkRetriever:
             return
 
         if precomputed_embeddings is not None:
-            logger.info(f"Using precomputed embeddings for {len(texts)} triplets...")
             embeddings = precomputed_embeddings
         else:
             logger.info(f"Encoding {len(texts)} (entity, relationship) pairs, which may take a long time...")
@@ -139,10 +137,8 @@ class TopkRetriever:
             )
 
         ids = np.arange(len(self.database))
-        logger.info(f"Adding {len(texts)} triplets to Faiss index...")
         self.index.add_with_ids(embeddings, ids)
         self.id_to_triplet = {i: triplet for i, triplet in enumerate(self.database)}
-        logger.info("Finished building index!")
 
     def retrieve_top_k(self, entity: str, relation: str, threshold: Optional[float] = None, return_triplets: bool = False) -> List[str]:
         query_text = f"{self._normalize_text(entity)} {self._normalize_text(relation)}"

@@ -9,6 +9,7 @@ from multi_lmlm.constants import ANSWER_START_TOKEN, ANSWER_END_TOKEN
 import wandb
 import os
 from data import get_dataset
+import random
 
 @dataclass
 class ScriptArguments:
@@ -68,8 +69,25 @@ def extract_answer_from_tags(text: str):
 
 def em_accuracy(completions, solution, **kwargs):
     """Calculate exact match accuracy for completions."""
-    return [1 if exact_match_score(extract_answer_from_tags(c), s) else 0 
-            for (c, s) in zip(completions, solution)]
+    return [1 if exact_match_score(extract_answer_from_tags(c), s) else 0
+                      for (c, s) in zip(phase2_completions, solution)]
+
+
+def db_size_threshold(completions, **kwargs):
+    """Reward function that checks if the retrieved DB size is below a threshold."""
+    rewards = []
+    for comp in completions:
+        try:
+            triplets = comp.split("\n")
+            if ("\t" in triplets[0] and "\t" in triplets[0] #sanity check to ensure this is a db generation
+                and len(triplets) >= 100): 
+                reward = 1
+            else:
+                reward = 0
+        except Exception:
+            reward = 0  # If parsing fails, give zero reward, either malformed triplets or this is a phase2 completion
+        rewards.append(reward)
+    return rewards
 
 
 def process_example(example):
@@ -99,8 +117,8 @@ def main():
     # Load and process dataset
     print(f"Loading dataset: {script_args.dataset_name}")
 
-    train_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "train", limit = script_args.train_size)
-    test_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "eval", limit = script_args.eval_size)
+    train_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "train", limit = script_args.train_size, seed = 42)
+    test_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "eval", limit = script_args.eval_size, seed = 42)
     
     train_set = train_dataset.map(process_example)
     eval_set = test_dataset.map(process_example)
@@ -133,7 +151,7 @@ def main():
         retrieval_threshold = lmlm_args.retrieval_threshold,
         use_inverses = lmlm_args.use_inverses,
         model=script_args.model_path,
-        reward_funcs=em_accuracy,
+        reward_funcs=[em_accuracy, db_size_threshold],
         lmlm_database_path=script_args.database_path,
         adaptive_k=lmlm_args.adaptive_k,
         return_triples=lmlm_args.return_triples,
