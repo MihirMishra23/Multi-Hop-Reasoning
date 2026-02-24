@@ -124,12 +124,9 @@ def main(script_args, training_args, model_args, pretrain_args):
         return tokenized
 
     def tokenize_fn(example, max_length = 2048):
-        # old sft data stored the prompt and answer in the same field. This is hard to parse, so from now can have a seperate field for the prompt and answer. Ideally the old sft data should
-        # be done this way as well.
+        # old sft data stored the prompt and answer in the same field, under the format "Question:\n{prompt}\nAnswer:\n". This is hard to parse / does not generalize, 
+        # so from now can have a seperate field for the prompt and answer. Ideally the old sft data should be done this way as well.
         if "format_version" in example and example['format_version'] is not None: 
-            # print("format version: ", example['format_version'])
-            # if example['format_version'] is None:
-            #     print(example)
             assert(example['format_version'] == 1) # 1 is a dummy value
             prompt = example["prompt"]
             answer = example["answer"]
@@ -138,9 +135,6 @@ def main(script_args, training_args, model_args, pretrain_args):
             answer = example["annotated_text"].split("\nAnswer:\n")[1]
 
         # Tokenize separately
-        print("The prompt is :", prompt)
-        print("The answer is:", answer)
-        
         prompt_tokens = tokenizer(
             prompt,
             truncation=True,
