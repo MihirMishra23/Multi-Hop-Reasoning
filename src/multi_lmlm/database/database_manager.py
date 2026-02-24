@@ -3,10 +3,13 @@ import re
 import json
 import time
 import logging
+import torch
+import numpy as np
 from typing import Dict, List, Optional, Union
 from collections import Counter
 from datasets import DatasetDict
 from multi_lmlm.database.topk_retriever import TopkRetriever
+from sentence_transformers import SentenceTransformer
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -54,6 +57,69 @@ class DatabaseLookupError(Exception):
     @classmethod
     def get_failure_statistics(cls):
         return dict(cls.failure_statistics)
+    
+
+    
+def build_databases_from_triplets_batch(triplets_batch: list[list[tuple[str, str, str]]], top_k: int = 4, default_threshold: float = 0.6, adaptive: bool = False, use_inverses: bool = False, batch_size: int = 2048) -> list["DatabaseManager"]:
+    """Build multiple DatabaseManagers from a batch of triplet lists, computing embeddings once.
+
+    Args:
+        triplets_batch: List of triplet lists, one per example
+        top_k: Number of top results to retrieve
+        default_threshold: Similarity threshold for retrieval
+        adaptive: Whether to use adaptive threshold
+        use_inverses: Whether to include inverse relationships
+        batch_size: Batch size for embedding encoding
+
+    Returns:
+        List of DatabaseManager instances, one per input triplet list
+    """
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device=device)
+
+    # Flatten all triplets and compute embeddings at once
+    combined_triplets = [t for triplet_list in triplets_batch for t in triplet_list]
+
+    if not combined_triplets:
+        logger.warning("No triplets provided to build_databases_from_triplets_batch")
+        return [DatabaseManager() for _ in triplets_batch]
+
+    logger.info(f"Encoding {len(combined_triplets)} triplets from {len(triplets_batch)} examples in batch...")
+    texts = [f"{TopkRetriever._normalize_text(ent)} {TopkRetriever._normalize_text(rel)}" for ent, rel, _ in combined_triplets]
+    embeddings = embedding_model.encode(
+        texts,
+        batch_size=batch_size,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+        show_progress_bar=False
+    )
+
+    # Split embeddings back to per-example chunks
+    database_managers = []
+    start_idx = 0
+
+    for triplet_list in triplets_batch:
+        end_idx = start_idx + len(triplet_list)
+        example_embeddings = embeddings[start_idx:end_idx]
+
+        # Create DatabaseManager for this example
+        db_manager = DatabaseManager()
+        db_manager.build_database_from_triplets_with_embeddings(
+            triplets=triplet_list,
+            embeddings=example_embeddings,
+            top_k=top_k,
+            default_threshold=default_threshold,
+            adaptive=adaptive,
+            use_inverses=use_inverses,
+            embedding_model = embedding_model
+        )
+        database_managers.append(db_manager)
+
+        start_idx = end_idx
+
+    logger.info(f"Built {len(database_managers)} databases from batch")
+    return database_managers
+
 
 class DatabaseManager:
     def __init__(self):
@@ -87,6 +153,8 @@ class DatabaseManager:
             logger.info(f"Top-k retriever initialized with {len(self)} triplets and threshold {self.topk_retriever.default_threshold}.")
 
     def retrieve_from_database(self, prompt: str, threshold: Optional[float] = None, top_k : int  = 4, return_triplets : bool = False):
+        print("retrieving using prompt:", prompt)
+        print("current database triplets is:", self.database["triplets"])
         """Retrieve a single top-1 database result from a prompt containing dblookup. If lookup fails, raise an error."""
         pattern_lst = [
             r"\[dblookup\('((?:[^'\\]|\\.)+)',\s*'((?:[^'\\]|\\.)+)'\)\s*->",
@@ -115,6 +183,7 @@ class DatabaseManager:
                 f"[dblookup_fail_3] No retrieval results for entity='{entity}', relationship='{relationship}'",
                 "no_retrieval_data_found"
             )
+        print("retrieved resulst: ", results)
         return results
 
     def build_database(self, dataset: Union[DatasetDict, List[Dict]], database_name: Optional[str] = None, database_org_file: Optional[str] = None):
@@ -137,6 +206,45 @@ class DatabaseManager:
                 self.database["triplets"].add((entity, relationship, return_value))
 
         logger.info(f"Built database with {len(self)} triplets.")
+
+    def build_database_from_triplets(self, triplets : list[tuple[str,str,str]], top_k : int = 4, default_threshold : float = 0.6, adaptive : bool = False, use_inverses : bool = False ) -> None:
+        self.database["entities"] = [t[0] for t in triplets]
+        self.database["relationships"] = [t[1] for t in triplets]
+        self.database["return_values"] = [t[2] for t in triplets]
+        self.database["triplets"] = triplets
+        logger.info(f"Loaded database from triplets.")
+        self.init_topk_retriever(top_k=top_k, default_threshold=default_threshold, adaptive = adaptive, use_inverses = use_inverses)
+
+    def build_database_from_triplets_with_embeddings(self, triplets: list[tuple[str, str, str]], embeddings, top_k: int = 4, default_threshold: float = 0.6, adaptive: bool = False, use_inverses: bool = False, embedding_model : Optional[SentenceTransformer] = None) -> None:
+        """Build database from triplets with pre-computed embeddings.
+
+        Args:
+            triplets: List of (entity, relationship, value) tuples
+            embeddings: Pre-computed embeddings for the triplets
+            top_k: Number of top results to retrieve
+            default_threshold: Similarity threshold for retrieval
+            adaptive: Whether to use adaptive threshold
+            use_inverses: Whether to include inverse relationships
+        """
+        self.database["entities"] = [t[0] for t in triplets]
+        self.database["relationships"] = [t[1] for t in triplets]
+        self.database["return_values"] = [t[2] for t in triplets]
+        self.database["triplets"] = triplets
+        logger.info(f"Loaded database from {len(triplets)} triplets with precomputed embeddings.")
+
+        # Initialize TopkRetriever with precomputed embeddings
+        self.topk_retriever = TopkRetriever(
+            self.database["triplets"],
+            top_k=top_k,
+            threshold=default_threshold,
+            adaptive=adaptive,
+            use_inverses=use_inverses,
+            database_name=self.database_name,
+            use_hf_cache=False,
+            precomputed_embeddings=embeddings,
+            model = embedding_model,
+        )
+
 
     def load_database(self, load_path: str, top_k : int = 4, default_threshold : float = 0.6, adaptive : bool = False, use_inverses : bool = False):
         """Load database from JSON file."""
