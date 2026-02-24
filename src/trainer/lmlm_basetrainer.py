@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import datasets
-from multi_lmlm.database.database_manager import DatabaseManager, PerExampleRetriever
+from multi_lmlm.database.database_manager import DatabaseManager, PerExampleRetriever, build_databases_from_triplets_batch
 from multi_lmlm.constants import DB_START_TOKEN, DB_END_TOKEN, DB_RETRIEVE_TOKEN
 import pandas as pd
 import torch
@@ -307,9 +307,10 @@ class LMLMGRPOTrainer(BaseTrainer):
     ):
         #LMLM db initialization
         self.retrieval_threshold = retrieval_threshold
-        self.db = DatabaseManager()
-        self.db.load_database(lmlm_database_path, adaptive= adaptive_k, use_inverses = use_inverses)
+        self.use_inverses = use_inverses
+
         self.return_triples = return_triples
+        self.adaptive_k = adaptive_k
 
         # Two-phase mode: Phase 1 generates triplets from contexts, Phase 2 does QA with per-example DB
         self.two_phase = two_phase
@@ -319,8 +320,11 @@ class LMLMGRPOTrainer(BaseTrainer):
                 "data", "prompts", "database_creation.json"
             )
             with open(prompt_path) as f:
-                self._phase1_prompt_template = json.load(f)["default"]["prompt"]
+                self._phase1_prompt_template = json.load(f)["sft"]["prompt"]
             logger.info("Two-phase mode enabled: loaded Phase 1 prompt template from %s", prompt_path)
+        else:
+            self.db = DatabaseManager()
+            self.db.load_database(lmlm_database_path, adaptive= adaptive_k, use_inverses = use_inverses)
 
         # Args
         if args is None:
@@ -1712,13 +1716,13 @@ class LMLMGRPOTrainer(BaseTrainer):
             "Phase 1: generated %d completions", len(phase1_completions)
         )
 
-        # Parse triplets and build per-example DBs
-        per_example_dbs: list[PerExampleRetriever] = []
+        # Parse triplets from all examples
+        all_triplets = []
         total_triplets = 0
         for i, comp_text in enumerate(phase1_completions):
             triplets = parse_triplets(comp_text)
             total_triplets += len(triplets)
-            per_example_dbs.append(PerExampleRetriever(triplets))
+            all_triplets.append(triplets)
             # Log the actual triplets for debugging
             if triplets:
                 logger.info("Phase 1 example %d: %d triplets extracted", i, len(triplets))
@@ -1728,6 +1732,15 @@ class LMLMGRPOTrainer(BaseTrainer):
                     logger.info("  ... and %d more", len(triplets) - 10)
             else:
                 logger.info("Phase 1 example %d: 0 triplets (raw output: %.200s...)", i, comp_text)
+
+        # Build per-example DBs in batch (one embedding pass for all triplets)
+        per_example_dbs = build_databases_from_triplets_batch(
+            all_triplets,
+            top_k=self.top_k,
+            default_threshold=self.retrieval_threshold,
+            adaptive=self.adaptive_k,
+            use_inverses=self.use_inverses
+        )
         logger.info(
             "Phase 1: parsed %d total triplets across %d examples",
             total_triplets,
@@ -1770,29 +1783,29 @@ class LMLMGRPOTrainer(BaseTrainer):
             tool_call_count = 0
             tool_failure_count = 0
 
-        # Log Phase 1 stats + per-example retriever diagnostics
-        mode = "train" if self.model.training else "eval"
-        self._metrics[mode]["phase1/total_triplets"].append(total_triplets)
-        self._metrics[mode]["phase1/mean_triplets_per_example"].append(
-            total_triplets / max(len(per_example_dbs), 1)
-        )
-        # Aggregate fuzzy-match diagnostics across all per-example DBs
-        agg_exact = sum(db._exact_hits for db in per_example_dbs)
-        agg_fuzzy = sum(db._fuzzy_hits for db in per_example_dbs)
-        agg_miss = sum(db._misses for db in per_example_dbs)
-        agg_total = agg_exact + agg_fuzzy + agg_miss
-        self._metrics[mode]["phase2/retrieval_exact_hits"].append(agg_exact)
-        self._metrics[mode]["phase2/retrieval_fuzzy_hits"].append(agg_fuzzy)
-        self._metrics[mode]["phase2/retrieval_misses"].append(agg_miss)
-        if agg_total > 0:
-            self._metrics[mode]["phase2/retrieval_hit_rate"].append(
-                (agg_exact + agg_fuzzy) / agg_total
-            )
-        logger.info(
-            "Phase 2 retrieval stats: exact=%d, fuzzy=%d, miss=%d (hit rate=%.1f%%)",
-            agg_exact, agg_fuzzy, agg_miss,
-            100.0 * (agg_exact + agg_fuzzy) / max(agg_total, 1),
-        )
+        # # Log Phase 1 stats + per-example retriever diagnostics
+        # mode = "train" if self.model.training else "eval"
+        # self._metrics[mode]["phase1/total_triplets"].append(total_triplets)
+        # self._metrics[mode]["phase1/mean_triplets_per_example"].append(
+        #     total_triplets / max(len(per_example_dbs), 1)
+        # )
+        # # Aggregate fuzzy-match diagnostics across all per-example DBs
+        # agg_exact = sum(db._exact_hits for db in per_example_dbs)
+        # agg_fuzzy = sum(db._fuzzy_hits for db in per_example_dbs)
+        # agg_miss = sum(db._misses for db in per_example_dbs)
+        # agg_total = agg_exact + agg_fuzzy + agg_miss
+        # self._metrics[mode]["phase2/retrieval_exact_hits"].append(agg_exact)
+        # self._metrics[mode]["phase2/retrieval_fuzzy_hits"].append(agg_fuzzy)
+        # self._metrics[mode]["phase2/retrieval_misses"].append(agg_miss)
+        # if agg_total > 0:
+        #     self._metrics[mode]["phase2/retrieval_hit_rate"].append(
+        #         (agg_exact + agg_fuzzy) / agg_total
+        #     )
+        # logger.info(
+        #     "Phase 2 retrieval stats: exact=%d, fuzzy=%d, miss=%d (hit rate=%.1f%%)",
+        #     agg_exact, agg_fuzzy, agg_miss,
+        #     100.0 * (agg_exact + agg_fuzzy) / max(agg_total, 1),
+        # )
 
         return (
             prompt_ids,
