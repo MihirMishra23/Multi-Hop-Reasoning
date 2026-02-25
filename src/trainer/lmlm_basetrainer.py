@@ -1174,11 +1174,6 @@ class LMLMGRPOTrainer(BaseTrainer):
         device = self.accelerator.device
         mode = "train" if self.model.training else "eval"
 
-        print(f"[DEBUG _generate_single_turn] Received {len(prompts)} prompts")
-        print(f"[DEBUG _generate_single_turn] First 2 prompts (truncated):")
-        for i in range(min(2, len(prompts))):
-            p_str = str(prompts[i])[:200] if not is_conversational({"prompt": prompts[i]}) else str(prompts[i][0])[:200]
-            print(f"  [{i}]: {p_str}...")
 
         # Generate completions using either vLLM or regular generation
         if self.use_vllm:
@@ -1213,22 +1208,12 @@ class LMLMGRPOTrainer(BaseTrainer):
                 num_generations = self.num_generations if mode == "train" else self.num_generations_eval
 
                 if self.accelerator.is_main_process:
-                    print(f"[DEBUG] Total gathered prompts: {len(all_prompts)}")
-                    print(f"[DEBUG] First 2 gathered prompts (truncated):")
-                    for i in range(min(2, len(all_prompts))):
-                        p_str = str(all_prompts[i])[:200] if not is_conversational({"prompt": all_prompts[i]}) else str(all_prompts[i][0])[:200]
-                        print(f"  [{i}]: {p_str}...")
 
                     # Since 'prompts' contains 'num_generations' duplicates, we first take unique prompts, and generate
                     # num_generations outputs for each one. This is faster than generating outputs for each duplicate
                     # prompt individually.
                     ordered_set_of_prompts = all_prompts[::num_generations]
 
-                    print(f"[DEBUG] Deduplicated prompts: {len(ordered_set_of_prompts)}")
-                    print(f"[DEBUG] First 2 deduplicated prompts (truncated):")
-                    for i in range(min(2, len(ordered_set_of_prompts))):
-                        p_str = str(ordered_set_of_prompts[i])[:200] if not is_conversational({"prompt": ordered_set_of_prompts[i]}) else str(ordered_set_of_prompts[i][0])[:200]
-                        print(f"  [{i}]: {p_str}...")
 
                     sampling_params = {
                         "n": num_generations,
@@ -1264,9 +1249,6 @@ class LMLMGRPOTrainer(BaseTrainer):
                             else:
                                 output = self.vllm_client.generate(prompts=ordered_set_of_prompts, **sampling_params)
 
-                        print(f"[DEBUG] vLLM returned {len(output['completion_ids'])} completions")
-                        print(f"[DEBUG] First 2 completion_ids lengths: {[len(c) for c in output['completion_ids'][:2]]}")
-
                         # Extract required fields and collect any extra fields for reward functions
                         required_keys = {"prompt_ids", "completion_ids", "logprobs"}
                         extra_fields = {k: v for k, v in output.items() if k not in required_keys}
@@ -1282,21 +1264,16 @@ class LMLMGRPOTrainer(BaseTrainer):
                 # At this point, we only get 1 copy of each prompt, so we need to repeat them num_generations times
                 all_prompt_ids = [ids for ids in all_prompt_ids for _ in range(num_generations)]
 
-                print(f"[DEBUG] After repeating prompt_ids: {len(all_prompt_ids)} prompt_ids")
-                print(f"[DEBUG] Total completion_ids: {len(all_completion_ids)}")
-                print(f"[DEBUG] len(prompts) passed into _generate_single_turn: {len(prompts)}")
 
                 process_slice = slice(
                     self.accelerator.process_index * len(prompts),
                     (self.accelerator.process_index + 1) * len(prompts),
                 )
-                print(f"[DEBUG] process_slice: {process_slice}")
 
                 prompt_ids = all_prompt_ids[process_slice]
                 completion_ids = all_completion_ids[process_slice]
                 logprobs = all_logprobs[process_slice]
 
-                print(f"[DEBUG] After slicing: {len(prompt_ids)} prompt_ids, {len(completion_ids)} completion_ids")
 
                 # Slice extra fields dict-of-lists per process (extra fields are per-completion, like completion_ids)
                 extra_fields = {}
@@ -1308,11 +1285,6 @@ class LMLMGRPOTrainer(BaseTrainer):
 
             # Generate completions using colocated vLLM instances: each device holds vLLM copy and work on their own batch of prompts
             elif self.vllm_mode == "colocate":
-                print(f"[DEBUG colocate] Starting colocate mode with {len(prompts)} prompts")
-                print(f"[DEBUG colocate] First 2 prompts (truncated):")
-                for i in range(min(2, len(prompts))):
-                    p_str = str(prompts[i])[:200] if not is_conversational({"prompt": prompts[i]}) else str(prompts[i][0])[:200]
-                    print(f"  [{i}]: {p_str}...")
 
                 if self.rollout_func is not None:
                     rollout_prompts = prompts
@@ -1354,14 +1326,11 @@ class LMLMGRPOTrainer(BaseTrainer):
                     if self.vllm_tensor_parallel_size > 1:
                         # Gather prompts from all ranks in the TP group and flatten.
                         # Each rank starts with its own prompts; after gathering, all ranks see the full group set.
-                        print(f"[DEBUG colocate] Using tensor parallel mode with size {self.vllm_tensor_parallel_size}")
                         orig_size = len(prompts)
                         gathered_prompts = [None for _ in range(self.vllm_tensor_parallel_size)]
                         torch.distributed.all_gather_object(gathered_prompts, prompts, group=self.tp_group)
                         all_prompts = [p for sublist in gathered_prompts for p in sublist]
-                        print(f"[DEBUG colocate] After gathering: {len(all_prompts)} total prompts (orig_size={orig_size})")
                     else:
-                        print(f"[DEBUG colocate] NOT using tensor parallel mode")
                         all_prompts = prompts
 
                     if self.args.vllm_enable_sleep_mode:
@@ -1378,13 +1347,10 @@ class LMLMGRPOTrainer(BaseTrainer):
                                 chat_template=self.chat_template,
                             )
                         else:
-                            print("first 2 prompts right before vllm generate: ", all_prompts[:2])
                             all_outputs = self.llm.generate(
                                 all_prompts, sampling_params=sampling_params, use_tqdm=False
                             )
 
-                    print(f"[DEBUG colocate] vLLM returned {len(all_outputs)} RequestOutput objects")
-                    print(f"[DEBUG colocate] First 2 outputs.prompt (truncated):")
                     for i in range(min(2, len(all_outputs))):
                         prompt_str = all_outputs[i].prompt[:200] if all_outputs[i].prompt else "None"
                         print(f"  [{i}]: {prompt_str}...")
@@ -1397,11 +1363,8 @@ class LMLMGRPOTrainer(BaseTrainer):
                         for output in outputs.outputs
                     ]
 
-                    print(f"[DEBUG colocate] Extracted {len(all_prompt_ids)} prompt_ids and {len(all_completion_ids)} completion_ids")
-                    print(f"[DEBUG colocate] First 2 completion_ids lengths: {[len(c) for c in all_completion_ids[:2]]}")
 
                     # Decode and print the actual completion text
-                    print(f"[DEBUG colocate] First 2 completion texts:")
                     for i in range(min(2, len(all_completion_ids))):
                         completion_text = self.processing_class.decode(all_completion_ids[i], skip_special_tokens=False)
                         print(f"  [{i}]: {completion_text[:300]}...")
@@ -1411,16 +1374,13 @@ class LMLMGRPOTrainer(BaseTrainer):
                         # Each rank generates all outputs — we keep only our share.
                         local_rank_in_group = torch.distributed.get_rank(group=self.tp_group)
                         tp_slice = slice(local_rank_in_group * orig_size, (local_rank_in_group + 1) * orig_size)
-                        print(f"[DEBUG colocate] TP slicing: local_rank={local_rank_in_group}, orig_size={orig_size}, tp_slice={tp_slice}")
                         prompt_ids = all_prompt_ids[tp_slice]
                         completion_ids = all_completion_ids[tp_slice]
                         logprobs = all_logprobs[tp_slice]
-                        print(f"[DEBUG colocate] After TP slicing: {len(prompt_ids)} prompt_ids, {len(completion_ids)} completion_ids")
                     else:
                         prompt_ids = all_prompt_ids
                         completion_ids = all_completion_ids
                         logprobs = all_logprobs
-                        print(f"[DEBUG colocate] No TP slicing: {len(prompt_ids)} prompt_ids, {len(completion_ids)} completion_ids")
 
                     extra_fields = {}  # No extra fields for colocate mode
 
@@ -1755,21 +1715,12 @@ class LMLMGRPOTrainer(BaseTrainer):
         num_generations = self.num_generations if mode == "train" else self.num_generations_eval
 
 
-
-        print("Number of qa_prompts:", len(qa_prompts))
-        print("Number of contexts:", len(contexts))
-
-        print("the first 2 contexts are :", contexts[:2])
-        print("The first 2 questions are :", qa_prompts[:2])
-
         # ===== Phase 1: Generate triplets from contexts =====
         phase1_prompts = [
             self._phase1_prompt_template.format(context="\n\n".join(ctx_list))
             for ctx_list in contexts
         ]
 
-        print(f"[DEBUG _generate_two_phase] Created {len(phase1_prompts)} phase1_prompts")
-        print(f"[DEBUG _generate_two_phase] First 2 phase1_prompts (truncated to 200 chars):")
         for i in range(min(2, len(phase1_prompts))):
             print(f"  [{i}]: {phase1_prompts[i][:200]}...")
 
@@ -1780,13 +1731,11 @@ class LMLMGRPOTrainer(BaseTrainer):
             extra_fields,
         ) = self._generate_single_turn(phase1_prompts)
 
-        print(f"[DEBUG _generate_two_phase] After _generate_single_turn: got {len(phase1_completion_ids)} completion_ids")
-        print(f"[DEBUG _generate_two_phase] First 2 completion_ids lengths: {[len(c) for c in phase1_completion_ids[:2]]}")
 
         phase1_completions = self.processing_class.batch_decode(
             phase1_completion_ids, skip_special_tokens=False
         )
-        print(f"The first 2 phase1_completions is :", phase1_completions[:2])
+
 
         logger.info(
             "Phase 1: generated %d completions", len(phase1_completions)
@@ -1822,26 +1771,12 @@ class LMLMGRPOTrainer(BaseTrainer):
             use_inverses=self.use_inverses
         )
 
-        print("The first 2 db triplets from build_database_from_triplets_batch is", [db.database["triplets"] for db in per_example_dbs[:2]])
         logger.info(
             "Phase 1: parsed %d total triplets across %d examples",
             total_triplets,
             len(per_example_dbs),
         )
 
-        logger.info("="*80)
-        logger.info("PHASE 1 RESULTS: Questions with extracted databases (showing first 5)")
-        for i, (question, triplets) in enumerate(zip(qa_prompts[:5], all_triplets[:5])):
-            logger.info(f"\nExample {i}:")
-            logger.info(f"  Question: {question[:200]}")
-            logger.info(f"  Database size: {len(triplets)} triplets")
-            logger.info(f"  Full prompt provided: {phase1_prompts[i]}")
-            if triplets:
-                for ent, rel, val in triplets:
-                    logger.info(f"    ({ent}, {rel}, {val})")
-            else:
-                logger.info(f"    (no triplets extracted)")
-        logger.info("="*80)
 
         # ===== Phase 2: QA with per-example DB lookups =====
         (
