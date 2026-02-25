@@ -70,22 +70,43 @@ def extract_answer_from_tags(text: str):
 def em_accuracy(completions, solution, **kwargs):
     """Calculate exact match accuracy for completions."""
     return [1 if exact_match_score(extract_answer_from_tags(c), s) else 0
-                      for (c, s) in zip(phase2_completions, solution)]
+                      for (c, s) in zip(completions, solution)]
 
 
 def db_size_threshold(completions, **kwargs):
-    """Reward function that checks if the retrieved DB size is below a threshold."""
+    """Reward function that checks if triplet to context character ratio is above 0.017."""
     rewards = []
-    for comp in completions:
+    contexts = kwargs.get("contexts", [])
+    for i, comp in enumerate(completions):
         try:
             triplets = comp.split("\n")
-            if ("\t" in triplets[0] and "\t" in triplets[0] #sanity check to ensure this is a db generation
-                and len(triplets) >= 100): 
-                reward = 1
+            # Sanity check to ensure this is a db generation (Phase 1)
+            if "\t" in triplets[0] and "\t" in triplets[1]:
+                # Count number of triplets (non-empty lines with tabs)
+                num_triplets = sum(1 for t in triplets if "\t" in t)
+
+                # Calculate context character count
+                if i < len(contexts):
+                    context = contexts[i]
+                    # If context is a list of strings, join them
+                    if isinstance(context, list):
+                        context_str = "\n\n".join(context)
+                    else:
+                        context_str = str(context)
+                    context_chars = len(context_str)
+
+                    # Calculate ratio and assign reward
+                    if context_chars > 0:
+                        ratio = num_triplets / context_chars
+                        reward = 1 if ratio > 0.017 else 0
+                    else:
+                        reward = 0
+                else:
+                    reward = 0  # No context available
             else:
-                reward = 0
+                reward = 0  # Phase 2 completion or malformed
         except Exception:
-            reward = 0  # If parsing fails, give zero reward, either malformed triplets or this is a phase2 completion
+            reward = 0  # If parsing fails
         rewards.append(reward)
     return rewards
 
