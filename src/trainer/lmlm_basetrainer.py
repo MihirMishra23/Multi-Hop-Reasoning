@@ -623,6 +623,8 @@ class LMLMGRPOTrainer(BaseTrainer):
             "completion": deque(maxlen=args.generation_batch_size),
             "rewards": defaultdict(lambda: deque(maxlen=args.generation_batch_size)),
             "advantages": deque(maxlen=args.generation_batch_size),
+            "context": deque(maxlen=args.generation_batch_size),
+            "generated_db": deque(maxlen=args.generation_batch_size),
         }
 
         # Ensure each process receives a unique seed to prevent duplicate completions when generating with
@@ -1793,12 +1795,23 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Parse triplets from all examples
         all_triplets = []
         total_triplets = 0
+        context_lengths = []
         for i, comp_text in enumerate(phase1_completions):
             triplets = parse_triplets(comp_text)
             total_triplets += len(triplets)
             all_triplets.append(triplets)
 
-        print(f"The first 2 triplets in all_triplets is :", all_triplets[:2])
+            # Calculate context length for this example
+            context_length = sum(len(ctx) for ctx in contexts[i])
+            context_lengths.append(context_length)
+
+
+        # Log triplet to context ratio
+        # print(f"[DEBUG] Triplet to context character ratio for first 5 examples:")
+        # for i in range(min(5, len(all_triplets))):
+        #     ratio = len(all_triplets[i]) / context_lengths[i] if context_lengths[i] > 0 else 0
+        #     print(f"  Example {i}: {len(all_triplets[i])} triplets / {context_lengths[i]} chars = {ratio:.6f} triplets/char")
+        #     print(f"    (Context has {len(contexts[i])} paragraphs)")
 
         # Build per-example DBs in batch (one embedding pass for all triplets)
         per_example_dbs = build_databases_from_triplets_batch(
@@ -1889,6 +1902,11 @@ class LMLMGRPOTrainer(BaseTrainer):
         #     agg_exact, agg_fuzzy, agg_miss,
         #     100.0 * (agg_exact + agg_fuzzy) / max(agg_total, 1),
         # )
+
+        # Store contexts and triplets for logging
+        # Store as formatted strings that can be logged to wandb tables
+        self._current_contexts = ["\n\n".join(ctx_list) for ctx_list in contexts]
+        self._current_triplets = [str(triplets) for triplets in all_triplets]
 
         # Combine Phase 1 and Phase 2 outputs
         # Phase 1 entries have tool_mask with all 1s (all tokens are model-generated)
@@ -2259,6 +2277,19 @@ class LMLMGRPOTrainer(BaseTrainer):
             self._logs["rewards"][name].extend(rewards_per_func[:, i].tolist())
         self._logs["advantages"].extend(all_process_advantages.tolist())
 
+        # Log contexts and generated DBs (for two-phase generation)
+        if hasattr(self, '_current_contexts') and hasattr(self, '_current_triplets'):
+            # For two-phase generation, we have Phase 1 + Phase 2 entries
+            # Duplicate contexts and triplets for both phases
+            contexts_to_log = self._current_contexts + self._current_contexts
+            triplets_to_log = self._current_triplets + self._current_triplets
+            self._logs["context"].extend(gather_object(contexts_to_log))
+            self._logs["generated_db"].extend(gather_object(triplets_to_log))
+        else:
+            # For single-phase generation, log empty strings
+            self._logs["context"].extend([""] * len(prompts_text))
+            self._logs["generated_db"].extend([""] * len(prompts_text))
+
         if self.use_vllm and self.vllm_importance_sampling_correction:
             delta = torch.abs(old_per_token_logps - sampling_per_token_logps)
             mask = completion_mask.bool() if not self.tools else (completion_mask * tool_mask).bool()
@@ -2581,6 +2612,8 @@ class LMLMGRPOTrainer(BaseTrainer):
                 "step": [str(self.state.global_step)] * len(self._logs["prompt"]),
                 "prompt": self._logs["prompt"],
                 "completion": self._logs["completion"],
+                "context": self._logs["context"],
+                "generated_db": self._logs["generated_db"],
                 **self._logs["rewards"],
                 "advantage": self._logs["advantages"],
             }
