@@ -2026,8 +2026,8 @@ class LMLMGRPOTrainer(BaseTrainer):
             prompts = [x["prompt"] for x in inputs]
 
         print("\n\n\n")
-        print("Prompts is: ", p[:50] for p in prompts)
-        print("completions is: ", c[:50] for c in completions )
+        print("Prompts is: ", [p[:50] for p in prompts])
+        print("completions is: ", [c[:50] for c in completions ])
 
         assert len(inputs) == len(completions), f"Mismatch: {len(inputs)} inputs vs {len(completions)} completions"
         assert len(prompt_ids_list) == len(completions), f"Mismatch: {len(prompt_ids_list)} prompt_ids vs {len(completions)} completions"
