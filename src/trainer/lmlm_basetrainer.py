@@ -1088,7 +1088,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             inputs = self._generate_and_score_completions(generation_batch)
         return inputs
 
-    @profiling_decorator
+    @profiling_decorator    
     def _calculate_rewards(self, inputs, prompts, completions, completion_ids_list):
         device = self.accelerator.device
         rewards_per_func = torch.zeros(len(completions), len(self.reward_funcs), device=device)
@@ -1168,6 +1168,14 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Gather the reward per function: this part is crucial, because the rewards are normalized per group and the
         # completions may be distributed across processes
         rewards_per_func = gather(rewards_per_func)
+        print("Rewards shape is :" , rewards_per_func.shape)
+        print("rewards is :" , rewards_per_func)
+        if self.two_phase:
+            n = rewards_per_func.shape[0]
+            half = n // 2
+            rewards_per_func[:half, 1] = 0.9 * rewards_per_func[:half, 1] + 0.1 * rewards_per_func[half:, 0]
+
+        print("after the stuff the rewards is : ", rewards_per_func)
         return rewards_per_func
 
     def _generate_single_turn(self, prompts: list):
@@ -1989,13 +1997,19 @@ class LMLMGRPOTrainer(BaseTrainer):
     ) -> dict[str, torch.Tensor | Any]:
         device = self.accelerator.device
         mode = "train" if self.model.training else "eval"
+        print("First 4 inputs are: ", inputs[:4])
 
         prompts = [x["prompt"] for x in inputs]
 
         # Extract contexts for two-phase mode (may be absent for single-phase)
         contexts = None
         if self.two_phase:
+            def modify_input(x):
+                y = copy.deepcopy(x)
+                y["prompt"] = self._phase1_prompt_template.format(context="\n\n".join(y.get("contexts", [])))
+                return y
             contexts = [x.get("contexts", []) for x in inputs]
+            inputs = inputs + [modify_input(x) for x in inputs]
 
         (
             prompt_ids_list,
@@ -2007,12 +2021,16 @@ class LMLMGRPOTrainer(BaseTrainer):
             extra_fields,
         ) = self._generate(prompts, contexts=contexts)
 
-        if self.two_phase and len(completions) > len(prompts):
-            prompts = prompts + prompts
-            inputs = inputs + inputs
+        if self.two_phase:
+            #This seems odd, but basically we only pass the phase 2 prompts into the generate function, and inside the loop this creates both prompts.
+            prompts = [x["prompt"] for x in inputs]
+
+        print("\n\n\n")
+        print("Prompts is: ", p[:50] for p in prompts)
+        print("completions is: ", c[:50] for c in completions )
 
         assert len(inputs) == len(completions), f"Mismatch: {len(inputs)} inputs vs {len(completions)} completions"
-        assert len(prompts) == len(completions), f"Mismatch: {len(prompts)} prompts vs {len(completions)} completions"
+        assert len(prompt_ids_list) == len(completions), f"Mismatch: {len(prompt_ids_list)} prompt_ids vs {len(completions)} completions"
 
         # Convert lists of token IDs to padded tensors
         prompt_ids = [torch.tensor(ids, device=device) for ids in prompt_ids_list]
