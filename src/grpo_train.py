@@ -98,7 +98,8 @@ def db_size_threshold(completions, **kwargs):
                     # Calculate ratio and assign reward
                     if context_chars > 0:
                         ratio = num_triplets / context_chars
-                        reward = 1 if ratio > 0.017 else 0
+                        print(f"DEBUG: Example {i} - Num Triplets: {num_triplets}, Context Chars: {context_chars}, Ratio: {ratio:.4f}")
+                        reward = 1 if ratio > 0.01 else 0
                     else:
                         reward = 0
                 else:
