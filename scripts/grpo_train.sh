@@ -245,6 +245,7 @@ fi
 BASENAME="${MODEL_PATH##*/}"
 THRESHOLD="${BASENAME##*_th}"
 
+# NOTE: this is a hack to make the model path compatible with the old format
 if [ "${THRESHOLD}" = "-3" ]; then
     RETURN_TRIPLES="--return_triples"
     echo "RETURN_TRIPLES: ${RETURN_TRIPLES}"

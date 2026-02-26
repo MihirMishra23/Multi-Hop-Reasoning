@@ -84,6 +84,7 @@ elif [ "${MODEL_SIZE}" = "382M" ]; then
     PER_DEVICE_TRAIN_BATCH_SIZE=48
     GRADIENT_ACCUMULATION_STEPS=1
     MAX_SEQ_LENGTH=1024
+    NUM_TRAIN_EPOCHS=10
 
 else
     echo "Invalid model size: ${MODEL_SIZE}"
@@ -114,7 +115,50 @@ elif [ "${DATASET}" = "2wiki" ]; then
     exit 1
 elif [ "${DATASET}" = "mquake" ]; then
     if [ "${THRESHOLD}" = "1.0" ]; then
+    # BUG: train overlap with test set
         DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/mquake-remastered_rollouts_train_th_1.0_len_5258.json"
+    else
+        echo "Invalid threshold: ${THRESHOLD}"
+        exit 1
+    fi
+elif [ "${DATASET}" = "mquake-real" ]; then
+    if [ "${THRESHOLD}" = "1.0" ]; then
+        DATASET_PATH=/share/j_sun/lz586/lmlm_multihop/sft_data/REAL_q3000.json
+    else
+        echo "Invalid threshold: ${THRESHOLD}"
+        exit 1
+    fi
+elif [ "${DATASET}" = "mquake-cf" ]; then
+    if [ "${THRESHOLD}" = "1.0" ]; then
+        DATASET_PATH=/share/j_sun/lz586/lmlm_multihop/sft_data/CF_q300_r10.json
+    else
+        echo "Invalid threshold: ${THRESHOLD}"
+        exit 1
+    fi
+elif [ "${DATASET}" = "mquake-real5334-r1" ]; then
+    if [ "${THRESHOLD}" = "1.0" ]; then
+        DATASET_PATH=/share/j_sun/lz586/lmlm_multihop/sft_data/REAL-q6334-r1_REAL_q5334_n5334.json
+    else
+        echo "Invalid threshold: ${THRESHOLD}"
+        exit 1
+    fi
+elif [ "${DATASET}" = "mquake-cf5334-r1" ]; then
+    if [ "${THRESHOLD}" = "1.0" ]; then
+        DATASET_PATH=/share/j_sun/lz586/lmlm_multihop/sft_data/CF-q6334-r10_CF_q5334_r1_n5334.json
+    else
+        echo "Invalid threshold: ${THRESHOLD}"
+        exit 1
+    fi
+elif [ "${DATASET}" = "mquake-cf5334-r10" ]; then
+    if [ "${THRESHOLD}" = "1.0" ]; then
+        DATASET_PATH=/share/j_sun/lz586/lmlm_multihop/sft_data/CF-q6334-r10_CF_q5334_r10_n5334.json
+    else
+        echo "Invalid threshold: ${THRESHOLD}"
+        exit 1
+    fi
+elif [ "${DATASET}" = "mquake-cfall-r10" ]; then
+    if [ "${THRESHOLD}" = "1.0" ]; then
+        DATASET_PATH=/share/j_sun/lz586/lmlm_multihop/sft_data/CF-q6334-r10_CF_q5334_r10_n48602.json
     else
         echo "Invalid threshold: ${THRESHOLD}"
         exit 1

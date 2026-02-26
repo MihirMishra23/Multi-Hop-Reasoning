@@ -145,8 +145,7 @@ class DatabaseManager:
             f"{len(self.database['return_values'])} return values."
         )
 
-    def init_topk_retriever(self, model_name="sentence-transformers/all-MiniLM-L6-v2", top_k=None, default_threshold=0.6, adaptive : bool = False, use_inverses : bool = False):
-
+    def init_topk_retriever(self, model_name="sentence-transformers/all-MiniLM-L6-v2", top_k=1, default_threshold=0.6, adaptive : bool = False, use_inverses : bool = False):
         if self.topk_retriever is None:
             self.topk_retriever = TopkRetriever(
                 self.database["triplets"], model_name, top_k, adaptive, default_threshold, database_name=self.database_name, use_hf_cache = False, use_inverses = use_inverses
@@ -184,6 +183,7 @@ class DatabaseManager:
             )
        
         entity, relationship = matches.pop()
+        # BUG: top_k is not used
         results = self.topk_retriever.retrieve_top_k(entity, relationship, threshold=threshold, return_triplets = return_triplets)
 
         if not results:

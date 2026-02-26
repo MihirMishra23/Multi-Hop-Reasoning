@@ -31,7 +31,7 @@ from datetime import datetime
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 from constants import REPO_ROOT
-
+import warnings
 import torch
 
 from agent import get_agent, Agent
@@ -172,7 +172,7 @@ def process_single_batch(
     examples_metadata = []
 
     for ex in ds:
-        qid = ex.get("id") or ex.get("_id")
+        qid = ex.get("id") or ex.get("_id") or ex.get("case_id")
         question = ex["question"]
         contexts = ex.get("contexts") or []
         # two_phase was trained on golden_contexts (2 supporting paragraphs), not all 10
@@ -181,13 +181,18 @@ def process_single_batch(
             contexts = ex.get("golden_contexts") or contexts
 
         queries.append(question)
-        examples_metadata.append({
+        
+        metadata_entry = {
             "qid": qid,
             "question": question,
             "answers": ex["answers"],
-            "supporting_facts": ex["supporting_facts"],
+            "supporting_facts": ex.get("supporting_facts"),
             "contexts": contexts,
-        })
+        }
+        # For MQuAKE, also capture new_answers for knowledge editing evaluation
+        if "new_answers" in ex:
+            metadata_entry["new_answers"] = ex["new_answers"]
+        examples_metadata.append(metadata_entry)
 
     logger.info(f"Processing batch of {len(queries)} queries")
 
@@ -262,6 +267,9 @@ def process_single_batch(
             "question": metadata["question"],
             "trace": serialized_trace,
         }
+        # For MQuAKE, also save new_gold_answer for knowledge editing evaluation
+        if "new_answers" in metadata:
+            results[str(metadata["qid"])]["new_gold_answer"] = metadata["new_answers"]
         if args.method == "lmlm":
             lookup_logs = getattr(agent, "_lookup_logs", [])
             if idx < len(lookup_logs):
@@ -350,7 +358,7 @@ def save_results_to_file(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run agent over a dataset and save predictions.")
-    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki"], help="Dataset name")
+    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki", "mquake", "mquake-remastered"], help="Dataset name")
     parser.add_argument(
         "--setting",
         default="distractor",
@@ -362,6 +370,11 @@ def main() -> None:
         default="dev",
         choices=["train", "dev", "validation", "test"],
         help="Dataset split",
+    )
+    parser.add_argument(
+        "--sub-split",
+        default=None,
+        help="Sub split of the dataset",
     )
     parser.add_argument(
         "--method",
@@ -390,7 +403,6 @@ def main() -> None:
     parser.add_argument(
         "--top-k",
         default=4,
-        type = int,
         help="Maximum number of results to retrieve from database",
     )
     parser.add_argument(
@@ -483,6 +495,12 @@ def main() -> None:
             "max_completion_length, and vllm_max_model_length from the checkpoint's "
             "training_args.json instead of CLI defaults."
         ),
+    )
+    parser.add_argument(
+        "--answer-type",
+        default="answer",
+        choices=["answer", "new_answer"],
+        help="For MQuAKE: 'answer' for original answers, 'new_answer' for edited answers",
     )
     args = parser.parse_args()
 
@@ -606,8 +624,19 @@ def main() -> None:
     print("split is :", args.split)
 
     # Load full dataset once (with seed for deterministic shuffling)
-    full_dataset = get_dataset(name = args.dataset, setting = args.setting, split =  args.split, seed=args.seed)
+    # BUG: either use start_index or sub_split, not both
+    # if start_index is used, sub_split should be None
+    if args.start_index is not None:
+        sub_split = None
+        if args.sub_split is not None:
+            warnings.warn("start_index is used, sub_split will be ignored during dataset loading")
+    else:
+        sub_split = args.sub_split
+
+    full_dataset = get_dataset(name = args.dataset, setting = args.setting, split =  args.split, sub_split = sub_split, seed=args.seed)
     total_dataset_size = len(full_dataset)
+
+    print(f"examples in dataset: {full_dataset[0]}")
 
     # Validate start_index
     if args.start_index >= total_dataset_size:
@@ -629,7 +658,8 @@ def main() -> None:
         model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
         output_dir = os.path.join(base_output_dir, args.method, args.dataset, model_name)
         use_inv_str = "_inv" if args.use_inverses else ""
-        save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}.json"
+        answer_type_str = "_edit" if args.answer_type == "new_answer" else ""
+        save_postfix = f"{args.dataset}_{args.sub_split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}{answer_type_str}.json"
         save_path = os.path.join(output_dir, f"generations{args.save_version}", f"eval_{save_postfix}")
         save_results_path = os.path.join(output_dir, f"results{args.save_version}", f"results_{save_postfix}")
     else:
@@ -668,6 +698,7 @@ def main() -> None:
                         setting=args.setting,
                         split=args.split,
                         source='hf',
+                        answer_type=args.answer_type,
                     )
                     logger.info(f"Evaluation results: {json.dumps(results, indent=2)}")
 
@@ -765,6 +796,7 @@ def main() -> None:
             setting=args.setting,
             split=args.split,
             source='hf',
+            answer_type=args.answer_type,
         )
         logging.info(f"Evaluation results: {json.dumps(results, indent=2)}")
 

@@ -1,8 +1,14 @@
 from datasets import load_dataset, concatenate_datasets
+import random
 
 def _rename_question(example):
-    example["question"] = example["questions"]
+    example["question"] = random.choice(example["questions"])
+    # Original answers (for evaluating with original database)
     example["answers"] = [example["answer"]] + example["answer_alias"]
+    # New answers (for evaluating with edited database)
+    example["new_answers"] = [example["new_answer"]] + example["new_answer_alias"]
+    # BUG: to solve the database contamination issue, we need to set the new_answers according to the edit tag
+    # but we've already done _filter_example
     return example
 
 
@@ -11,7 +17,7 @@ def _filter_example(example):
     return 'train_edited' in labels or 'test_edited' in labels 
 
 
-def load_mquake(split : str, limit : int,  seed : int = 42):
+def load_mquake(split : str, limit : int, sub_split : str, seed : int = 42):
     raw_dataset = load_dataset("henryzhongsc/MQuAKE-Remastered", split = "CF6334") #Fixed constant split
 
     no_conflict_6334_subset  = raw_dataset.filter(_filter_example)

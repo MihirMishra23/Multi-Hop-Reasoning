@@ -49,7 +49,7 @@ class LMLMAgent(Agent):
         self.return_triplets = return_triplets
 
         self.db = DatabaseManager()
-        self.db.load_database(database_path, adaptive= adaptive, use_inverses = use_inverses, top_k = self.top_k)
+        self.db.load_database(database_path, top_k=top_k, default_threshold=similarity_threshold, adaptive=adaptive, use_inverses=use_inverses, top_k = self.top_k)
         self.device ="cuda" if torch.cuda.is_available() else "cpu"
         self.tok = AutoTokenizer.from_pretrained(model_path)
 

@@ -88,47 +88,95 @@ done
 
 
 if [ "${DATASET}" = "hotpotqa" ]; then
-    if [ "${SPLIT}" = "dev" ]; then
+    if [ "${SUB_SPLIT}" = "dev" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
-    elif [ "${SPLIT}" = "debug_dev" ]; then
+        SPLIT="dev"
+    elif [ "${SUB_SPLIT}" = "dev-debug" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/generated_database_validation_42_1000.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
         SPLIT="dev"
-    elif [ "${SPLIT}" = "train_val100" ]; then
+    elif [ "${SUB_SPLIT}" = "train-val100" ]; then
         echo "Using eval set from GRPO"
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
         DEFAULT_NUM_SAMPLES=100
         START_IDX=90347
         SPLIT="train"
-    elif [ "${SPLIT}" = "train_val1k" ]; then
+    elif [ "${SUB_SPLIT}" = "train-val1k" ]; then
         echo "Using train set from GRPO"
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=82347
         SPLIT="train"
-    elif [ "${SPLIT}" = "train_train1k" ]; then
+    elif [ "${SUB_SPLIT}" = "train-val1k-debug" ]; then
+        echo "Using train set from GRPO"
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_all_context_exp_prompt.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=82347
+        SPLIT="train"
+    elif [ "${SUB_SPLIT}" = "train_train1k" ]; then
         echo "Using train set from GRPO"
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=89347
         SPLIT="train"
     else
-        echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
+        echo "Error: SUB_SPLIT must be either 'train' or 'dev', got '${SUB_SPLIT}'"
         exit 1
     fi
 elif [ "${DATASET}" = "musique" ]; then
-    if [ "${SPLIT}" = "dev" ]; then
+    if [ "${SUB_SPLIT}" = "dev" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/musique_validation_42_1000_all_context_database.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
-    elif [ "${SPLIT}" = "train" ]; then
+        SPLIT="dev"
+    elif [ "${SUB_SPLIT}" = "train" ]; then
         echo "There is no train database made for musique"
         exit 1
     else
-        echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
+        echo "Error: SUB_SPLIT must be either 'train' or 'dev', got '${SUB_SPLIT}'"
+        exit 1
+    fi
+elif [ "${DATASET}" = "mquake" ] || [ "${DATASET}" = "mquake-remastered" ]; then
+    if [ "${SUB_SPLIT}" = "eval-edit" ]; then
+        # Evaluate with edited database against new_answer
+        # edited gt database
+        DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-new-database-multi-hop.json"
+        # DATABASE_PATH=/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-eval1k-gt-new-database-multi-hop.json
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+        SPLIT="test"
+        ANSWER_TYPE="new_answer"
+    elif [ "${SUB_SPLIT}" = "eval-edit-new" ]; then
+        # Evaluate with edited database against new_answer
+        # edited gt database
+        DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-edit-database-multi-hop.json"
+        # DATABASE_PATH=/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-eval1k-gt-new-database-multi-hop.json
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+        SPLIT="test"
+        ANSWER_TYPE="new_answer"
+    elif [ "${SUB_SPLIT}" = "eval-original" ]; then
+        # Evaluate with original database against original answer
+        # gt database
+        DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-org-database-multi-hop.json"
+        # DATABASE_PATH=/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-eval1k-gt-orig-database-multi-hop.json
+        # DATABASE_PATH="/share/j_sun/lmlm_multihop/database/mquake-remastered/mquake_remastered_cf6334_database.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+        SPLIT="test"
+        ANSWER_TYPE="answer"
+    elif [ "${SUB_SPLIT}" = "train" ]; then
+        # DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/mquake_remastered_cf6334_database.json"
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/mquake-remastered/mquake_remastered_cf6334_database.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+        SPLIT="train"
+        ANSWER_TYPE="answer"
+    else
+        echo "Error: SUB_SPLIT must be 'eval-edit', 'eval-original', or 'train' for mquake, got '${SUB_SPLIT}'"
         exit 1
     fi
 elif [ "${DATASET}" = "two_wiki" ] || [ "${DATASET}" = "2wiki" ]; then
@@ -159,11 +207,14 @@ SETTING=distractor
 SAVE_EVERY=64
 SEED=42
 
-
-if [[ "${MODEL_PATH}" == *"-nak"* ]]; then
+# BUG: SFT model does not support adaptive k
+if [[ "${MODEL_PATH}" == *"-nak"* || "${MODEL_PATH}" != *"grpo"* ]]; then
     ADAPTIVE_K=""
+    TOP_K=1
 else
+    # GRPO model. consistent with training
     ADAPTIVE_K="--adaptive-k"
+    TOP_K=4
 fi
 
 if [ -n "${USE_INVERSES}" ]; then
