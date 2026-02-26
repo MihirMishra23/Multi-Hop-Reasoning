@@ -5,7 +5,7 @@ from trainer.lmlm_basetrainer import LMLMGRPOTrainer
 from transformers import AutoTokenizer, HfArgumentParser
 from eval.metrics import exact_match_score
 from trl.trainer.grpo_config import GRPOConfig
-from multi_lmlm.constants import ANSWER_START_TOKEN, ANSWER_END_TOKEN
+from multi_lmlm.constants import ANSWER_START_TOKEN, ANSWER_END_TOKEN, THINKING_START_TOKEN
 import wandb
 import os
 from data import get_dataset
@@ -69,9 +69,15 @@ def extract_answer_from_tags(text: str):
 
 def em_accuracy(completions, solution, **kwargs):
     """Calculate exact match accuracy for completions."""
-    return [1 if exact_match_score(extract_answer_from_tags(c), s) else 0
-                      for (c, s) in zip(completions, solution)]
-
+    results = []
+    for c, s in zip(completions, solution):
+        extracted = extract_answer_from_tags(c)
+        # Return None if answer extraction failed (empty string)
+        if extracted == "" and THINKING_START_TOKEN not in c:
+            results.append(None)
+        else:
+            results.append(1 if exact_match_score(extracted, s) else 0)
+    return results
 
 def db_size_threshold(completions, **kwargs):
     """Reward function that checks if triplet to context character ratio is above 0.017."""
@@ -101,13 +107,13 @@ def db_size_threshold(completions, **kwargs):
                         print(f"DEBUG: Example {i} - Num Triplets: {num_triplets}, Context Chars: {context_chars}, Ratio: {ratio:.4f}")
                         reward = 1 if ratio > 0.01 else 0
                     else:
-                        reward = 0
+                        reward = 0  
                 else:
-                    reward = 0  # No context available
+                    reward = None  # Return None instead of 0 - no context available
             else:
-                reward = 0  # Phase 2 completion or malformed
+                reward = None  # Return None instead of 0 - Phase 2 completion or malformed
         except Exception:
-            reward = 0  # If parsing fails
+            reward = None  # Return None instead of 0 - if parsing fails
         rewards.append(reward)
     return rewards
 
@@ -116,7 +122,7 @@ def process_example(example):
     """Process HotpotQA example into prompt-solution format."""
     return {
         "prompt": f"Question:\n{example['question']}\nAnswer:\n",
-        "contexts": example.get("contexts", []),
+        "contexts": example.get("golden_contexts", []),
         "solution": example["answers"][0]
     }
 

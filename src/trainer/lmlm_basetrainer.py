@@ -618,13 +618,15 @@ class LMLMGRPOTrainer(BaseTrainer):
         self.log_unique_prompts = args.log_unique_prompts
         self.num_completions_to_print = args.num_completions_to_print
         # Keep logs sized to the generation batch to record only outputs from the latest model update.
+        # In two-phase mode, we generate 2x completions (Phase 1 + Phase 2), so double the maxlen
+        log_maxlen = args.generation_batch_size * (2 if self.two_phase else 1)
         self._logs = {
-            "prompt": deque(maxlen=args.generation_batch_size),
-            "completion": deque(maxlen=args.generation_batch_size),
-            "rewards": defaultdict(lambda: deque(maxlen=args.generation_batch_size)),
-            "advantages": deque(maxlen=args.generation_batch_size),
-            "context": deque(maxlen=args.generation_batch_size),
-            "generated_db": deque(maxlen=args.generation_batch_size),
+            "prompt": deque(maxlen=log_maxlen),
+            "completion": deque(maxlen=log_maxlen),
+            "rewards": defaultdict(lambda: deque(maxlen=log_maxlen)),
+            "advantages": deque(maxlen=log_maxlen),
+            "context": deque(maxlen=log_maxlen),
+            "generated_db": deque(maxlen=log_maxlen),
         }
 
         # Ensure each process receives a unique seed to prevent duplicate completions when generating with
