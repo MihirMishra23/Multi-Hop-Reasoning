@@ -620,14 +620,29 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Keep logs sized to the generation batch to record only outputs from the latest model update.
         # In two-phase mode, we generate 2x completions (Phase 1 + Phase 2), so double the maxlen
         log_maxlen = args.generation_batch_size * (2 if self.two_phase else 1)
-        self._logs = {
-            "prompt": deque(maxlen=log_maxlen),
-            "completion": deque(maxlen=log_maxlen),
-            "rewards": defaultdict(lambda: deque(maxlen=log_maxlen)),
-            "advantages": deque(maxlen=log_maxlen),
-            "context": deque(maxlen=log_maxlen),
-            "generated_db": deque(maxlen=log_maxlen),
-        }
+        if self.two_phase:
+            self._logs = {
+                "phase1_prompt": deque(maxlen=args.generation_batch_size),
+                "phase2_prompt":deque(maxlen=args.generation_batch_size),
+                "phase1_completion": deque(maxlen=args.generation_batch_size),
+                "phase2_completion" : deque(maxlen=args.generation_batch_size),
+                "phase1_context" : deque(maxlen=args.generation_batch_size),
+                "generated_db" : deque(maxlen=args.generation_batch_size),
+                # "phase1_reward" : deque(maxlen=args.generation_batch_size),
+                # "phase2_reward" : deque(maxlen=args.generation_batch_size),
+                "rewards": defaultdict(lambda: deque(maxlen=args.generation_batch_size)),
+                "phase1_advantages": deque(maxlen=args.generation_batch_size),
+                "phase2_advantages": deque(maxlen=args.generation_batch_size),
+                "answer" : deque(maxlen=args.generation_batch_size),
+            }
+
+        else:
+            self._logs = {
+                "prompt": deque(maxlen=args.generation_batch_size),
+                "completion": deque(maxlen=args.generation_batch_size),
+                "rewards": defaultdict(lambda: deque(maxlen=args.generation_batch_size)),
+                "advantages": deque(maxlen=args.generation_batch_size),
+            }
 
         # Ensure each process receives a unique seed to prevent duplicate completions when generating with
         # transformers if num_generations exceeds per_device_train_batch_size. We could skip it if we use vLLM, but
@@ -1170,14 +1185,14 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Gather the reward per function: this part is crucial, because the rewards are normalized per group and the
         # completions may be distributed across processes
         rewards_per_func = gather(rewards_per_func)
-        print("Rewards shape is :" , rewards_per_func.shape)
-        print("rewards is :" , rewards_per_func)
-        if self.two_phase:
-            n = rewards_per_func.shape[0]
-            half = n // 2
-            rewards_per_func[:half, 1] = 0.9 * rewards_per_func[:half, 1] + 0.1 * rewards_per_func[half:, 0]
+        # print("Rewards shape is :" , rewards_per_func.shape)
+        # print("rewards is :" , rewards_per_func)
+        # if self.two_phase:
+        #     n = rewards_per_func.shape[0]
+        #     half = n // 2
+        #     rewards_per_func[:half, 1] = 0.9 * rewards_per_func[:half, 1] + 0.1 * rewards_per_func[half:, 0]
 
-        print("after the stuff the rewards is : ", rewards_per_func)
+        # print("after the stuff the rewards is : ", rewards_per_func)
         return rewards_per_func
 
     def _generate_single_turn(self, prompts: list):
@@ -1361,9 +1376,6 @@ class LMLMGRPOTrainer(BaseTrainer):
                                 all_prompts, sampling_params=sampling_params, use_tqdm=False
                             )
 
-                    for i in range(min(2, len(all_outputs))):
-                        prompt_str = all_outputs[i].prompt[:200] if all_outputs[i].prompt else "None"
-                        print(f"  [{i}]: {prompt_str}...")
 
                     all_prompt_ids = [output.prompt_token_ids for output in all_outputs]
                     all_completion_ids = [output.token_ids for outputs in all_outputs for output in outputs.outputs]
@@ -1373,11 +1385,6 @@ class LMLMGRPOTrainer(BaseTrainer):
                         for output in outputs.outputs
                     ]
 
-
-                    # Decode and print the actual completion text
-                    for i in range(min(2, len(all_completion_ids))):
-                        completion_text = self.processing_class.decode(all_completion_ids[i], skip_special_tokens=False)
-                        print(f"  [{i}]: {completion_text[:300]}...")
 
                     if self.vllm_tensor_parallel_size > 1:
                         # Slice completions for this rank within its TP group.
@@ -1731,9 +1738,6 @@ class LMLMGRPOTrainer(BaseTrainer):
             for ctx_list in contexts
         ]
 
-        for i in range(min(2, len(phase1_prompts))):
-            print(f"  [{i}]: {phase1_prompts[i][:200]}...")
-
         (
             phase1_prompt_ids,
             phase1_completion_ids,
@@ -1780,6 +1784,8 @@ class LMLMGRPOTrainer(BaseTrainer):
             adaptive=self.adaptive_k,
             use_inverses=self.use_inverses
         )
+
+        self._generated_db_triplet_list = [str(db.database["triplets"]) for db in per_example_dbs]
 
         logger.info(
             "Phase 1: parsed %d total triplets across %d examples",
@@ -1847,11 +1853,6 @@ class LMLMGRPOTrainer(BaseTrainer):
         #     agg_exact, agg_fuzzy, agg_miss,
         #     100.0 * (agg_exact + agg_fuzzy) / max(agg_total, 1),
         # )
-
-        # Store contexts and triplets for logging
-        # Store as formatted strings that can be logged to wandb tables
-        self._current_contexts = ["\n\n".join(ctx_list) for ctx_list in contexts]
-        self._current_triplets = [str(triplets) for triplets in all_triplets]
 
         # Combine Phase 1 and Phase 2 outputs
         # Phase 1 entries have tool_mask with all 1s (all tokens are model-generated)
@@ -1999,9 +2000,9 @@ class LMLMGRPOTrainer(BaseTrainer):
     ) -> dict[str, torch.Tensor | Any]:
         device = self.accelerator.device
         mode = "train" if self.model.training else "eval"
-        print("First 4 inputs are: ", inputs[:4])
-
+        print("the length of the inputs is :" , len(inputs))
         prompts = [x["prompt"] for x in inputs]
+        answers = [x["solution"] for x in inputs]
 
         # Extract contexts for two-phase mode (may be absent for single-phase)
         contexts = None
@@ -2175,7 +2176,19 @@ class LMLMGRPOTrainer(BaseTrainer):
         rewards_per_func = self._calculate_rewards(inputs, prompts, completions, completion_ids_list)
 
         # Apply weights to each reward function's output and sum
-        rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).nansum(dim=1)
+
+        if self.two_phase:
+            n = rewards_per_func.shape[0]
+            half = n // 2
+            rewards = rewards_per_func.clone()
+            print("rewards is: ", rewards)
+            rewards[:half, 1] = 3 * rewards[:half, 1] + 1 * rewards[half:, 0]
+            rewards = (rewards * self.reward_weights.to(device).unsqueeze(0)).nansum(dim=1)
+            print("final rewards is :", rewards)
+        else:
+            rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).nansum(dim=1)
+
+        print("shape of rewards :", rewards.shape)
 
         # Compute grouped-wise rewards
         num_generations = self.num_generations if mode == "train" else self.num_generations_eval
@@ -2184,6 +2197,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Normalize the rewards to compute the advantages
         mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(num_generations, dim=0)
         advantages = rewards - mean_grouped_rewards
+        print("advantages is :", advantages)
 
         if self.scale_rewards in ["group", "none"]:
             # If self.scale_rewards = "none", we'll still log group level std
@@ -2202,6 +2216,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             raise ValueError(
                 f"Invalid value for scale_rewards: {self.scale_rewards}. Must be one of 'batch', 'group', or 'none'."
             )
+
 
         is_std_zero = torch.isclose(std_rewards, torch.zeros_like(std_rewards))
         if self.scale_rewards != "none":
@@ -2226,24 +2241,50 @@ class LMLMGRPOTrainer(BaseTrainer):
         self._metrics[mode]["frac_reward_zero_std"].append(is_std_zero.float().mean().item())
 
         # Log prompt and completion texts
-        self._logs["prompt"].extend(gather_object(prompts_text))
-        self._logs["completion"].extend(gather_object(completions_text))
-        for i, name in enumerate(self.reward_func_names):
-            self._logs["rewards"][name].extend(rewards_per_func[:, i].tolist())
-        self._logs["advantages"].extend(all_process_advantages.tolist())
+        if self.two_phase:
+            all_prompts = gather_object(prompts_text)
+            all_completions = gather_object(completions_text)
+            all_advantages = all_process_advantages.tolist()
+            em_accuracy_rewards_list = rewards_per_func[half:, 0].tolist() # em first col, phase 2 second half of rows
+            db_threshold_rewards_list = rewards_per_func[:half, 1].tolist() # db_threshold second col, phase 1 first half of rows
 
-        # Log contexts and generated DBs (for two-phase generation)
-        if hasattr(self, '_current_contexts') and hasattr(self, '_current_triplets'):
-            # For two-phase generation, we have Phase 1 + Phase 2 entries
-            # Duplicate contexts and triplets for both phases
-            contexts_to_log = self._current_contexts + self._current_contexts
-            triplets_to_log = self._current_triplets + self._current_triplets
-            self._logs["context"].extend(gather_object(contexts_to_log))
-            self._logs["generated_db"].extend(gather_object(triplets_to_log))
+            nb_prompts = len(all_prompts)
+            half = nb_prompts // 2
+
+            phase1_prompts = all_prompts[:half]
+            phase2_prompts = all_prompts[half:]
+            phase1_completions = all_completions[:half]
+            phase2_completions = all_completions[half:]
+            phase1_advantages = all_advantages[:half]
+            phase2_advantages = all_advantages[half:]
+
+            self._logs["phase1_prompt"].extend(phase1_prompts)
+            self._logs["phase2_prompt"].extend(phase2_prompts)
+            self._logs["phase1_completion"].extend(phase1_completions)
+            self._logs["phase2_completion"].extend(phase2_completions)
+            self._logs["rewards"]["em_accuracy"].extend(em_accuracy_rewards_list)
+            self._logs["rewards"]["db_size_threshold"].extend(db_threshold_rewards_list)
+            self._logs["phase1_advantages"].extend(phase1_advantages)
+            self._logs["phase2_advantages"].extend(phase2_advantages)
+            self._logs["phase1_context"].extend(["\n\n".join(ctx_list) for ctx_list in contexts])
+            self._logs["generated_db"].extend(self._generated_db_triplet_list)
+            self._logs["answer"].extend(answers)
+
+            assert(len(phase1_prompts)
+                   == len(phase2_prompts)
+                   == len(phase1_completions)
+                   == len(phase2_completions)
+                   == len(em_accuracy_rewards_list)
+                   == len(db_threshold_rewards_list)
+                   == len(phase1_advantages)
+                   == len(phase2_advantages)
+                   == len(contexts))
         else:
-            # For single-phase generation, log empty strings
-            self._logs["context"].extend([""] * len(prompts_text))
-            self._logs["generated_db"].extend([""] * len(prompts_text))
+            self._logs["prompt"].extend(gather_object(prompts_text))
+            self._logs["completion"].extend(gather_object(completions_text))
+            for i, name in enumerate(self.reward_func_names):
+                self._logs["rewards"][name].extend(rewards_per_func[:, i].tolist())
+            self._logs["advantages"].extend(all_process_advantages.tolist())
 
         if self.use_vllm and self.vllm_importance_sampling_correction:
             delta = torch.abs(old_per_token_logps - sampling_per_token_logps)
@@ -2550,28 +2591,42 @@ class LMLMGRPOTrainer(BaseTrainer):
 
         if self.accelerator.is_main_process and self.log_completions:
             if is_rich_available():
-                print_prompt_completions_sample(
-                    self._logs["prompt"],
-                    self._logs["completion"],
-                    self._logs["rewards"],
-                    self._logs["advantages"],
-                    self.state.global_step,
-                    self.num_completions_to_print,
-                )
+                if not self.two_phase: #not supported for 2 phase.
+                    print_prompt_completions_sample(
+                        self._logs["prompt"],
+                        self._logs["completion"],
+                        self._logs["rewards"],
+                        self._logs["advantages"],
+                        self.state.global_step,
+                        self.num_completions_to_print,
+                    )
 
             logging_backends = []
             if self.args.report_to and "wandb" in self.args.report_to and wandb.run is not None:
                 logging_backends.append(wandb)
 
-            table = {
-                "step": [str(self.state.global_step)] * len(self._logs["prompt"]),
-                "prompt": self._logs["prompt"],
-                "completion": self._logs["completion"],
-                "context": self._logs["context"],
+            if self.two_phase:
+                table = {
+                "step": [str(self.state.global_step)] * len(self._logs["phase1_prompt"]),
+                "phase1_prompt": self._logs["phase1_prompt"],
+                "phase2_prompt": self._logs["phase2_prompt"],
+                "phase1_completion": self._logs["phase1_completion"],
+                "phase2_completion": self._logs["phase2_completion"],
+                "phase1_context": self._logs["phase1_context"],
                 "generated_db": self._logs["generated_db"],
                 **self._logs["rewards"],
-                "advantage": self._logs["advantages"],
+                "phase1_advantage": self._logs["phase1_advantages"],
+                "phase2_advantage": self._logs["phase2_advantages"],
+                "answer" : self._logs["answer"],
             }
+            else:
+                table = {
+                    "step": [str(self.state.global_step)] * len(self._logs["prompt"]),
+                    "prompt": self._logs["prompt"],
+                    "completion": self._logs["completion"],
+                    **self._logs["rewards"],
+                    "advantage": self._logs["advantages"],
+                }
 
             df_base = pd.DataFrame(table)
 
