@@ -21,7 +21,7 @@ GPU_TYPE="B200"
 MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1
 #DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
 DATABASE_PATH="" # -> Not used for two phase
-SAVE_DIR=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop
+SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
 DATASET_NAME="hotpotqa"
 NUM_GPUS=1
 
@@ -42,7 +42,7 @@ TEMPERATURE=1.3
 TOP_K=0
 IS_ADAPTIVE_K=False
 RETRIEVAL_THRESHOLD=0.9
-TWO_PHASE=True
+REWARD_FUNC="em_size"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -77,6 +77,22 @@ while [[ $# -gt 0 ]]; do
             ;;
         --is_adaptive_k)
             IS_ADAPTIVE_K="$2"
+            shift 2
+            ;;
+        --two_phase)
+            TWO_PHASE=1
+            shift 1
+            ;;
+        --train_size)
+            TRAIN_SIZE="$2"
+            shift 2
+            ;;
+        --debug)
+            DEBUG=1
+            shift 1
+            ;;
+        --reward_func)
+            REWARD_FUNC="$2"
             shift 2
             ;;
         *)
@@ -128,8 +144,32 @@ else
     exit 1
 fi
 
+if [ -n "${DEBUG}" ]; then
+    echo "Debug mode enabled"
+    TRAIN_SIZE=100
+    EVAL_SIZE=10
+    NUM_TRAIN_EPOCHS=10
+    NUM_GPUS=1
+
+    NUM_GENERATIONS=8
+    GRADIENT_ACCUMULATION_STEPS=8
+    PER_DEVICE_TRAIN_BATCH_SIZE=8
+    VLLM_GPU_MEMORY_UTILIZATION=0.15
+fi
+
+
+#-------------------------------- Save dir --------------------------------
 # output_dir = script_args.model_path.split('/')[-1]+'-'+str(grpo_config.loss_type)+'-g'+str(grpo_config.num_generations)+'-bs'+str(grpo_config.per_device_train_batch_size)+'-s'+str(grpo_config.gradient_accumulation_steps)+'-b'+str(grpo_config.beta)+'-ep'+str(grpo_config.num_train_epochs)+'-n'+str(script_args.train_size)
-OUTPUT_DIR="${SAVE_DIR}/${MODEL_PATH##*/}-${LOSS_TYPE}-g${NUM_GENERATIONS}-bs${PER_DEVICE_TRAIN_BATCH_SIZE}-s${GRADIENT_ACCUMULATION_STEPS}-b${BETA}-ep${NUM_TRAIN_EPOCHS}-n${TRAIN_SIZE}"
+OUTPUT_DIR="${SAVE_DIR}/${MODEL_PATH##*/}-${LOSS_TYPE}-g${NUM_GENERATIONS}-bs${PER_DEVICE_TRAIN_BATCH_SIZE}-s${GRADIENT_ACCUMULATION_STEPS}-b${BETA}-ep${NUM_TRAIN_EPOCHS}-n${TRAIN_SIZE}-${REWARD_FUNC}"
+if [ -n "${TWO_PHASE}" ]; then
+    OUTPUT_DIR="${OUTPUT_DIR}-v2"
+    TWO_PHASE="--two_phase"
+else
+    TWO_PHASE=""
+fi
+if [ -n "${DEBUG}" ]; then
+    OUTPUT_DIR="${OUTPUT_DIR}-debug"
+fi
 
 # Use it in training
 LAST_CKPT=$(ls -d $OUTPUT_DIR/checkpoint-* 2>/dev/null | sort -V | tail -n 1)
@@ -159,7 +199,6 @@ else
     ADAPTIVE_K=""
     OUTPUT_DIR="${OUTPUT_DIR}-nak"
 fi
-NUM_GPUS=1
 
 echo "Starting GRPO training with:"
 echo "  Model: ${MODEL_PATH}"
@@ -168,11 +207,10 @@ echo "  Output: ${OUTPUT_DIR}"
 echo "  GPUs: ${NUM_GPUS}"
 echo "  GPU Type: ${GPU_TYPE}"
 echo "  Resume from checkpoint: ${RESUME_FROM_CHECKPOINT}"
+echo "  Two phase: ${TWO_PHASE}"
+echo "  Return triples: ${RETURN_TRIPLES}"
+echo "  Adaptive k: ${ADAPTIVE_K}"
 
-GRADIENT_ACCUMULATION_STEPS=32
-PER_DEVICE_TRAIN_BATCH_SIZE=4
-NUM_GENERATIONS=8
-VLLM_GPU_MEMORY_UTILIZATION=0.15
 
 accelerate launch \
   --num_processes=${NUM_GPUS} \
@@ -201,7 +239,7 @@ accelerate launch \
   --loss_type=${LOSS_TYPE} \
   --max_grad_norm=1.0 \
   --warmup_ratio=0.1 \
-  --vllm_max_model_length=15000 \
+  --vllm_max_model_length=4096 \
   --train_size=${TRAIN_SIZE} \
   --eval_size=${EVAL_SIZE} \
   --top_p=${TOP_P} \
@@ -214,8 +252,9 @@ accelerate launch \
   ${RESUME_FROM_CHECKPOINT} \
   --use-inverses \
   --retrieval-threshold ${RETRIEVAL_THRESHOLD} \
-  --two-phase \
+  ${TWO_PHASE} \
   ${RETURN_TRIPLES} \
-  ${ADAPTIVE_K}
+  ${ADAPTIVE_K} \
+  --reward_func=${REWARD_FUNC}
 
 echo "Training completed!"

@@ -181,7 +181,7 @@ class DatabaseManager:
                 f"[dblookup_fail_3] No retrieval results for entity='{entity}', relationship='{relationship}'",
                 "no_retrieval_data_found"
             )
-        print("retrieved resulst: ", results)
+        print(f"retrieved {entity} {relationship} -> {results}")
         return results
 
     def build_database(self, dataset: Union[DatasetDict, List[Dict]], database_name: Optional[str] = None, database_org_file: Optional[str] = None):

@@ -1,11 +1,13 @@
 from dataclasses import dataclass, field
+from typing import List, Optional
 from datasets import load_dataset
-from trainer.lmlm_basetrainer import LMLMGRPOTrainer
+from trainer.lmlm_basetrainer import LMLMGRPOTrainer, parse_triplets
 # from trainer.lmlm_grpotrainer import LMLMGRPOTrainer
 from transformers import AutoTokenizer, HfArgumentParser
 from eval.metrics import exact_match_score
 from trl.trainer.grpo_config import GRPOConfig
 from multi_lmlm.constants import ANSWER_START_TOKEN, ANSWER_END_TOKEN, THINKING_START_TOKEN
+from reward_func import reverse_bfs_with_path, token_f1, normalize_text, em_accuracy, f1_reward, db_coverage_reward, db_size_threshold
 import wandb
 import os
 from data import get_dataset
@@ -57,71 +59,17 @@ class LMLMArguments:
         default=False,
         metadata={"help": "Enable two-phase generation (Phase 1: DB creation from contexts, Phase 2: QA with per-example DB)"}
     )
-
-
-def extract_answer_from_tags(text: str):
-    """Extract answer from between answer tags."""
-    try:
-        return text.split(ANSWER_START_TOKEN)[1].split(ANSWER_END_TOKEN)[0]
-    except Exception:
-        return ""
-
-
-def em_accuracy(completions, solution, **kwargs):
-    """Calculate exact match accuracy for completions."""
-    results = []
-    for c, s in zip(completions, solution):
-        extracted = extract_answer_from_tags(c)
-        # Return None if answer extraction failed (empty string)
-        if extracted == "" and THINKING_START_TOKEN not in c:
-            results.append(None)
-        else:
-            results.append(1 if exact_match_score(extracted, s) else 0)
-    return results
-
-def db_size_threshold(completions, **kwargs):
-    """Reward function that checks if triplet to context character ratio is above 0.017."""
-    rewards = []
-    contexts = kwargs.get("contexts", [])
-    for i, comp in enumerate(completions):
-        try:
-            triplets = comp.split("\n")
-            # Sanity check to ensure this is a db generation (Phase 1)
-            if "\t" in triplets[0] and "\t" in triplets[1]:
-                # Count number of triplets (non-empty lines with tabs)
-                num_triplets = sum(1 for t in triplets if "\t" in t)
-
-                # Calculate context character count
-                if i < len(contexts):
-                    context = contexts[i]
-                    # If context is a list of strings, join them
-                    if isinstance(context, list):
-                        context_str = "\n\n".join(context)
-                    else:
-                        context_str = str(context)
-                    context_chars = len(context_str)
-
-                    # Calculate ratio and assign reward
-                    if context_chars > 0:
-                        ratio = num_triplets / context_chars
-                        print(f"DEBUG: Example {i} - Num Triplets: {num_triplets}, Context Chars: {context_chars}, Ratio: {ratio:.4f}")
-                        reward = 1 if ratio > 0.01 else 0
-                    else:
-                        reward = 0  
-                else:
-                    reward = None  # Return None instead of 0 - no context available
-            else:
-                reward = None  # Return None instead of 0 - Phase 2 completion or malformed
-        except Exception:
-            reward = None  # Return None instead of 0 - if parsing fails
-        rewards.append(reward)
-    return rewards
+    reward_func: str = field(
+        default="em_coverage",
+        metadata={"help": "Reward function to use"}
+    )
 
 
 def process_example(example):
     """Process HotpotQA example into prompt-solution format."""
     return {
         "prompt": f"Question:\n{example['question']}\nAnswer:\n",
+        "question": example["question"],
         "contexts": example.get("golden_contexts", []),
         "solution": example["answers"][0]
     }
@@ -173,13 +121,34 @@ def main():
     print(f"  Adaptive k: {lmlm_args.adaptive_k}")
     print(f"  Return triples: {lmlm_args.return_triples}")
 
+    # Forward reward_weights into GRPOConfig so the trainer picks them up via args.reward_weights
+    if lmlm_args.reward_weights is not None:
+        grpo_config.reward_weights = lmlm_args.reward_weights
+
+    # In two_phase (TRR++) mode:
+    #   - em_accuracy scores Phase-2 QA completions (returns None for Phase-1 triplets)
+    #   - db_coverage_reward scores Phase-1 DB completions via graph reachability (returns None for Phase-2)
+    # db_size_threshold is excluded; db_coverage_reward replaces it with a semantically richer signal.
+    if lmlm_args.two_phase:
+        reward_funcs = []
+        if "em" in lmlm_args.reward_func:
+            reward_funcs.append(em_accuracy)
+        if "f1" in lmlm_args.reward_func:
+            reward_funcs.append(f1_reward)
+        if "coverage" in lmlm_args.reward_func:
+            reward_funcs.append(db_coverage_reward)
+        if "size" in lmlm_args.reward_func:
+            reward_funcs.append(db_size_threshold)
+    else:
+        reward_funcs = [em_accuracy]
+
     # Initialize trainer
     print("Initializing LMLMGRPOTrainer...")
     trainer = LMLMGRPOTrainer(
         retrieval_threshold = lmlm_args.retrieval_threshold,
         use_inverses = lmlm_args.use_inverses,
         model=script_args.model_path,
-        reward_funcs=[em_accuracy, db_size_threshold],
+        reward_funcs=reward_funcs,
         lmlm_database_path=script_args.database_path,
         adaptive_k=lmlm_args.adaptive_k,
         return_triples=lmlm_args.return_triples,
