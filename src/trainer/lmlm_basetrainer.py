@@ -1185,14 +1185,6 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Gather the reward per function: this part is crucial, because the rewards are normalized per group and the
         # completions may be distributed across processes
         rewards_per_func = gather(rewards_per_func)
-        # print("Rewards shape is :" , rewards_per_func.shape)
-        # print("rewards is :" , rewards_per_func)
-        # if self.two_phase:
-        #     n = rewards_per_func.shape[0]
-        #     half = n // 2
-        #     rewards_per_func[:half, 1] = 0.9 * rewards_per_func[:half, 1] + 0.1 * rewards_per_func[half:, 0]
-
-        # print("after the stuff the rewards is : ", rewards_per_func)
         return rewards_per_func
 
     def _generate_single_turn(self, prompts: list, num_rollouts: int = 1):
@@ -1376,15 +1368,13 @@ class LMLMGRPOTrainer(BaseTrainer):
                                 all_prompts, sampling_params=sampling_params, use_tqdm=False
                             )
 
-
-                    all_prompt_ids = [output.prompt_token_ids for output in all_outputs]
+                    all_prompt_ids = [output.prompt_token_ids for output in all_outputs for _ in range(num_rollouts)]
                     all_completion_ids = [output.token_ids for outputs in all_outputs for output in outputs.outputs]
                     all_logprobs = [
                         [next(iter(lp.values())).logprob for lp in output.logprobs]
                         for outputs in all_outputs
                         for output in outputs.outputs
                     ]
-
 
                     if self.vllm_tensor_parallel_size > 1:
                         # Slice completions for this rank within its TP group.
@@ -2038,7 +2028,7 @@ class LMLMGRPOTrainer(BaseTrainer):
     ) -> dict[str, torch.Tensor | Any]:
         device = self.accelerator.device
         mode = "train" if self.model.training else "eval"
-        print("the length of the inputs is :" , len(inputs))
+
         prompts = [x["prompt"] for x in inputs]
         answers = [x["solution"] for x in inputs]
 
@@ -2221,29 +2211,100 @@ class LMLMGRPOTrainer(BaseTrainer):
         # rewards_per_func to extract each process's subset.
         rewards_per_func = self._calculate_rewards(inputs, prompts, completions, completion_ids_list)
 
-        # Apply weights to each reward function's output and sum
+        # Compute advantages
+        num_generations = self.num_generations if mode == "train" else self.num_generations_eval
 
         if self.two_phase:
-            n = rewards_per_func.shape[0]
-            half = n // 2
-            rewards = rewards_per_func.clone()
-            print("rewards is: ", rewards)
-            rewards[:half, 1] = 3 * rewards[:half, 1] + 1 * rewards[half:, 0]
-            rewards = (rewards * self.reward_weights.to(device).unsqueeze(0)).nansum(dim=1)
-            print("final rewards is :", rewards)
+            # Apply weights to each reward function's output and sum.
+            # In two_phase mode only em_accuracy is used; DB entries return None (→ NaN → nansum→0).
+            # rewards[:B] = 0 (DB completions have no answer tags → NaN → 0)
+            # rewards[B:] = QA EM scores (0 or 1)
+            rewards = rewards_per_func
+            # rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).nansum(dim=1)
+
+            # TRR++ advantage computation (two groups: DB and QA)
+            # rewards shape: (B + B*N,)  — first B are Phase-1 (DB), next B*N are Phase-2 (QA)
+            N = num_generations
+            assert len(rewards) % (N + 1) == 0, (
+                f"[TRR++] rewards length {len(rewards)} not divisible by (N+1)={N + 1}; "
+                f"expected B*(N+1) for some integer B"
+            )
+            B = len(rewards) // (N + 1)  # B*(N+1) = B + B*N
+            print(f"[TRR++] Advantage: B={B}, N={N} | rewards shape={tuple(rewards.shape)} (expected B+B*N={B + B*N})")
+
+            # rewards_per_func[:B, 0] = NaN  (em_accuracy skips Phase-1 triplets)
+            # rewards_per_func[:B, 1] = db_coverage_reward scores for Phase-1
+            # rewards_per_func[B:, 0] = em_accuracy scores for Phase-2 QA
+            # rewards_per_func[B:, 1] = NaN  (db_coverage_reward skips Phase-2)
+            weights = self.reward_weights.to(device)          # [w_em, w_db]
+            r_b_i   = rewards[B:, 0].nan_to_num(0.0) # (B*N,) QA EM scores
+            db_cov  = rewards[:B, 1].nan_to_num(0.0) # (B,)   db_coverage scores
+
+            # r_db_b: weighted sum of mean QA EM and db_coverage (both per question b)
+            r_db_b  = r_b_i.view(B, N).mean(dim=1) * weights[0] + db_cov * weights[1]  # (B,)
+
+            # --- DB group (B entries): batch-level baseline and std across B questions ---
+            # Key property: db_std = 0 iff all r_db_b equal iff A_db_b = 0 → no blowup.
+            db_baseline = r_db_b.mean()                    # scalar
+            db_std      = r_db_b.std()                     # scalar
+            A_db_b      = r_db_b - db_baseline             # (B,)
+
+            # --- QA group (B*N entries): per-question baseline and std (standard GRPO) ---
+            # Key property: per_q_std[b] = 0 iff all N rollouts agree iff A_qa = 0 → no blowup.
+            per_q_mean = r_b_i.view(B, N).mean(dim=1)      # (B,)  per-question QA EM mean (for within-group centering)
+            per_q_std  = r_b_i.view(B, N).std(dim=1)       # (B,)
+            A_qa_b_i   = r_b_i - per_q_mean.repeat_interleave(N)  # (B*N,)
+
+            advantages = torch.cat([A_db_b, A_qa_b_i])     # (B + B*N,)
+            mean_grouped_rewards = torch.cat([r_db_b, r_b_i])  # for logging
+
+            # Different denominators for the two groups — avoids the blowup from using
+            # within-question std (per_q_std) for DB entries where global baseline ≠ per_q_mean.
+            std_rewards = torch.cat([
+                db_std.expand(B),                           # (B,)   batch-level std for DB group
+                per_q_std.repeat_interleave(N),             # (B*N,) per-question std for QA group
+            ])
+
+            # Verify shapes
+            assert r_b_i.shape == (B * N,), f"[TRR++] r_b_i shape {r_b_i.shape} != ({B * N},)"
+            assert r_db_b.shape == (B,), f"[TRR++] r_db_b shape {r_db_b.shape} != ({B},)"
+            assert A_db_b.shape == (B,), f"[TRR++] A_db_b shape {A_db_b.shape} != ({B},)"
+            assert A_qa_b_i.shape == (B * N,), f"[TRR++] A_qa_b_i shape {A_qa_b_i.shape} != ({B * N},)"
+            assert advantages.shape == (B + B * N,), f"[TRR++] advantages shape {advantages.shape} != ({B + B * N},)"
+            assert std_rewards.shape == (B + B * N,), f"[TRR++] std_rewards shape {std_rewards.shape} != ({B + B * N},)"
+
+            # print stats of rewards. how many rewards are 1?
+            print(f"[TRR++] Number of rewards that are non zero for QA: {torch.sum(r_b_i != 0).item()}")
+            print(f"[TRR++] Number of rewards that are non zero for DB: {torch.sum(r_db_b != 0).item()}")
+
+            print(
+                f"[TRR++] r_b_i (QA): mean={r_b_i.mean():.4f} | "
+                f"r_db_b: mean={r_db_b.mean():.4f}, std={r_db_b.std():.4f} | "
+                f"per_q_std: mean={per_q_std.mean():.4f}"
+            )
+            print(
+                f"[TRR++] Pre-norm — A_db_b: mean={A_db_b.mean():.4f}, std={A_db_b.std():.4f} | "
+                f"A_qa_b_i: mean={A_qa_b_i.mean():.4f}, std={A_qa_b_i.std():.4f}"
+            )
+
+            is_std_zero = torch.isclose(std_rewards, torch.zeros_like(std_rewards))
+            if self.scale_rewards != "none":
+                advantages = advantages / (std_rewards + 1e-4)
+
+            print(
+                f"[TRR++] Post-norm — A_db_b: mean={advantages[:B].mean():.4f}, std={advantages[:B].std():.4f} | "
+                f"A_qa_b_i: mean={advantages[B:].mean():.4f}, std={advantages[B:].std():.4f}"
+            )
         else:
+            # Apply weights to each reward function's output and sum
             rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).nansum(dim=1)
 
-        print("shape of rewards :", rewards.shape)
+            # Standard GRPO advantage computation
+            mean_grouped_rewards = rewards.view(-1, num_generations).mean(dim=1)
 
-        # Compute grouped-wise rewards
-        num_generations = self.num_generations if mode == "train" else self.num_generations_eval
-        mean_grouped_rewards = rewards.view(-1, num_generations).mean(dim=1)
-
-        # Normalize the rewards to compute the advantages
-        mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(num_generations, dim=0)
-        advantages = rewards - mean_grouped_rewards
-        print("advantages is :", advantages)
+            # Normalize the rewards to compute the advantages
+            mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(num_generations, dim=0)
+            advantages = rewards - mean_grouped_rewards
 
             if self.scale_rewards in ["group", "none"]:
                 # If self.scale_rewards = "none", we'll still log group level std
@@ -2263,10 +2324,9 @@ class LMLMGRPOTrainer(BaseTrainer):
                     f"Invalid value for scale_rewards: {self.scale_rewards}. Must be one of 'batch', 'group', or 'none'."
                 )
 
-
-        is_std_zero = torch.isclose(std_rewards, torch.zeros_like(std_rewards))
-        if self.scale_rewards != "none":
-            advantages = advantages / (std_rewards + 1e-4)
+            is_std_zero = torch.isclose(std_rewards, torch.zeros_like(std_rewards))
+            if self.scale_rewards != "none":
+                advantages = advantages / (std_rewards + 1e-4)
 
         # Slice to keep only the local part of the data
         process_slice = slice(
@@ -2288,21 +2348,20 @@ class LMLMGRPOTrainer(BaseTrainer):
 
         # Log prompt and completion texts
         if self.two_phase:
+            B = len(rewards) // (N + 1)
             all_prompts = gather_object(prompts_text)
             all_completions = gather_object(completions_text)
             all_advantages = all_process_advantages.tolist()
-            em_accuracy_rewards_list = rewards_per_func[half:, 0].tolist() # em first col, phase 2 second half of rows
-            db_threshold_rewards_list = rewards_per_func[:half, 1].tolist() # db_threshold second col, phase 1 first half of rows
+            em_accuracy_rewards_list = rewards_per_func[B:, 0].tolist() # em first col, phase 2 second half of rows
+            db_threshold_rewards_list = rewards_per_func[:B, 1].tolist() # db_threshold second col, phase 1 first half of rows
 
-            nb_prompts = len(all_prompts)
-            half = nb_prompts // 2
 
-            phase1_prompts = all_prompts[:half]
-            phase2_prompts = all_prompts[half:]
-            phase1_completions = all_completions[:half]
-            phase2_completions = all_completions[half:]
-            phase1_advantages = all_advantages[:half]
-            phase2_advantages = all_advantages[half:]
+            phase1_prompts = all_prompts[:B]
+            phase2_prompts = all_prompts[B:]
+            phase1_completions = all_completions[:B]
+            phase2_completions = all_completions[B:]
+            phase1_advantages = all_advantages[:B]
+            phase2_advantages = all_advantages[B:]
 
             self._logs["phase1_prompt"].extend(phase1_prompts)
             self._logs["phase2_prompt"].extend(phase2_prompts)
@@ -2316,15 +2375,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             self._logs["generated_db"].extend(self._generated_db_triplet_list)
             self._logs["answer"].extend(answers)
 
-            assert(len(phase1_prompts)
-                   == len(phase2_prompts)
-                   == len(phase1_completions)
-                   == len(phase2_completions)
-                   == len(em_accuracy_rewards_list)
-                   == len(db_threshold_rewards_list)
-                   == len(phase1_advantages)
-                   == len(phase2_advantages)
-                   == len(contexts))
+
         else:
             self._logs["prompt"].extend(gather_object(prompts_text))
             self._logs["completion"].extend(gather_object(completions_text))
@@ -2652,19 +2703,15 @@ class LMLMGRPOTrainer(BaseTrainer):
                 logging_backends.append(wandb)
 
             if self.two_phase:
+                # BUG: "All arrays must be of the same length"
                 table = {
-                "step": [str(self.state.global_step)] * len(self._logs["phase1_prompt"]),
-                "phase1_prompt": self._logs["phase1_prompt"],
-                "phase2_prompt": self._logs["phase2_prompt"],
-                "phase1_completion": self._logs["phase1_completion"],
-                "phase2_completion": self._logs["phase2_completion"],
-                "phase1_context": self._logs["phase1_context"],
-                "generated_db": self._logs["generated_db"],
-                **self._logs["rewards"],
-                "phase1_advantage": self._logs["phase1_advantages"],
-                "phase2_advantage": self._logs["phase2_advantages"],
-                "answer" : self._logs["answer"],
-            }
+                    "step": [str(self.state.global_step)] * len(self._logs["phase1_prompt"]+self._logs["phase2_prompt"]),
+                    "prompt": self._logs["phase1_prompt"] + self._logs["phase2_prompt"],
+                    "completion": self._logs["phase1_completion"] + self._logs["phase2_completion"],
+                    **self._logs["rewards"],
+                    "advantage": self._logs["advantages"],
+                    "answer" : self._logs["answer"],
+                }
             else:
                 table = {
                     "step": [str(self.state.global_step)] * len(self._logs["prompt"]),

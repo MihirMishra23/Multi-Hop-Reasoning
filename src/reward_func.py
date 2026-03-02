@@ -1,5 +1,7 @@
 from collections import defaultdict, deque, Counter
 import re
+from multi_lmlm.constants import ANSWER_START_TOKEN, ANSWER_END_TOKEN, THINKING_START_TOKEN
+
 
 def extract_answer_from_tags(text: str):
     """Extract answer from between answer tags."""
