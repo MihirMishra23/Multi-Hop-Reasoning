@@ -6,8 +6,7 @@ from trainer.lmlm_basetrainer import LMLMGRPOTrainer, parse_triplets
 from transformers import AutoTokenizer, HfArgumentParser
 from eval.metrics import exact_match_score
 from trl.trainer.grpo_config import GRPOConfig
-from multi_lmlm.constants import ANSWER_START_TOKEN, ANSWER_END_TOKEN, THINKING_START_TOKEN
-from reward_func import reverse_bfs_with_path, token_f1, normalize_text, em_accuracy, f1_reward, db_coverage_reward, db_size_threshold
+from reward_func import em_accuracy, f1_reward, db_coverage_reward, db_size_threshold
 import wandb
 import os
 from data import get_dataset
@@ -120,10 +119,6 @@ def main():
     print(f"  Use vLLM: {grpo_config.use_vllm}")
     print(f"  Adaptive k: {lmlm_args.adaptive_k}")
     print(f"  Return triples: {lmlm_args.return_triples}")
-
-    # Forward reward_weights into GRPOConfig so the trainer picks them up via args.reward_weights
-    if lmlm_args.reward_weights is not None:
-        grpo_config.reward_weights = lmlm_args.reward_weights
 
     # In two_phase (TRR++) mode:
     #   - em_accuracy scores Phase-2 QA completions (returns None for Phase-1 triplets)

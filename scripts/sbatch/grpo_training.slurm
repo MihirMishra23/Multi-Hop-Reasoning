@@ -33,8 +33,8 @@ if [ "${DATASET}" = "hotpotqa" ]; then
     MODEL_PATH="/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48_th${THRESHOLD}"
     TRAIN_SIZE=7000
     DATASET_NAME="hotpotqa"
-elif [ "${DATASET}" = "hotpotqa-v2" ]; then
-    echo "Training on hotpotqa-v2"
+elif [ "${DATASET}" = "hotpotqa-v1.1" ]; then
+    echo "Training on hotpotqa-v1.1"
     DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_all_context_exp_prompt.json"
     if [ "${THRESHOLD}" = "-1" ]; then
         MODEL_PATH="/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48"
