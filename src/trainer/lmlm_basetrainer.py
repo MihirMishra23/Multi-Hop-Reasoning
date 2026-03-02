@@ -1195,10 +1195,12 @@ class LMLMGRPOTrainer(BaseTrainer):
         # print("after the stuff the rewards is : ", rewards_per_func)
         return rewards_per_func
 
-    def _generate_single_turn(self, prompts: list):
+    def _generate_single_turn(self, prompts: list, num_rollouts: int = 1):
+        """
+        Generate completions with num_rollouts for a single turn of a conversation.
+        """
         device = self.accelerator.device
         mode = "train" if self.model.training else "eval"
-
 
         # Generate completions using either vLLM or regular generation
         if self.use_vllm:
@@ -1230,18 +1232,15 @@ class LMLMGRPOTrainer(BaseTrainer):
             # Generate completions using vLLM: gather all prompts and use them in a single call in the main process
             if self.vllm_mode == "server":
                 all_prompts = gather_object(prompts)
-                num_generations = self.num_generations if mode == "train" else self.num_generations_eval
 
                 if self.accelerator.is_main_process:
 
-                    # Since 'prompts' contains 'num_generations' duplicates, we first take unique prompts, and generate
-                    # num_generations outputs for each one. This is faster than generating outputs for each duplicate
-                    # prompt individually.
-                    ordered_set_of_prompts = all_prompts[::num_generations]
-
+                    # Deduplicate: prompts may contain num_rollouts duplicates; take unique set and
+                    # ask vLLM to produce num_rollouts completions per unique prompt.
+                    ordered_set_of_prompts = all_prompts[::num_rollouts]
 
                     sampling_params = {
-                        "n": num_generations,
+                        "n": num_rollouts,
                         "repetition_penalty": self.repetition_penalty,
                         "temperature": self.temperature,
                         "top_p": self.top_p,
@@ -1286,8 +1285,9 @@ class LMLMGRPOTrainer(BaseTrainer):
                 broadcast_object_list(obj_list, from_process=0)
                 all_prompt_ids, all_completion_ids, all_logprobs, all_extra_fields = obj_list[0]
 
-                # At this point, we only get 1 copy of each prompt, so we need to repeat them num_generations times
-                all_prompt_ids = [ids for ids in all_prompt_ids for _ in range(num_generations)]
+                # At this point, we only get 1 copy of each prompt, so we need to repeat them num_rollouts times
+                # TODO: check if this is correct
+                all_prompt_ids = [ids for ids in all_prompt_ids for _ in range(num_rollouts)]
 
 
                 process_slice = slice(
@@ -1333,7 +1333,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                     guided_decoding = None
 
                     generation_kwargs = {
-                        "n": 1,  # vLLM on each GPU generates only 1 in colocate mode
+                        "n": num_rollouts,  # vLLM on each GPU generates num_rollouts per prompt in colocate mode
                         "repetition_penalty": self.repetition_penalty,
                         "temperature": self.temperature,
                         "top_p": self.top_p,
@@ -1501,8 +1501,6 @@ class LMLMGRPOTrainer(BaseTrainer):
             per_example_dbs: Optional list of :class:`PerExampleRetriever`
                 instances, one per sample. ``None`` → use ``self.db``.
         """
-        print(f">>> tool call loop {len(prompts)}")
-
         # Step 1: Initialize tool_mask with 1s for the initial Phase 1 completion tokens (model-generated)
         tool_mask = [[1] * len(cids) for cids in completion_ids]
 
@@ -1585,7 +1583,8 @@ class LMLMGRPOTrainer(BaseTrainer):
 
             ## Stage 2: QA Generation — generate post-retrieval reasoning (mask=1)
             prompt_completion_tool_ids, post_tool_ids, post_tool_logprobs, _ = self._generate_single_turn(
-                prompt_completion_tools
+                prompt_completion_tools,
+                num_rollouts=1
             )
 
             for i in range(len(post_tool_logprobs)):
@@ -1678,9 +1677,6 @@ class LMLMGRPOTrainer(BaseTrainer):
                 for idx in range(len(post_tool_ids))
             ]
 
-            
-            debug_example(completion_ids, completions, logprobs, "after tool call loop")
-
             # # Decode post-tool completions
             # post_tool_completions = [
             #     self.processing_class.decode(ids) if ids else "" for ids in post_tool_ids
@@ -1743,13 +1739,23 @@ class LMLMGRPOTrainer(BaseTrainer):
             phase1_completion_ids,
             phase1_logprobs,
             extra_fields,
-        ) = self._generate_single_turn(phase1_prompts)
+        ) = self._generate_single_turn(phase1_prompts, num_rollouts=1)
 
 
         phase1_completions = self.processing_class.batch_decode(
             phase1_completion_ids, skip_special_tokens=False
         )
 
+        B = len(qa_prompts)
+        N = num_generations
+        # [TRR++] Phase 1 must produce exactly B completions (1 per question)
+        assert len(phase1_completions) == B, (
+            f"[TRR++] Phase 1: expected {B} completions (1 per question), got {len(phase1_completions)}"
+        )
+        assert len(phase1_completion_ids) == B, (
+            f"[TRR++] Phase 1: expected {B} completion_ids, got {len(phase1_completion_ids)}"
+        )
+        print(f"[TRR++] Phase 1: B={B}, N={N} | generated {len(phase1_completions)} DB completions (expected B={B})")
 
         logger.info(
             "Phase 1: generated %d completions", len(phase1_completions)
@@ -1793,6 +1799,16 @@ class LMLMGRPOTrainer(BaseTrainer):
             len(per_example_dbs),
         )
 
+        # [TRR++] B per-question DBs, then expanded to B*N for Phase 2 tool calls
+        assert len(per_example_dbs) == B, (
+            f"[TRR++] expected {B} per_example_dbs, got {len(per_example_dbs)}"
+        )
+        # Expand B DBs to B*N so each QA rollout for question b uses per_example_dbs[b]
+        per_example_dbs_expanded = [db for db in per_example_dbs for _ in range(num_generations)]
+        assert len(per_example_dbs_expanded) == B * N, (
+            f"[TRR++] expected {B * N} expanded DBs, got {len(per_example_dbs_expanded)}"
+        )
+        print(f"[TRR++] Built {B} per-example DBs, expanded to {len(per_example_dbs_expanded)} for B*N={B*N} QA rollouts")
 
         # ===== Phase 2: QA with per-example DB lookups =====
         (
@@ -1800,15 +1816,27 @@ class LMLMGRPOTrainer(BaseTrainer):
             completion_ids,
             logprobs,
             extra_fields,
-        ) = self._generate_single_turn(qa_prompts)
+        ) = self._generate_single_turn(qa_prompts, num_rollouts=num_generations)
 
         completions = self.processing_class.batch_decode(
             completion_ids, skip_special_tokens=False
         )
 
-        debug_example(completion_ids, completions, logprobs, "in _generate_two_phase (Phase 2)")
+        # [TRR++] Phase 2 must produce exactly B*N completions
+        assert len(completion_ids) == B * N, (
+            f"[TRR++] Phase 2: expected {B * N} completions (B={B} * N={N}), got {len(completion_ids)}"
+        )
+        assert len(prompt_ids) == B * N, (
+            f"[TRR++] Phase 2: expected {B * N} prompt_ids, got {len(prompt_ids)}"
+        )
+        print(f"[TRR++] Phase 2: generated {len(completion_ids)} QA completions (expected B*N={B*N})")
 
         # Run tool call loop with per-example DBs
+        # Expand qa_prompts from B to B*N to match completions
+        qa_prompts_expanded = [p for p in qa_prompts for _ in range(num_generations)]
+        assert len(qa_prompts_expanded) == B * N, (
+            f"[TRR++] expected {B * N} qa_prompts_expanded, got {len(qa_prompts_expanded)}"
+        )
         if self.tools:
             (
                 tool_mask,
@@ -1818,12 +1846,12 @@ class LMLMGRPOTrainer(BaseTrainer):
                 tool_call_count,
                 tool_failure_count,
             ) = self._tool_call_loop(
-                qa_prompts,
+                qa_prompts_expanded,
                 prompt_ids,
                 completion_ids,
                 completions,
                 logprobs,
-                per_example_dbs=per_example_dbs,
+                per_example_dbs=per_example_dbs_expanded,
             )
         else:
             tool_mask = None
@@ -1860,7 +1888,19 @@ class LMLMGRPOTrainer(BaseTrainer):
         combined_completion_ids = phase1_completion_ids + completion_ids
         combined_completions = phase1_completions + completions
         combined_logprobs = phase1_logprobs + logprobs
-        combined_prompts = phase1_prompts + qa_prompts
+        combined_prompts = phase1_prompts + [p for p in qa_prompts for _ in range(num_generations)]
+
+        # [TRR++] Combined output: B Phase-1 + B*N Phase-2 = B*(N+1)
+        assert len(combined_completion_ids) == B + B * N, (
+            f"[TRR++] expected {B + B * N} combined completions (B={B} + B*N={B*N}), got {len(combined_completion_ids)}"
+        )
+        assert len(combined_prompt_ids) == len(combined_completion_ids), (
+            f"[TRR++] combined_prompt_ids/completion_ids length mismatch: {len(combined_prompt_ids)} vs {len(combined_completion_ids)}"
+        )
+        assert len(combined_prompts) == len(combined_completion_ids), (
+            f"[TRR++] combined_prompts length mismatch: {len(combined_prompts)} vs {len(combined_completion_ids)}"
+        )
+        print(f"[TRR++] Combined: {B} Phase-1 + {B*N} Phase-2 = {len(combined_completion_ids)} total (expected {B + B*N})")
 
         phase1_tool_mask = [[1] * len(cids) for cids in phase1_completion_ids]
         # Phase 2 tool masks: from _tool_call_loop if tools enabled, else all 1s. Tool calls should always be enabled for LMLM.
@@ -1923,11 +1963,9 @@ class LMLMGRPOTrainer(BaseTrainer):
             prompts = combined_prompts
         else:
             # ---------- Standard single-phase path ----------
-            prompt_ids, completion_ids, logprobs, extra_fields = self._generate_single_turn(prompts)
+            prompt_ids, completion_ids, logprobs, extra_fields = self._generate_single_turn(prompts, num_rollouts=1)
 
             completions = self.processing_class.batch_decode(completion_ids, skip_special_tokens=False)
-
-            debug_example(completion_ids, completions, logprobs, "in _generate")
 
             # Extract tool calls from the completions and (possibly) execute them
             if self.tools:
@@ -2011,8 +2049,20 @@ class LMLMGRPOTrainer(BaseTrainer):
                 y = copy.deepcopy(x)
                 y["prompt"] = self._phase1_prompt_template.format(context="\n\n".join(y.get("contexts", [])))
                 return y
+
+            N = self.num_generations if mode == "train" else self.num_generations_eval
             contexts = [x.get("contexts", []) for x in inputs]
-            inputs = inputs + [modify_input(x) for x in inputs]
+
+            # Deduplicate to B unique questions; _generate_two_phase handles the N rollouts
+            # internally (Phase 1: 1 DB_b per question, Phase 2: N a_b_i rollouts per question).
+            prompts  = prompts[::N]   # B unique QA prompts
+            contexts = contexts[::N]  # B unique contexts
+
+            # Build inputs list matching B + B*N combined completions returned by _generate_two_phase:
+            #   Phase 1: B unique inputs (one per question, for DB construction scoring)
+            #   Phase 2: B*N inputs unchanged (one per rollout, for QA scoring)
+            phase1_inputs = [modify_input(inputs[i]) for i in range(0, len(inputs), N)]
+            inputs = phase1_inputs + list(inputs)  # B + B*N
 
         (
             prompt_ids_list,
@@ -2025,12 +2075,8 @@ class LMLMGRPOTrainer(BaseTrainer):
         ) = self._generate(prompts, contexts=contexts)
 
         if self.two_phase:
-            #This seems odd, but basically we only pass the phase 2 prompts into the generate function, and inside the loop this creates both prompts.
+            # combined_prompts from _generate_two_phase = DB_prompts(B) + qa_prompts(B*N)
             prompts = [x["prompt"] for x in inputs]
-
-        print("\n\n\n")
-        print("Prompts is: ", [p[:50] for p in prompts])
-        print("completions is: ", [c[:50] for c in completions ])
 
         assert len(inputs) == len(completions), f"Mismatch: {len(inputs)} inputs vs {len(completions)} completions"
         assert len(prompt_ids_list) == len(completions), f"Mismatch: {len(prompt_ids_list)} prompt_ids vs {len(completions)} completions"
@@ -2199,23 +2245,23 @@ class LMLMGRPOTrainer(BaseTrainer):
         advantages = rewards - mean_grouped_rewards
         print("advantages is :", advantages)
 
-        if self.scale_rewards in ["group", "none"]:
-            # If self.scale_rewards = "none", we'll still log group level std
-            if num_generations > 1:
-                std_rewards = rewards.view(-1, num_generations).std(dim=1)
-                std_rewards = std_rewards.repeat_interleave(num_generations, dim=0)
-            else:  # this case doesn't occur during training, but could in eval when num_generations_eval=1
-                std_rewards = torch.zeros_like(rewards)
-        elif self.scale_rewards == "batch":
-            # Compute global std
-            if rewards.numel() > 1:
-                std_rewards = rewards.std().expand_as(rewards)
-            else:  # this case doesn't occur during training, but could in eval when num_generations_eval=batch_size=1
-                std_rewards = torch.zeros_like(rewards)
-        else:
-            raise ValueError(
-                f"Invalid value for scale_rewards: {self.scale_rewards}. Must be one of 'batch', 'group', or 'none'."
-            )
+            if self.scale_rewards in ["group", "none"]:
+                # If self.scale_rewards = "none", we'll still log group level std
+                if num_generations > 1:
+                    std_rewards = rewards.view(-1, num_generations).std(dim=1)
+                    std_rewards = std_rewards.repeat_interleave(num_generations, dim=0)
+                else:  # this case doesn't occur during training, but could in eval when num_generations_eval=1
+                    std_rewards = torch.zeros_like(rewards)
+            elif self.scale_rewards == "batch":
+                # Compute global std
+                if rewards.numel() > 1:
+                    std_rewards = rewards.std().expand_as(rewards)
+                else:  # this case doesn't occur during training, but could in eval when num_generations_eval=batch_size=1
+                    std_rewards = torch.zeros_like(rewards)
+            else:
+                raise ValueError(
+                    f"Invalid value for scale_rewards: {self.scale_rewards}. Must be one of 'batch', 'group', or 'none'."
+                )
 
 
         is_std_zero = torch.isclose(std_rewards, torch.zeros_like(std_rewards))
@@ -2646,11 +2692,3 @@ class LMLMGRPOTrainer(BaseTrainer):
             model_name = self.args.hub_model_id.split("/")[-1]
         self.create_model_card(model_name=model_name)
         super()._save_checkpoint(model, trial)
-
-def debug_example(completion_ids, completions, logprobs, message=""):
-    for i in range(len(completions)):
-        if "vocalist" in completions[i] and len(completion_ids[i]) != len(logprobs[i]):
-            print(f">>> debug example {i} {message}")
-            print(f"completion_ids != logprobs: {len(completion_ids[i])} != {len(logprobs[i])}")
-            import pdb; pdb.set_trace()
-            print(f"completions: {completions[i]}")
