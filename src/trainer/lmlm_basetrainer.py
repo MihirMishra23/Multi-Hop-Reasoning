@@ -1736,6 +1736,10 @@ class LMLMGRPOTrainer(BaseTrainer):
             phase1_completion_ids, skip_special_tokens=False
         )
 
+        phase1_completions_for_db = self.processing_class.batch_decode(
+            phase1_completion_ids, skip_special_tokens=True
+        )
+
         B = len(qa_prompts)
         N = num_generations
         # [TRR++] Phase 1 must produce exactly B completions (1 per question)
@@ -1755,7 +1759,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         all_triplets = []
         total_triplets = 0
         context_lengths = []
-        for i, comp_text in enumerate(phase1_completions):
+        for i, comp_text in enumerate(phase1_completions_for_db):
             triplets = parse_triplets(comp_text)
             total_triplets += len(triplets)
             all_triplets.append(triplets)
@@ -1806,7 +1810,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             completion_ids,
             logprobs,
             extra_fields,
-        ) = self._generate_single_turn(qa_prompts, num_rollouts=num_generations)
+        ) = self._generate_single_turn(qa_prompts, num_rollouts=N)
 
         completions = self.processing_class.batch_decode(
             completion_ids, skip_special_tokens=False
