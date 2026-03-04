@@ -124,11 +124,15 @@ def main(script_args, training_args, model_args, pretrain_args):
         return tokenized
 
     def tokenize_fn(example, max_length = 2048):
-
-        # Prepare prompt
-        # prompt = "Question:\n" + example["question"] + "\nAnswer:\n"
-        prompt = example["annotated_text"].split("\nAnswer:\n")[0] + "\nAnswer:\n"
-        answer = example["annotated_text"].split("\nAnswer:\n")[1]
+        # old sft data stored the prompt and answer in the same field, under the format "Question:\n{prompt}\nAnswer:\n". This is hard to parse / does not generalize, 
+        # so from now can have a seperate field for the prompt and answer. Ideally the old sft data should be done this way as well.
+        if "format_version" in example and example['format_version'] is not None: 
+            assert(example['format_version'] == 1) # 1 is a dummy value
+            prompt = example["prompt"]
+            answer = example["answer"]
+        else:
+            prompt = example["annotated_text"].split("\nAnswer:\n")[0] + "\nAnswer:\n"
+            answer = example["annotated_text"].split("\nAnswer:\n")[1]
 
         # Tokenize separately
         prompt_tokens = tokenizer(
@@ -170,7 +174,7 @@ def main(script_args, training_args, model_args, pretrain_args):
             "labels": labels,
         }
 
-    train_dataset = train_dataset.map(tokenize_fn, batched=False, remove_columns=["annotated_text"], fn_kwargs={"max_length" : pretrain_args.max_seq_length })
+    train_dataset = train_dataset.map(tokenize_fn, batched=False, fn_kwargs={"max_length" : pretrain_args.max_seq_length })
 
     keep_keys = ["input_ids", "attention_mask", "labels"]
     train_dataset = train_dataset.remove_columns([col for col in train_dataset.column_names if col not in keep_keys])
