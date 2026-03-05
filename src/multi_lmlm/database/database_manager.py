@@ -181,7 +181,6 @@ class DatabaseManager:
                 f"[dblookup_fail_3] No retrieval results for entity='{entity}', relationship='{relationship}'",
                 "no_retrieval_data_found"
             )
-        print(f"retrieved {entity} {relationship} -> {results}")
         return results
 
     def build_database(self, dataset: Union[DatasetDict, List[Dict]], database_name: Optional[str] = None, database_org_file: Optional[str] = None):
@@ -228,7 +227,6 @@ class DatabaseManager:
         self.database["relationships"] = [t[1] for t in triplets]
         self.database["return_values"] = [t[2] for t in triplets]
         self.database["triplets"] = triplets
-        logger.info(f"Loaded database from {len(triplets)} triplets with precomputed embeddings.")
 
         # Initialize TopkRetriever with precomputed embeddings
         self.topk_retriever = TopkRetriever(
