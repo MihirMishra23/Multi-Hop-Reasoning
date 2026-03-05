@@ -619,22 +619,23 @@ class LMLMGRPOTrainer(BaseTrainer):
         self.num_completions_to_print = args.num_completions_to_print
         # Keep logs sized to the generation batch to record only outputs from the latest model update.
         # In two-phase mode, we generate 2x completions (Phase 1 + Phase 2), so double the maxlen
-        log_maxlen = args.generation_batch_size * (2 if self.two_phase else 1)
+        B = args.generation_batch_size
+        N = args.num_generations
         if self.two_phase:
             self._logs = {
-                "phase1_prompt": deque(maxlen=args.generation_batch_size),
-                "phase2_prompt":deque(maxlen=args.generation_batch_size),
-                "phase1_completion": deque(maxlen=args.generation_batch_size),
-                "phase2_completion" : deque(maxlen=args.generation_batch_size),
-                "phase1_context" : deque(maxlen=args.generation_batch_size),
-                "generated_db" : deque(maxlen=args.generation_batch_size),
-                # "phase1_reward" : deque(maxlen=args.generation_batch_size),
-                # "phase2_reward" : deque(maxlen=args.generation_batch_size),
-                "rewards": defaultdict(lambda: deque(maxlen=args.generation_batch_size)),
-                "phase1_advantages": deque(maxlen=args.generation_batch_size),
-                "phase2_advantages": deque(maxlen=args.generation_batch_size),
-                "answer" : deque(maxlen=args.generation_batch_size),
+                "phase1_prompt": deque(maxlen=B),
+                "phase1_completion": deque(maxlen=B),
+                "phase1_context": deque(maxlen=B),
+                "generated_db": deque(maxlen=B),
+                "rewards": defaultdict(lambda: deque(maxlen=B)),
+                "phase1_advantages": deque(maxlen=B),
+                "answer": deque(maxlen=B),
             }
+            for i in range(N):
+                self._logs[f"phase2_prompt_{i}"] = deque(maxlen=B)
+                self._logs[f"phase2_completion_{i}"] = deque(maxlen=B)
+                self._logs[f"phase2_advantages_{i}"] = deque(maxlen=B)
+                self._logs["rewards"][f"em_accuracy_{i}"] = deque(maxlen=B)
 
         else:
             self._logs = {
@@ -2368,16 +2369,23 @@ class LMLMGRPOTrainer(BaseTrainer):
             phase2_advantages = all_advantages[B:]
 
             self._logs["phase1_prompt"].extend(phase1_prompts)
-            self._logs["phase2_prompt"].extend(phase2_prompts)
             self._logs["phase1_completion"].extend(phase1_completions)
-            self._logs["phase2_completion"].extend(phase2_completions)
-            self._logs["rewards"]["em_accuracy"].extend(em_accuracy_rewards_list)
-            self._logs["rewards"]["db_size_threshold"].extend(db_threshold_rewards_list)
             self._logs["phase1_advantages"].extend(phase1_advantages)
-            self._logs["phase2_advantages"].extend(phase2_advantages)
+            self._logs["rewards"]["db_size_threshold"].extend(db_threshold_rewards_list)
             self._logs["phase1_context"].extend(["\n\n".join(ctx_list) for ctx_list in contexts])
             self._logs["generated_db"].extend(self._generated_db_triplet_list)
-            self._logs["answer"].extend(answers)
+            self._logs["answer"].extend(answers[::N])
+
+            for i in range(N):
+                phase2_prompts_i = [phase2_prompts[b*N + i] for b in range(B)]
+                phase2_completions_i = [phase2_completions[b*N + i] for b in range(B)]
+                phase2_advantages_i = [phase2_advantages[b*N + i] for b in range(B)]
+                em_accuracy_rewards_i = [em_accuracy_rewards_list[b*N + i] for b in range(B)]
+
+                self._logs[f"phase2_prompt_{i}"].extend(phase2_prompts_i)
+                self._logs[f"phase2_completion_{i}"].extend(phase2_completions_i)
+                self._logs[f"phase2_advantages_{i}"].extend(phase2_advantages_i)
+                self._logs["rewards"][f"em_accuracy_{i}"].extend(em_accuracy_rewards_i)
 
 
         else:
@@ -2707,15 +2715,20 @@ class LMLMGRPOTrainer(BaseTrainer):
                 logging_backends.append(wandb)
 
             if self.two_phase:
-                # BUG: "All arrays must be of the same length"
                 table = {
-                    "step": [str(self.state.global_step)] * len(self._logs["phase1_prompt"]+self._logs["phase2_prompt"]),
-                    "prompt": self._logs["phase1_prompt"] + self._logs["phase2_prompt"],
-                    "completion": self._logs["phase1_completion"] + self._logs["phase2_completion"],
-                    **self._logs["rewards"],
-                    "advantage": self._logs["advantages"],
-                    "answer" : self._logs["answer"],
+                    "step": [str(self.state.global_step)] * len(self._logs["phase1_prompt"]),
+                    "phase1_prompt": self._logs["phase1_prompt"],
+                    "phase1_completion": self._logs["phase1_completion"],
+                    "phase1_context": self._logs["phase1_context"],
+                    "generated_db": self._logs["generated_db"],
+                    "phase1_advantage": self._logs["phase1_advantages"],
+                    "answer": self._logs["answer"],
                 }
+                for i in range(self.num_generations):
+                    table[f"phase2_prompt_{i}"] = self._logs[f"phase2_prompt_{i}"]
+                    table[f"phase2_completion_{i}"] = self._logs[f"phase2_completion_{i}"]
+                    table[f"phase2_advantage_{i}"] = self._logs[f"phase2_advantages_{i}"]
+                table.update(self._logs["rewards"])
             else:
                 table = {
                     "step": [str(self.state.global_step)] * len(self._logs["prompt"]),

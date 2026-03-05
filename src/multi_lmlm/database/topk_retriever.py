@@ -60,7 +60,6 @@ class TopkRetriever:
 
         self.index = None
         self.id_to_triplet = {}
-        logger.info("initializing..")
         if self.cache_dir and not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir, exist_ok=True)
 
