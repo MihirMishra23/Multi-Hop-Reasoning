@@ -11,7 +11,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 class TopkRetriever:
-    def __init__(self, 
+    def __init__(self,
                  database: List[Tuple[str, str, str]],
                  model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
                  top_k: int = 5,
@@ -22,7 +22,9 @@ class TopkRetriever:
                  database_name: str = "default_db",
                  use_hf_cache: bool = True,
                  use_inverses : bool = False,
-                 hf_repo_id: str = "kilian-group/LMLM-database-cache"):
+                 hf_repo_id: str = "kilian-group/LMLM-database-cache",
+                 precomputed_embeddings: Optional[np.ndarray] = None,
+                 model: Optional[SentenceTransformer] = None):
         """
         Args:
             database: List of (entity, relation, value) triplets
@@ -34,6 +36,8 @@ class TopkRetriever:
             database_name: Name used for cache files
             use_hf_cache: Whether to use Hugging Face cache
             hf_repo_id: Hugging Face repository ID
+            precomputed_embeddings: Optional pre-computed embeddings (skips encoding)
+            model: Used to initialize model before building index.
         """
         self.database = database
         self.top_k = top_k if top_k else 5
@@ -43,35 +47,27 @@ class TopkRetriever:
         self.database_name = database_name
         self.is_adaptive = adaptive
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model = SentenceTransformer(model_name, device=self.device)
-        self.model = self.model.half().eval()
+        if model is None:
+            self.model = SentenceTransformer(model_name, device=self.device)
+        else:
+            self.model = model
+        if precomputed_embeddings is None:
+            self.model = model
+            self.model = self.model.half().eval()
+            self.embedding_dim = self.model.get_sentence_embedding_dimension()
+        else:
+            self.embedding_dim = precomputed_embeddings.shape[1]
 
         self.index = None
         self.id_to_triplet = {}
-        logger.info("initializing..")
         if self.cache_dir and not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir, exist_ok=True)
 
         optional_inv_text = ""
         if use_inverses:
             optional_inv_text = "_use_inv"
-        
-        cache_path = os.path.join(self.cache_dir, f"{self.database_name}_{len(self.database)}" + optional_inv_text) if self.cache_dir else None
-        
-        cached_path = self._get_cached_paths(
-            cache_path,
-            use_hf_cache=use_hf_cache,
-            hf_repo_id=hf_repo_id,
-        )
-        if cached_path:
-            self._load_from_cache(cached_path)
-            logger.info(f"Loaded FAISS index of {len(self.id_to_triplet)} triplets from cache")
-        else:
-            self._build_index()
-            if cache_path:
-                self._save_to_cache(cache_path)
-                logger.info(f"Saved FAISS index of {len(self.id_to_triplet)} triplets to {cache_path}")
 
+        self._build_index(precomputed_embeddings=precomputed_embeddings)
 
         gc.collect()
         torch.cuda.empty_cache()
@@ -119,26 +115,29 @@ class TopkRetriever:
         with open(f"{cache_path}.mapping", 'rb') as f:
             self.id_to_triplet = pickle.load(f)
 
-    def _build_index(self):
-        logger.info("Building FAISS index")
-        embedding_dim = self.model.get_sentence_embedding_dimension()
-        self.index = faiss.IndexIDMap(faiss.IndexFlatIP(embedding_dim))
+    def _build_index(self, precomputed_embeddings=None):
+        self.index = faiss.IndexIDMap(faiss.IndexFlatIP(self.embedding_dim))
 
         texts = [f"{self._normalize_text(ent)} {self._normalize_text(rel)}" for ent, rel, _ in self.database]
-        logger.info(f"Encoding {len(texts)} (entity, relationship) pairs, which may take a long time...")
-        embeddings = self.model.encode(
-            texts,
-            batch_size=self.batch_size,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=False
-        )
-        
+        if (len(texts) == 0):
+            logger.warning("No triplets created! leaving index empty...")
+            return
+
+        if precomputed_embeddings is not None:
+            embeddings = precomputed_embeddings
+        else:
+            logger.info(f"Encoding {len(texts)} (entity, relationship) pairs, which may take a long time...")
+            embeddings = self.model.encode(
+                texts,
+                batch_size=self.batch_size,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+                show_progress_bar=False
+            )
+
         ids = np.arange(len(self.database))
-        logger.info(f"Adding {len(texts)} triplets to Faiss index...")
         self.index.add_with_ids(embeddings, ids)
         self.id_to_triplet = {i: triplet for i, triplet in enumerate(self.database)}
-        logger.info("Finished building index!")
 
     def retrieve_top_k(self, entity: str, relation: str, threshold: Optional[float] = None, return_triplets: bool = False) -> List[str]:
         query_text = f"{self._normalize_text(entity)} {self._normalize_text(relation)}"
