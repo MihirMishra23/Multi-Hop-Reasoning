@@ -3,10 +3,13 @@ import re
 import json
 import time
 import logging
+import torch
+import numpy as np
 from typing import Dict, List, Optional, Union
 from collections import Counter
 from datasets import DatasetDict
 from multi_lmlm.database.topk_retriever import TopkRetriever
+from sentence_transformers import SentenceTransformer
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -54,6 +57,69 @@ class DatabaseLookupError(Exception):
     @classmethod
     def get_failure_statistics(cls):
         return dict(cls.failure_statistics)
+    
+
+    
+def build_databases_from_triplets_batch(triplets_batch: list[list[tuple[str, str, str]]], top_k: int = 4, default_threshold: float = 0.6, adaptive: bool = False, use_inverses: bool = False, batch_size: int = 2048) -> list["DatabaseManager"]:
+    """Build multiple DatabaseManagers from a batch of triplet lists, computing embeddings once.
+
+    Args:
+        triplets_batch: List of triplet lists, one per example
+        top_k: Number of top results to retrieve
+        default_threshold: Similarity threshold for retrieval
+        adaptive: Whether to use adaptive threshold
+        use_inverses: Whether to include inverse relationships
+        batch_size: Batch size for embedding encoding
+
+    Returns:
+        List of DatabaseManager instances, one per input triplet list
+    """
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device=device)
+
+    # Flatten all triplets and compute embeddings at once
+    combined_triplets = [t for triplet_list in triplets_batch for t in triplet_list]
+
+    if not combined_triplets:
+        logger.warning("No triplets provided to build_databases_from_triplets_batch")
+        return [DatabaseManager() for _ in triplets_batch]
+
+    logger.info(f"Encoding {len(combined_triplets)} triplets from {len(triplets_batch)} examples in batch...")
+    texts = [f"{TopkRetriever._normalize_text(ent)} {TopkRetriever._normalize_text(rel)}" for ent, rel, _ in combined_triplets]
+    embeddings = embedding_model.encode(
+        texts,
+        batch_size=batch_size,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+        show_progress_bar=False
+    )
+
+    # Split embeddings back to per-example chunks
+    database_managers = []
+    start_idx = 0
+
+    for triplet_list in triplets_batch:
+        end_idx = start_idx + len(triplet_list)
+        example_embeddings = embeddings[start_idx:end_idx]
+
+        # Create DatabaseManager for this example
+        db_manager = DatabaseManager()
+        db_manager.build_database_from_triplets_with_embeddings(
+            triplets=triplet_list,
+            embeddings=example_embeddings,
+            top_k=top_k,
+            default_threshold=default_threshold,
+            adaptive=adaptive,
+            use_inverses=use_inverses,
+            embedding_model = embedding_model
+        )
+        database_managers.append(db_manager)
+
+        start_idx = end_idx
+
+    logger.info(f"Built {len(database_managers)} databases from batch")
+    return database_managers
+
 
 class DatabaseManager:
     def __init__(self):
@@ -138,6 +204,44 @@ class DatabaseManager:
 
         logger.info(f"Built database with {len(self)} triplets.")
 
+    def build_database_from_triplets(self, triplets : list[tuple[str,str,str]], top_k : int = 4, default_threshold : float = 0.6, adaptive : bool = False, use_inverses : bool = False ) -> None:
+        self.database["entities"] = [t[0] for t in triplets]
+        self.database["relationships"] = [t[1] for t in triplets]
+        self.database["return_values"] = [t[2] for t in triplets]
+        self.database["triplets"] = triplets
+        logger.info(f"Loaded database from triplets.")
+        self.init_topk_retriever(top_k=top_k, default_threshold=default_threshold, adaptive = adaptive, use_inverses = use_inverses)
+
+    def build_database_from_triplets_with_embeddings(self, triplets: list[tuple[str, str, str]], embeddings, top_k: int = 4, default_threshold: float = 0.6, adaptive: bool = False, use_inverses: bool = False, embedding_model : Optional[SentenceTransformer] = None) -> None:
+        """Build database from triplets with pre-computed embeddings.
+
+        Args:
+            triplets: List of (entity, relationship, value) tuples
+            embeddings: Pre-computed embeddings for the triplets
+            top_k: Number of top results to retrieve
+            default_threshold: Similarity threshold for retrieval
+            adaptive: Whether to use adaptive threshold
+            use_inverses: Whether to include inverse relationships
+        """
+        self.database["entities"] = [t[0] for t in triplets]
+        self.database["relationships"] = [t[1] for t in triplets]
+        self.database["return_values"] = [t[2] for t in triplets]
+        self.database["triplets"] = triplets
+
+        # Initialize TopkRetriever with precomputed embeddings
+        self.topk_retriever = TopkRetriever(
+            self.database["triplets"],
+            top_k=top_k,
+            threshold=default_threshold,
+            adaptive=adaptive,
+            use_inverses=use_inverses,
+            database_name=self.database_name,
+            use_hf_cache=False,
+            precomputed_embeddings=embeddings,
+            model = embedding_model,
+        )
+
+
     def load_database(self, load_path: str, top_k : int = 4, default_threshold : float = 0.6, adaptive : bool = False, use_inverses : bool = False):
         """Load database from JSON file."""
         if not os.path.exists(load_path):
@@ -171,6 +275,210 @@ class DatabaseManager:
         with open(save_path, "w") as f:
             json.dump(serializable, f, indent=4)
         logger.info(f"Database saved at {save_path}.")
+
+class PerExampleRetriever:
+    """Lightweight per-example database for two-phase generation.
+
+    Stores triplets from Phase 1 (model-generated) and retrieves values
+    using a multi-tier matching strategy:
+
+        1. **Exact match** – normalized (entity, relationship) lookup (fastest).
+        2. **Substring containment** – one string contains the other
+           (catches plural/prefix differences like "voice actor" vs "voice actors").
+        3. **Token Jaccard similarity** – overlap of word tokens
+           (catches rewordings like "publication type" vs "type of publication").
+
+    The entity and relationship scores are computed independently and then
+    multiplied so that *both* must be reasonable.  A configurable
+    ``fuzzy_threshold`` (default 0.3) governs the minimum combined score.
+    """
+
+    def __init__(self, triplets: list[tuple[str, str, str]], fuzzy_threshold: float = 0.3):
+        """
+        Args:
+            triplets: List of (entity, relationship, value) tuples produced by Phase 1.
+            fuzzy_threshold: Minimum combined score (entity × relationship) for
+                a fuzzy match to be accepted.  Set to ``1.0`` to disable fuzzy
+                matching and require exact matches only.
+        """
+        self._raw_triplets = list(triplets)
+        self._fuzzy_threshold = fuzzy_threshold
+
+        # --- Tier 1: exact lookup dict ---
+        self._lookup: dict[tuple[str, str], str] = {}
+        for entity, relationship, value in triplets:
+            key = (self._normalize(entity), self._normalize(relationship))
+            if key not in self._lookup:
+                self._lookup[key] = value
+
+        # --- Pre-compute for Tier 2/3: normalized strings + token sets ---
+        self._indexed: list[tuple[str, str, set[str], set[str], str]] = []
+        for entity, relationship, value in triplets:
+            ent_norm = self._normalize(entity)
+            rel_norm = self._normalize(relationship)
+            self._indexed.append((
+                ent_norm,
+                rel_norm,
+                self._tokenize(ent_norm),
+                self._tokenize(rel_norm),
+                value,
+            ))
+
+        # Running counters (lightweight stats, no lock needed – single-threaded)
+        self._exact_hits = 0
+        self._fuzzy_hits = 0
+        self._misses = 0
+
+    # ------------------------------------------------------------------
+    # String helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize(s: str) -> str:
+        """Lowercase, strip, collapse whitespace, replace underscores."""
+        return " ".join(s.lower().strip().replace("_", " ").split())
+
+    @staticmethod
+    def _tokenize(s: str) -> set[str]:
+        """Split a *normalized* string into a set of word tokens."""
+        return set(s.split()) if s else set()
+
+    @staticmethod
+    def _jaccard(a: set[str], b: set[str]) -> float:
+        """Jaccard similarity between two token sets."""
+        if not a and not b:
+            return 1.0
+        if not a or not b:
+            return 0.0
+        return len(a & b) / len(a | b)
+
+    @staticmethod
+    def _containment_score(query: str, stored: str) -> float:
+        """Return 1.0 if one string fully contains the other, else 0.0."""
+        if query in stored or stored in query:
+            return 1.0
+        return 0.0
+
+    def _field_score(self, query_norm: str, query_tokens: set[str],
+                     stored_norm: str, stored_tokens: set[str]) -> float:
+        """Score a single field (entity or relationship) using the best of
+        substring containment and Jaccard similarity."""
+        return max(
+            self._containment_score(query_norm, stored_norm),
+            self._jaccard(query_tokens, stored_tokens),
+        )
+
+    # ------------------------------------------------------------------
+    # Core retrieval
+    # ------------------------------------------------------------------
+
+    def retrieve(self, entity: str, relationship: str) -> str | None:
+        """Return the value for (entity, relationship), or ``None`` if no
+        match above ``fuzzy_threshold`` is found.
+
+        Matching strategy (tried in order):
+            1. Exact normalized match.
+            2. Best fuzzy match above ``self._fuzzy_threshold``.
+        """
+        q_ent = self._normalize(entity)
+        q_rel = self._normalize(relationship)
+
+        # --- Tier 1: exact ---
+        exact = self._lookup.get((q_ent, q_rel))
+        if exact is not None:
+            self._exact_hits += 1
+            return exact
+
+        # --- Tier 2/3: fuzzy ---
+        if not self._indexed:
+            self._misses += 1
+            return None
+
+        q_ent_tokens = self._tokenize(q_ent)
+        q_rel_tokens = self._tokenize(q_rel)
+
+        best_score = 0.0
+        best_value: str | None = None
+        for stored_ent, stored_rel, stored_ent_tok, stored_rel_tok, value in self._indexed:
+            ent_score = self._field_score(q_ent, q_ent_tokens, stored_ent, stored_ent_tok)
+            rel_score = self._field_score(q_rel, q_rel_tokens, stored_rel, stored_rel_tok)
+            # Both entity AND relationship must be reasonable
+            combined = ent_score * rel_score
+            if combined > best_score:
+                best_score = combined
+                best_value = value
+
+        if best_score >= self._fuzzy_threshold:
+            self._fuzzy_hits += 1
+            return best_value
+
+        self._misses += 1
+        return None
+
+    # ------------------------------------------------------------------
+    # Drop-in API compatible with DatabaseManager
+    # ------------------------------------------------------------------
+
+    def retrieve_from_database(self, prompt: str, return_triplets: bool = False, threshold: float | None = None) -> list[str]:
+        """Drop-in replacement for ``DatabaseManager.retrieve_from_database``.
+
+        Parses the db-lookup tokens from *prompt*, looks up (entity, relationship)
+        in the per-example store, and returns the value wrapped in a list.
+        Raises ``DatabaseLookupError`` on failure (same contract as DatabaseManager).
+        """
+        import re
+        pattern_lst = [
+            r"\[dblookup\('((?:[^'\\]|\\.)+)',\s*'((?:[^'\\]|\\.)+)'\)\s*->",
+            r"\[dblookup\('(.+?)',\s*'(.+?)'\)\s*->",
+            r"<\|db_entity\|>(.+?)<\|db_relationship\|>(.+?)<\|db_return\|>",
+        ]
+        matches = {tuple(match) for pattern in pattern_lst for match in re.findall(pattern, prompt)}
+
+        if not matches:
+            raise DatabaseLookupError(
+                f"[per_example_fail] No valid dblookup pattern found in prompt: {prompt}",
+                "no_match_found",
+            )
+        if len(matches) > 1:
+            raise DatabaseLookupError(
+                f"[per_example_fail] Multiple dblookup matches found: {matches}",
+                "multiple_matches",
+            )
+
+        entity, relationship = matches.pop()
+        value = self.retrieve(entity, relationship)
+        if value is None:
+            raise DatabaseLookupError(
+                f"[per_example_fail] No result for entity='{entity}', relationship='{relationship}'"
+                f" (db has {len(self._raw_triplets)} triplets, {self._exact_hits} exact/{self._fuzzy_hits} fuzzy hits so far)",
+                "no_retrieval_data_found",
+            )
+        if return_triplets:
+            return [f"({entity}, {relationship}, {value})"]
+        return [value]
+
+    # ------------------------------------------------------------------
+    # Diagnostics
+    # ------------------------------------------------------------------
+
+    def stats(self) -> dict[str, int]:
+        """Return lookup statistics."""
+        return {
+            "exact_hits": self._exact_hits,
+            "fuzzy_hits": self._fuzzy_hits,
+            "misses": self._misses,
+        }
+
+    def __len__(self) -> int:
+        return len(self._raw_triplets)
+
+    def __repr__(self) -> str:
+        return (
+            f"PerExampleRetriever({len(self._raw_triplets)} triplets, "
+            f"threshold={self._fuzzy_threshold}, "
+            f"exact={self._exact_hits}/fuzzy={self._fuzzy_hits}/miss={self._misses})"
+        )
+
 
 def load_current_database(database_dir: str) -> DatabaseManager:
     """Load all database files from directory."""

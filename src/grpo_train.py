@@ -1,14 +1,16 @@
 from dataclasses import dataclass, field
+from typing import List, Optional
 from datasets import load_dataset
-from trainer.lmlm_basetrainer import LMLMGRPOTrainer
+from trainer.lmlm_basetrainer import LMLMGRPOTrainer, parse_triplets
 # from trainer.lmlm_grpotrainer import LMLMGRPOTrainer
 from transformers import AutoTokenizer, HfArgumentParser
 from eval.metrics import exact_match_score
 from trl.trainer.grpo_config import GRPOConfig
-from multi_lmlm.constants import ANSWER_START_TOKEN, ANSWER_END_TOKEN
+from reward_func import em_accuracy, f1_reward, db_coverage_reward, db_size_threshold
 import wandb
 import os
 from data import get_dataset
+import random
 
 @dataclass
 class ScriptArguments:
@@ -48,30 +50,26 @@ class LMLMArguments:
         default = False,
         metadata={"help" : "When building the db, augment (e,r,v) -> (v,r,e) for each triplet"}
     )
-    retrieval_threshold : bool = field(
+    retrieval_threshold : float = field(
         default = 0.6,
         metadata = {"help" : "cosing similarity threshold"}
     )
-
-
-def extract_answer_from_tags(text: str):
-    """Extract answer from between answer tags."""
-    try:
-        return text.split(ANSWER_START_TOKEN)[1].split(ANSWER_END_TOKEN)[0]
-    except Exception:
-        return ""
-
-
-def em_accuracy(completions, solution, **kwargs):
-    """Calculate exact match accuracy for completions."""
-    return [1 if exact_match_score(extract_answer_from_tags(c), s) else 0 
-            for (c, s) in zip(completions, solution)]
+    two_phase: bool = field(
+        default=False,
+        metadata={"help": "Enable two-phase generation (Phase 1: DB creation from contexts, Phase 2: QA with per-example DB)"}
+    )
+    reward_func: str = field(
+        default="em_coverage",
+        metadata={"help": "Reward function to use"}
+    )
 
 
 def process_example(example):
     """Process HotpotQA example into prompt-solution format."""
     return {
         "prompt": f"Question:\n{example['question']}\nAnswer:\n",
+        "question": example["question"],
+        "contexts": example.get("golden_contexts", []),
         "solution": example["answers"][0]
     }
 
@@ -94,8 +92,8 @@ def main():
     # Load and process dataset
     print(f"Loading dataset: {script_args.dataset_name}")
 
-    train_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "train", limit = script_args.train_size)
-    test_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "eval", limit = script_args.eval_size)
+    train_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "train", limit = script_args.train_size, seed = 42)
+    test_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "eval", limit = script_args.eval_size, seed = 42)
     
     train_set = train_dataset.map(process_example)
     eval_set = test_dataset.map(process_example)
@@ -122,13 +120,30 @@ def main():
     print(f"  Adaptive k: {lmlm_args.adaptive_k}")
     print(f"  Return triples: {lmlm_args.return_triples}")
 
+    # In two_phase (TRR++) mode:
+    #   - em_accuracy scores Phase-2 QA completions (returns None for Phase-1 triplets)
+    #   - db_coverage_reward scores Phase-1 DB completions via graph reachability (returns None for Phase-2)
+    # db_size_threshold is excluded; db_coverage_reward replaces it with a semantically richer signal.
+    if lmlm_args.two_phase:
+        reward_funcs = []
+        if "em" in lmlm_args.reward_func:
+            reward_funcs.append(em_accuracy)
+        if "f1" in lmlm_args.reward_func:
+            reward_funcs.append(f1_reward)
+        if "coverage" in lmlm_args.reward_func:
+            reward_funcs.append(db_coverage_reward)
+        if "size" in lmlm_args.reward_func:
+            reward_funcs.append(db_size_threshold)
+    else:
+        reward_funcs = [em_accuracy]
+
     # Initialize trainer
     print("Initializing LMLMGRPOTrainer...")
     trainer = LMLMGRPOTrainer(
         retrieval_threshold = lmlm_args.retrieval_threshold,
         use_inverses = lmlm_args.use_inverses,
         model=script_args.model_path,
-        reward_funcs=em_accuracy,
+        reward_funcs=reward_funcs,
         lmlm_database_path=script_args.database_path,
         adaptive_k=lmlm_args.adaptive_k,
         return_triples=lmlm_args.return_triples,
@@ -137,6 +152,7 @@ def main():
         train_dataset=train_set,
         eval_dataset=eval_set,
         args=grpo_config,
+        two_phase=lmlm_args.two_phase,
     )
     
     # Start training
