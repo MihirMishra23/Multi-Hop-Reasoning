@@ -18,7 +18,7 @@ export VLLM_USE_FLASHINFER=0
 # Default values
 GPU_TYPE="B200"
 # MODEL_PATH="Qwen/Qwen3-1.7B"
-MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1
+MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_two_phase_hotpotqa_ep5_bsz48
 #DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
 DATABASE_PATH="" # -> Not used for two phase
 SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
@@ -36,13 +36,15 @@ TRAIN_SIZE=7000
 EVAL_SIZE=100
 MAX_COMPLETION_LENGTH=1024
 EVAL_STEPS=1
-LOGGING_STEPS=5
+LOGGING_STEPS=1
 TOP_P=0.95
 TEMPERATURE=1.3
 TOP_K=0
 IS_ADAPTIVE_K=False
 RETRIEVAL_THRESHOLD=0.9
 REWARD_FUNC="em_size"
+TWO_PHASE=true
+NUM_DB_ROLLOUTS=1
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -93,6 +95,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --reward_func)
             REWARD_FUNC="$2"
+            shift 2
+            ;;
+        --num_db_rollouts)
+            NUM_DB_ROLLOUTS="$2"
             shift 2
             ;;
         *)
@@ -211,6 +217,9 @@ echo "  Two phase: ${TWO_PHASE}"
 echo "  Return triples: ${RETURN_TRIPLES}"
 echo "  Adaptive k: ${ADAPTIVE_K}"
 
+NUM_GPUS=1
+PER_DEVICE_TRAIN_BATCH_SIZE=4
+
 
 accelerate launch \
   --num_processes=${NUM_GPUS} \
@@ -255,6 +264,7 @@ accelerate launch \
   ${TWO_PHASE} \
   ${RETURN_TRIPLES} \
   ${ADAPTIVE_K} \
-  --reward_func=${REWARD_FUNC}
+  --reward_func=${REWARD_FUNC} \
+  --num_db_rollouts=${NUM_DB_ROLLOUTS}
 
 echo "Training completed!"
