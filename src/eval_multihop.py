@@ -333,7 +333,14 @@ def main() -> None:
     parser.add_argument(
         "--top-k",
         default=4,
+        type = int,
         help="Maximum number of results to retrieve from database",
+    )
+    parser.add_argument(
+        "--similarity-threshold",
+        default=0.9,
+        type=float,
+        help="cosine similarity threshold for lmlm retrieval",
     )
     parser.add_argument(
         "--return-triplets",
@@ -593,7 +600,9 @@ def main() -> None:
         "model_path": args.model_path,
         "database_path": args.database_path,
         "return_triplets" : args.return_triplets,
-        "use_inverses" : args.use_inverses
+        "use_inverses" : args.use_inverses,
+        "top_k": args.top_k,
+        "similarity_threshold": args.similarity_threshold,
     }
 
     # Get agent instance using factory function
