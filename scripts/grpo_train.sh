@@ -18,7 +18,7 @@ export VLLM_USE_FLASHINFER=0
 # Default values
 GPU_TYPE="B200"
 # MODEL_PATH="Qwen/Qwen3-1.7B"
-MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_two_phase_hotpotqa_ep5_bsz48
+MODEL_PATH=/share/j_sun/mx253/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
 #DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
 DATABASE_PATH="" # -> Not used for two phase
 SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
@@ -44,7 +44,7 @@ IS_ADAPTIVE_K=False
 RETRIEVAL_THRESHOLD=0.9
 REWARD_FUNC="em_size"
 TWO_PHASE=true
-NUM_DB_ROLLOUTS=1
+NUM_DB_ROLLOUTS=2
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do

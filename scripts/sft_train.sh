@@ -18,8 +18,8 @@ export TORCH_USE_CUDA_DSA=1
 
 # input arguments for 
 TWO_PHASE=true
-OUTPUT_ROOT=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/
-MODEL_NAME_OR_PATH=Qwen/Qwen3-1.7B
+OUTPUT_ROOT=/share/j_sun/mx253/checkpoints/lmlm_multi_hop/
+MODEL_NAME_OR_PATH=Qwen/Qwen3-4B
 THRESHOLD=-1
 DATASET=hotpotqa
 
@@ -49,7 +49,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-MODEL_SIZE=1.7B
+MODEL_SIZE=4B
 export CUDA_VISIBLE_DEVICES=0
 NUM_GPUS=1
 
@@ -67,7 +67,7 @@ elif [ "${MODEL_SIZE}" = "4B" ]; then
     MODEL_NAME_OR_PATH="Qwen/Qwen3-4B"
     PER_DEVICE_TRAIN_BATCH_SIZE=8
     GRADIENT_ACCUMULATION_STEPS=6   # change to 4
-    MAX_SEQ_LENGTH=1024
+    MAX_SEQ_LENGTH=8096
 
 elif [ "${MODEL_SIZE}" = "3B" ]; then
     MODEL_NAME_OR_PATH="Qwen/Qwen2.5-3B"
@@ -176,4 +176,3 @@ accelerate launch \
     # --truncation \
     # --padding "max_length" \
     # --eval_on_start \
-done
