@@ -623,21 +623,23 @@ class LMLMGRPOTrainer(BaseTrainer):
         # In two-phase mode, we generate 2x completions (Phase 1 + Phase 2), so double the maxlen
         B = args.generation_batch_size
         N = args.num_generations
+        N_db = self.num_db_rollouts if self.two_phase else 1
+        B_log = B * N_db  # number of rows in log table (one per question-DB pair)
         if self.two_phase:
             self._logs = {
-                "phase1_prompt": deque(maxlen=B),
-                "phase1_completion": deque(maxlen=B),
-                "phase1_context": deque(maxlen=B),
-                "generated_db": deque(maxlen=B),
-                "rewards": defaultdict(lambda: deque(maxlen=B)),
-                "phase1_advantages": deque(maxlen=B),
-                "answer": deque(maxlen=B),
+                "phase1_prompt": deque(maxlen=B_log),
+                "phase1_completion": deque(maxlen=B_log),
+                "phase1_context": deque(maxlen=B_log),
+                "generated_db": deque(maxlen=B_log),
+                "rewards": defaultdict(lambda: deque(maxlen=B_log)),
+                "phase1_advantages": deque(maxlen=B_log),
+                "answer": deque(maxlen=B_log),
             }
             for i in range(N):
-                self._logs[f"phase2_prompt_{i}"] = deque(maxlen=B)
-                self._logs[f"phase2_completion_{i}"] = deque(maxlen=B)
-                self._logs[f"phase2_advantages_{i}"] = deque(maxlen=B)
-                self._logs["rewards"][f"em_accuracy_{i}"] = deque(maxlen=B)
+                self._logs[f"phase2_prompt_{i}"] = deque(maxlen=B_log)
+                self._logs[f"phase2_completion_{i}"] = deque(maxlen=B_log)
+                self._logs[f"phase2_advantages_{i}"] = deque(maxlen=B_log)
+                self._logs["rewards"][f"em_accuracy_{i}"] = deque(maxlen=B_log)
 
         else:
             self._logs = {
@@ -1770,7 +1772,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             all_triplets.append(triplets)
 
             # Calculate context length for this example
-            context_length = sum(len(ctx) for ctx in contexts[i])
+            context_length = sum(len(ctx) for ctx in contexts[i // N_db])
             context_lengths.append(context_length)
 
 
@@ -1888,7 +1890,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         combined_completion_ids = phase1_completion_ids + completion_ids
         combined_completions = phase1_completions + completions
         combined_logprobs = phase1_logprobs + logprobs
-        combined_prompts = phase1_prompts + [p for p in qa_prompts for _ in range(N_db * num_generations)]
+        combined_prompts = [p for p in phase1_prompts for _ in range(N_db)] + [p for p in qa_prompts for _ in range(N_db * num_generations)]
 
         # [TRR++] Combined output: B*N_db Phase-1 + B*N_db*N Phase-2 = B*N_db*(N+1)
         assert len(combined_completion_ids) == B * N_db + B * N_db * N, (
@@ -2369,34 +2371,35 @@ class LMLMGRPOTrainer(BaseTrainer):
 
         # Log prompt and completion texts
         if self.two_phase:
-            B = len(rewards) // (N + 1)
+            N_db = self.num_db_rollouts
+            B_total = len(rewards) // (N + 1)  # = B * N_db (number of phase1 entries)
+            B = B_total // N_db  # actual batch size (number of unique questions)
             all_prompts = gather_object(prompts_text)
             all_completions = gather_object(completions_text)
             all_advantages = all_process_advantages.tolist()
-            em_accuracy_rewards_list = rewards_per_func[B:, 0].tolist() # em first col, phase 2 second half of rows
-            db_threshold_rewards_list = rewards_per_func[:B, 1].tolist() # db_threshold second col, phase 1 first half of rows
+            em_accuracy_rewards_list = rewards_per_func[B_total:, 0].tolist()
+            db_threshold_rewards_list = rewards_per_func[:B_total, 1].tolist()
 
-
-            phase1_prompts = all_prompts[:B]
-            phase2_prompts = all_prompts[B:]
-            phase1_completions = all_completions[:B]
-            phase2_completions = all_completions[B:]
-            phase1_advantages = all_advantages[:B]
-            phase2_advantages = all_advantages[B:]
+            phase1_prompts = all_prompts[:B_total]
+            phase2_prompts = all_prompts[B_total:]
+            phase1_completions = all_completions[:B_total]
+            phase2_completions = all_completions[B_total:]
+            phase1_advantages = all_advantages[:B_total]
+            phase2_advantages = all_advantages[B_total:]
 
             self._logs["phase1_prompt"].extend(phase1_prompts)
             self._logs["phase1_completion"].extend(phase1_completions)
             self._logs["phase1_advantages"].extend(phase1_advantages)
             self._logs["rewards"]["db_size_threshold"].extend(db_threshold_rewards_list)
-            self._logs["phase1_context"].extend(["\n\n".join(ctx_list) for ctx_list in contexts])
+            self._logs["phase1_context"].extend(["\n\n".join(ctx_list) for ctx_list in contexts for _ in range(N_db)])
             self._logs["generated_db"].extend(self._generated_db_triplet_list)
-            self._logs["answer"].extend(answers[::N])
+            self._logs["answer"].extend([a for a in answers[::N] for _ in range(N_db)])
 
             for i in range(N):
-                phase2_prompts_i = [phase2_prompts[b*N + i] for b in range(B)]
-                phase2_completions_i = [phase2_completions[b*N + i] for b in range(B)]
-                phase2_advantages_i = [phase2_advantages[b*N + i] for b in range(B)]
-                em_accuracy_rewards_i = [em_accuracy_rewards_list[b*N + i] for b in range(B)]
+                phase2_prompts_i = [phase2_prompts[b*N + i] for b in range(B_total)]
+                phase2_completions_i = [phase2_completions[b*N + i] for b in range(B_total)]
+                phase2_advantages_i = [phase2_advantages[b*N + i] for b in range(B_total)]
+                em_accuracy_rewards_i = [em_accuracy_rewards_list[b*N + i] for b in range(B_total)]
 
                 self._logs[f"phase2_prompt_{i}"].extend(phase2_prompts_i)
                 self._logs[f"phase2_completion_{i}"].extend(phase2_completions_i)
