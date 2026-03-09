@@ -24,7 +24,7 @@ DATABASE_PATH="" # -> Not used for two phase
 SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
 DATASET_NAME="hotpotqa"
 NUM_GPUS=1
-SAVE_VERSION="full-overfit"
+SAVE_VERSION="full-overfit" #Put anything here, it is added to the model path
 
 # config
 LOSS_TYPE="grpo"
@@ -48,10 +48,7 @@ TWO_PHASE=true
 NUM_GPUS=1
 NUM_DB_ROLLOUTS=2
 PER_DEVICE_TRAIN_BATCH_SIZE=4
-NUM_GENERATIONS=8
 GRADIENT_ACCUMULATION_STEPS=8
-VLLM_GPU_MEMORY_UTILIZATION=0.15
-
 USE_INVERSES=True
 
 # Parse command line arguments
