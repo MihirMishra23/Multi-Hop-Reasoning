@@ -84,7 +84,6 @@ done
 
 if [ "${DATASET}" = "hotpotqa" ]; then
     if [ "${SPLIT}" = "dev" ]; then
-        DATABASE_PATH="/home/rtn27/Multi-Hop-Reasoning/ryan-playground/phase1_database_1000_nb_ex_1000.json"
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
