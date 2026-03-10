@@ -6,7 +6,8 @@ export VLLM_BATCH_INVARIANT=0
 #export TORCH_USE_CUDA_DSA=1  # Removed: paired with CUDA_LAUNCH_BLOCKING for debugging only
 #export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-export WANDB_ENTITY=dongyoung-go-cornell-university
+# export WANDB_ENTITY=dongyoung-go-cornell-university
+export WANDB_ENTITY=ryan-noonan-cornell-university
 export WANDB_PROJECT=LMLM-Multihop
 
 # DEBUG
@@ -187,6 +188,16 @@ fi
 CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((NUM_GPUS - 1)))
 export CUDA_VISIBLE_DEVICES
 echo "  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+
+# TODO (multi-GPU): In two_phase mode, gather(rewards_per_func) produces ordering
+# [GPU0_phase1+phase2, GPU1_phase1+phase2, ...] but the advantage computation in
+# lmlm_basetrainer.py assumes [all_phase1 (B*K), all_phase2 (B*N)]. This causes
+# completely wrong Phase-1/Phase-2 advantage grouping when NUM_GPUS > 1.
+# Fix: reorder the gathered tensor before the advantage split, or gather phase1/phase2 separately.
+if [ "${TWO_PHASE}" = "--two_phase" ] && [ "${NUM_GPUS}" -gt 1 ]; then
+    echo "WARNING: two_phase mode with NUM_GPUS=${NUM_GPUS} > 1 is not yet supported." >&2
+    echo "         Advantage computation will be incorrect. See TODO in grpo_train.sh and lmlm_basetrainer.py." >&2
+fi
 # NUM_TRAIN_EPOCHS=100
 
 
