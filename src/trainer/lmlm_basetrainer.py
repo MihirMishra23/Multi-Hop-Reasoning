@@ -1807,6 +1807,8 @@ class LMLMGRPOTrainer(BaseTrainer):
             len(per_example_dbs),
         )
 
+        DB_SIZE_RATIO_THRESHOLD = 0.005  # matches db_size_threshold reward func threshold
+
         # [TRR++] B*K per-question DBs (K per question), then expanded to B*N for Phase 2 tool calls
         assert len(per_example_dbs) == B * K, (
             f"[TRR++] expected {B * K} per_example_dbs, got {len(per_example_dbs)}"
@@ -1814,12 +1816,14 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Expand B*K DBs to B*N: each QA rollout gets a shallow copy with its own _queried_pairs
         # so per-rollout utilization can be tracked independently.
         per_example_dbs_expanded = []
+        db_size_floor_expanded = []  # per-rollout denominator floor; prevents reward hacking via tiny DBs
         for b in range(B):
             for i in range(N):
                 original_db = per_example_dbs[b * K + i // M]
                 db_copy = copy.copy(original_db)
                 db_copy._queried_pairs = set()
                 per_example_dbs_expanded.append(db_copy)
+                db_size_floor_expanded.append(context_lengths[b * K + i // M] * DB_SIZE_RATIO_THRESHOLD)
         assert len(per_example_dbs_expanded) == B * N, (
             f"[TRR++] expected {B * N} expanded DBs, got {len(per_example_dbs_expanded)}"
         )
@@ -1876,8 +1880,8 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Always compute per-rollout triplet utilization ratio (used/total) for logging (and as reward if phase1_reward_type == "utilization")
         # Each QA rollout has its own DB copy, so _queried_pairs reflects only that rollout's queries.
         per_rollout_utilization = []
-        for db in per_example_dbs_expanded:
-            total = len(set(db.database["triplets"]))  # deduplicate: duplicates inflate denominator otherwise
+        for db, db_size_floor in zip(per_example_dbs_expanded, db_size_floor_expanded):
+            total = max(len(set(db.database["triplets"])), db_size_floor)  # floor prevents reward hacking via tiny DBs
             used = len(db._queried_pairs)
             ratio = used / total if total > 0 else 0.0
             per_rollout_utilization.append(min(ratio, 1.0))
@@ -2270,6 +2274,13 @@ class LMLMGRPOTrainer(BaseTrainer):
             # rewards_per_func[B*K:, 1] = NaN  (db quality skips Phase-2)
             rewards = rewards_per_func
 
+            # TODO (multi-GPU): gather(rewards_per_func) concatenates per-process tensors along dim=0,
+            # producing ordering [GPU0_phase1(B_local*K) + GPU0_phase2(B_local*N), GPU1_phase1 + GPU1_phase2, ...].
+            # The slicing below assumes [all_phase1 (B_total*K), all_phase2 (B_total*N)], which is WRONG for
+            # NUM_GPUS > 1. rewards[:B*K] and rewards[B*K:] will mix Phase-1 and Phase-2 across GPUs,
+            # making r_b_i, db_cov, and all derived advantages incorrect. Currently only single-GPU is safe.
+            # Fix: reorder gathered tensor before slicing, or gather phase1/phase2 rewards separately.
+
             # TRR++ advantage computation (two groups: DB and QA)
             # rewards shape: (B*K + B*N, num_funcs) — first B*K are Phase-1, next B*N are Phase-2
             N = num_generations
@@ -2293,18 +2304,16 @@ class LMLMGRPOTrainer(BaseTrainer):
             else:
                 self._phase1_utilization_gathered = None
 
-            if self.phase1_reward_type == "utilization" and self._phase1_utilization_gathered is not None:
-                db_cov = torch.tensor(self._phase1_utilization_gathered, dtype=torch.float32, device=device)  # (B*N,)
-            else:
-                db_cov  = rewards[:B*K, 1].nan_to_num(0.0)   # (B*K,) db quality scores
-
             # r_db_b_k: composite reward for each (question b, DB k) pair — shape (B*K,)
             if self.phase1_reward_type == "utilization":
-                # db_cov is (B*N,) — per-rollout utilization; r_b_i is (B*N,) — per-rollout correctness.
-                # Element-wise product then mean over M rollouts per (b,k).
-                r_b_i_format = r_b_i + 0.1 # even in incorrect rollout, retrieved db has small reward
-                r_db_b_k = (r_b_i_format * db_cov).view(B, K, M).mean(dim=2).view(B * K)  # (B*K,)
+                # rollout_util: per-rollout triplet utilization ratio (used/total), shape (B*N,).
+                # Always set by _generate_two_phase before this point.
+                # r_b_i: (B*N,) per-rollout QA correctness. Element-wise product then mean over M rollouts per (b,k).
+                rollout_util = torch.tensor(self._phase1_utilization_gathered, dtype=torch.float32, device=device)  # (B*N,)
+                r_b_i_format = r_b_i + 0.1  # even in incorrect rollout, retrieved db has small reward
+                r_db_b_k = (r_b_i_format * rollout_util).view(B, K, M).mean(dim=2).view(B * K)  # (B*K,)
             else:
+                db_cov = rewards[:B*K, 1].nan_to_num(0.0)   # (B*K,) db quality scores from reward func
                 qa_mean_per_bk = r_b_i.view(B, K, M).mean(dim=2).view(B * K)  # (B*K,)
                 r_db_b_k = qa_mean_per_bk * weights[0] + db_cov * weights[1]  # (B*K,) additive
 
@@ -2313,8 +2322,8 @@ class LMLMGRPOTrainer(BaseTrainer):
                 # K=1: batch-level normalization across B questions (original behavior)
                 db_baseline    = r_db_b_k.mean()               # scalar
                 db_std         = r_db_b_k.std()                # scalar
-                A_db           = r_db_b_k - db_baseline        # (B,)
-                std_db_expanded = db_std.expand(B)             # (B,)
+                A_db           = r_db_b_k - db_baseline        # (B*K,) = (B,) when K=1
+                std_db_expanded = db_std.expand(B)             # (B*K,) = (B,) when K=1
             else:
                 # K>1: within-question normalization across K DBs
                 r_db_mat       = r_db_b_k.view(B, K)
