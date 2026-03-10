@@ -257,7 +257,7 @@ accelerate launch \
   --num_train_epochs=${NUM_TRAIN_EPOCHS} \
   --save_strategy=steps \
   --save_total_limit=5 \
-  --save_steps=0.2 \
+  --save_steps=0.01 \
   ${RESUME_FROM_CHECKPOINT} \
   --use-inverses \
   --retrieval-threshold ${RETRIEVAL_THRESHOLD} \
