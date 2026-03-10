@@ -24,7 +24,7 @@ GPU_TYPE="B200"
 MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1
 #DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
 DATABASE_PATH="" # -> Not used for two phase
-SAVE_DIR=/home/dg793/Multi-Hop-Reasoning/checkpoints/debug
+SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
 DATASET_NAME="hotpotqa"
 NUM_GPUS=1
 
@@ -33,12 +33,19 @@ LOSS_TYPE="grpo"
 VLLM_GPU_MEMORY_UTILIZATION=0.15
 BETA=0.0
 LEARNING_RATE=1e-6
+# two_phase generation dimensions (set GPU-type block below overrides NUM_GENERATIONS):
+#   B  = (PER_DEVICE_TRAIN_BATCH_SIZE * NUM_GPUS) / NUM_GENERATIONS  — unique questions per step (e.g. (16*2)/8 = 4)
+#   K  = NUM_DB_ROLLOUTS   — DB rollouts per question   (Phase 1 completions: B*K)
+#   N  = NUM_GENERATIONS   — QA rollouts per question   (Phase 2 completions: B*N, must be divisible by K)
+#   M  = N / K             — QA rollouts per (question, DB) pair
+NUM_GENERATIONS=16    # N
+NUM_DB_ROLLOUTS=4    # K  (set >1 to compare multiple DBs per question; N must be divisible by K)
 NUM_TRAIN_EPOCHS=5 # default 3
 TRAIN_SIZE=7000
 EVAL_SIZE=100
 MAX_COMPLETION_LENGTH=1024
-# EVAL_STEPS=50
-EVAL_STEPS=5000
+# EVAL_STEPS=1
+EVAL_STEPS=5000 # disable it for now
 LOGGING_STEPS=5
 TOP_P=0.95
 TEMPERATURE=1.3
@@ -49,14 +56,6 @@ REWARD_FUNC="em_size"
 PHASE1_REWARD_TYPE="binary"
 PHASE1_PROMPT_TYPE="context_only"
 PHASE1_DB_WEIGHT_MODE="count_dynamic"  # none | fixed[_<w>] | dynamic | count | count_dynamic
-
-# two_phase generation dimensions (set GPU-type block below overrides NUM_GENERATIONS):
-#   B  = (PER_DEVICE_TRAIN_BATCH_SIZE * NUM_GPUS) / NUM_GENERATIONS  — unique questions per step (e.g. (16*2)/8 = 4)
-#   K  = NUM_DB_ROLLOUTS   — DB rollouts per question   (Phase 1 completions: B*K)
-#   N  = NUM_GENERATIONS   — QA rollouts per question   (Phase 2 completions: B*N, must be divisible by K)
-#   M  = N / K             — QA rollouts per (question, DB) pair
-NUM_GENERATIONS=16    # N
-NUM_DB_ROLLOUTS=1    # K  (set >1 to compare multiple DBs per question; N must be divisible by K)
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -174,8 +173,8 @@ fi
 if [ -n "${DEBUG}" ]; then
     echo "Debug mode enabled"
     TRAIN_SIZE=100
-    EVAL_SIZE=100
-    NUM_TRAIN_EPOCHS=50 #10
+    EVAL_SIZE=10
+    NUM_TRAIN_EPOCHS=10
     NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
     echo "  Detected ${NUM_GPUS} GPU(s)"
 
