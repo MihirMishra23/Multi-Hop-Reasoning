@@ -305,7 +305,9 @@ class LMLMGRPOTrainer(BaseTrainer):
         retrieval_threshold : float = 0.6,
         two_phase: bool = False,
         num_db_rollouts: int = 1,
+        retrieval_top_k: int = 1,
     ):
+        self.retrieval_top_k = retrieval_top_k
         #LMLM db initialization
         self.retrieval_threshold = retrieval_threshold
         self.use_inverses = use_inverses
@@ -1706,7 +1708,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                 )
         return tool_mask, completions, completion_ids, logprobs, tool_call_count, tool_failure_count
 
-    def _generate_two_phase(self, qa_prompts: list[str], contexts: list[list[str]]):
+    def _generate_two_phase(self, qa_prompts: list[str], contexts: list[list[str]], fast_build_db: bool = None):
         """Two-phase generation: Phase 1 (triplet gen) → Phase 2 (QA with per-example DB).
 
         Phase 1: Model generates knowledge triplets from context paragraphs.
@@ -1714,6 +1716,11 @@ class LMLMGRPOTrainer(BaseTrainer):
         Phase 2: Model answers questions using DB lookups against the per-example
                  databases built in Phase 1.
 
+        Args:
+            qa_prompts: List of QA prompts
+            contexts: List of context lists
+            fast_build_db: If True, uses fast database building for eval. Not used in training.
+                          Defaults to None.
 
         Returns:
             Tuple of (prompt_ids, completion_ids, tool_mask, completions,
@@ -1786,7 +1793,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Build per-example DBs in batch (one embedding pass for all triplets)
         per_example_dbs = build_databases_from_triplets_batch(
             all_triplets,
-            top_k=self.top_k,
+            top_k=self.retrieval_top_k,
             default_threshold=self.retrieval_threshold,
             adaptive=self.adaptive_k,
             use_inverses=self.use_inverses
@@ -1896,12 +1903,15 @@ class LMLMGRPOTrainer(BaseTrainer):
         assert len(combined_completion_ids) == B * N_db + B * N_db * N, (
             f"[TRR++] expected {B * N_db + B * N_db * N} combined completions (B*N_db={B * N_db} + B*N_db*N={B * N_db * N}), got {len(combined_completion_ids)}"
         )
+        assert len(phase1_prompts) == B
+        assert len(extended_phase1_prompts) == B * N_db
         assert len(combined_prompt_ids) == len(combined_completion_ids), (
             f"[TRR++] combined_prompt_ids/completion_ids length mismatch: {len(combined_prompt_ids)} vs {len(combined_completion_ids)}"
         )
         assert len(combined_prompts) == len(combined_completion_ids), (
             f"[TRR++] combined_prompts length mismatch: {len(combined_prompts)} vs {len(combined_completion_ids)}"
         )
+        
         print(f"[TRR++] Combined: {B * N_db} Phase-1 + {B * N_db * N} Phase-2 = {len(combined_completion_ids)} total (expected {B * N_db * (N + 1)})")
 
         phase1_tool_mask = [[1] * len(cids) for cids in phase1_completion_ids]
@@ -1933,6 +1943,7 @@ class LMLMGRPOTrainer(BaseTrainer):
           :class:`PerExampleRetriever` per sample.
           **Phase 2** – answer the question (original *prompts*) using
           ``_tool_call_loop`` with the per-example databases from Phase 1.
+
 
         Only Phase 2 tokens contribute to the GRPO loss; Phase 1 acts as
         a differentiable-through-reward preprocessing step (the reward depends
@@ -2260,11 +2271,12 @@ class LMLMGRPOTrainer(BaseTrainer):
 
             # Reshape for per-question processing
             r_b_i_reshaped = r_b_i.view(B, N_db * N)          # (B, N_db*N) QA scores per question
+            r_b_i_per_db = r_b_i.view(B, N_db, N)             # (B, N_db, N) QA scores per DB
             db_cov_reshaped = db_cov.view(B, N_db)            # (B, N_db) DB scores per question
 
-            # r_db_b_j: weighted reward for each DB (mean QA EM for question * w_em + db_coverage * w_db)
-            r_qa_per_question = r_b_i_reshaped.mean(dim=1)    # (B,) mean QA EM per question
-            r_db_b_j = r_qa_per_question.unsqueeze(1) * weights[0] + db_cov_reshaped * weights[1]  # (B, N_db)
+            # r_db_b_j: weighted reward for each DB (mean QA EM for that specific DB * w_em + db_coverage * w_db)
+            r_qa_per_db = r_b_i_per_db.mean(dim=2)            # (B, N_db) mean QA EM for each specific DB
+            r_db_b_j = r_qa_per_db * weights[0] + db_cov_reshaped * weights[1]  # (B, N_db)
 
             # --- DB group (B*N_db entries): per-question baseline and std (N_db DBs per question) ---
             db_per_q_mean = r_db_b_j.mean(dim=1)              # (B,) mean reward across N_db DBs per question

@@ -16,14 +16,15 @@ export VLLM_USE_FLASHINFER=0
 
 # bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/grpo_train.sh --gpu_type H100
 # Default values
-GPU_TYPE="B200"
+GPU_TYPE="None"
 # MODEL_PATH="Qwen/Qwen3-1.7B"
-MODEL_PATH=/share/j_sun/mx253/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
+MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop//Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
 #DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
 DATABASE_PATH="" # -> Not used for two phase
 SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
 DATASET_NAME="hotpotqa"
 NUM_GPUS=1
+SAVE_VERSION="full-overfit" #Put anything here, it is added to the model path
 
 # config
 LOSS_TYPE="grpo"
@@ -32,19 +33,23 @@ BETA=0.0
 LEARNING_RATE=1e-6
 NUM_GENERATIONS=8
 NUM_TRAIN_EPOCHS=5 # default 3
-TRAIN_SIZE=7000
+TRAIN_SIZE=128
 EVAL_SIZE=100
 MAX_COMPLETION_LENGTH=1024
-EVAL_STEPS=1
+EVAL_STEPS=10
 LOGGING_STEPS=1
 TOP_P=0.95
 TEMPERATURE=1.3
-TOP_K=0
+TOP_K=4
 IS_ADAPTIVE_K=False
-RETRIEVAL_THRESHOLD=0.9
+RETRIEVAL_THRESHOLD=0.6
 REWARD_FUNC="em_size"
 TWO_PHASE=true
+NUM_GPUS=1
 NUM_DB_ROLLOUTS=2
+PER_DEVICE_TRAIN_BATCH_SIZE=4
+GRADIENT_ACCUMULATION_STEPS=8
+USE_INVERSES=True
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -157,8 +162,8 @@ if [ -n "${DEBUG}" ]; then
     NUM_TRAIN_EPOCHS=10
     NUM_GPUS=1
 
-    NUM_GENERATIONS=8
-    GRADIENT_ACCUMULATION_STEPS=8
+    NUM_GENERATIONS=4
+    GRADIENT_ACCUMULATION_STEPS=16
     PER_DEVICE_TRAIN_BATCH_SIZE=8
     VLLM_GPU_MEMORY_UTILIZATION=0.15
 fi
@@ -166,7 +171,7 @@ fi
 
 #-------------------------------- Save dir --------------------------------
 # output_dir = script_args.model_path.split('/')[-1]+'-'+str(grpo_config.loss_type)+'-g'+str(grpo_config.num_generations)+'-bs'+str(grpo_config.per_device_train_batch_size)+'-s'+str(grpo_config.gradient_accumulation_steps)+'-b'+str(grpo_config.beta)+'-ep'+str(grpo_config.num_train_epochs)+'-n'+str(script_args.train_size)
-OUTPUT_DIR="${SAVE_DIR}/${MODEL_PATH##*/}-${LOSS_TYPE}-g${NUM_GENERATIONS}-bs${PER_DEVICE_TRAIN_BATCH_SIZE}-s${GRADIENT_ACCUMULATION_STEPS}-b${BETA}-ep${NUM_TRAIN_EPOCHS}-n${TRAIN_SIZE}-${REWARD_FUNC}"
+OUTPUT_DIR="${SAVE_DIR}/${SAVE_VERSION}-${MODEL_PATH##*/}-${LOSS_TYPE}-g${NUM_GENERATIONS}-bs${PER_DEVICE_TRAIN_BATCH_SIZE}-s${GRADIENT_ACCUMULATION_STEPS}-b${BETA}-ep${NUM_TRAIN_EPOCHS}-n${TRAIN_SIZE}-${REWARD_FUNC}"
 if [ -n "${TWO_PHASE}" ]; then
     OUTPUT_DIR="${OUTPUT_DIR}-v2"
     TWO_PHASE="--two_phase"
@@ -206,6 +211,13 @@ else
     OUTPUT_DIR="${OUTPUT_DIR}-nak"
 fi
 
+if [ "${USE_INVERSES}" = 'True']; then
+    USE_INVERSES="--use-inverses"
+else
+    USE_INVERSES=""
+fi
+
+
 echo "Starting GRPO training with:"
 echo "  Model: ${MODEL_PATH}"
 echo "  Database: ${DATABASE_PATH}"
@@ -216,9 +228,6 @@ echo "  Resume from checkpoint: ${RESUME_FROM_CHECKPOINT}"
 echo "  Two phase: ${TWO_PHASE}"
 echo "  Return triples: ${RETURN_TRIPLES}"
 echo "  Adaptive k: ${ADAPTIVE_K}"
-
-NUM_GPUS=1
-PER_DEVICE_TRAIN_BATCH_SIZE=4
 
 
 accelerate launch \
@@ -263,6 +272,7 @@ accelerate launch \
   --retrieval-threshold ${RETRIEVAL_THRESHOLD} \
   ${TWO_PHASE} \
   ${RETURN_TRIPLES} \
+  ${USE_INVERSES} \
   ${ADAPTIVE_K} \
   --reward_func=${REWARD_FUNC} \
   --num_db_rollouts=${NUM_DB_ROLLOUTS}

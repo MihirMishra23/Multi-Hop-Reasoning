@@ -23,17 +23,20 @@
 #     --split dev \
 #     --num_samples 100
 #
+MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1
 # MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop//Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
-MODEL_PATH=/share/j_sun/mx253/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
+# uncomment above to use two_phase model
 LLM_MODEL=gpt-4
 DATASET=hotpotqa
 SPLIT=dev
 USE_INVERSES="true" # or "--use-inverses"
 NUM_SAMPLES=1000
-SAVE_VERSION="10am-old-model-old-db"
-TOP_K=1
+SAVE_VERSION="put-anything-here" #use this to add info to save path
+TOP_K=4
 METHODS=("lmlm")
-SIMILARITY_THRESHOLD=0.9
+# METHODS=("direct" "icl" "rag" "lmlm")
+# uncomment above to eval on all methods
+SIMILARITY_THRESHOLD=0.6
 
 
 # Parse command line arguments
@@ -81,7 +84,6 @@ done
 
 if [ "${DATASET}" = "hotpotqa" ]; then
     if [ "${SPLIT}" = "dev" ]; then
-        DATABASE_PATH="/home/rtn27/Multi-Hop-Reasoning/ryan-playground/phase1_database_1000_nb_ex_1000.json"
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0

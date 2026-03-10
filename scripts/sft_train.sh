@@ -101,7 +101,6 @@ if [ "${DATASET}" = "hotpotqa" ]; then
         DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/12-19_rollouts_combined_5743_12k_return_triplets.json"
     elif [ "${THRESHOLD}" = "1.0" ]; then
         DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_1.0_len_11308.json"
-        
     else
         echo "Invalid threshold: ${THRESHOLD}"
         exit 1
@@ -124,16 +123,21 @@ fi
 EVAL_ACCUMULATION_STEPS=1 #number of steps before copying metrics to CPU, avoids OOM
 
 ADD_DBLOOKUP_TOKENS=True
-if [ "${TWO_PHASE}" = "true" ]; then
-    DATASET_PATH=/share/j_sun/lmlm_multihop/sft_data/dual_mode_2k_ex_full_context_2k_sft_total_4k.json
-    DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/march-08-2phase-sft-2k-2k-NO_TRIPLETS.json"
-fi
 
 
 # Compute effective batch size
 EFFECTIVE_BATCH_SIZE=$((PER_DEVICE_TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS * NUM_GPUS))
 
-export WANDB_NAME="${MODEL_NAME_OR_PATH##*/}-SFT_${DATASET}_ep${NUM_TRAIN_EPOCHS}_bsz${EFFECTIVE_BATCH_SIZE}_th${THRESHOLD}_2phase_march8th_fixed"
+export WANDB_NAME="${MODEL_NAME_OR_PATH##*/}-SFT_${DATASET}_ep${NUM_TRAIN_EPOCHS}_bsz${EFFECTIVE_BATCH_SIZE}_th${THRESHOLD}"
+
+if [ "${TWO_PHASE}" = "true" ]; then
+    DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/march-08-2phase-sft-2k-2k-NO_TRIPLETS.json"
+    export WANDB_NAME="${WANDB_NAME}_2phase"
+fi
+
+
+
+
 OUTPUT_DIR="${OUTPUT_ROOT}/${WANDB_NAME}"
 
 echo "Running for $DATASET_PATH"
