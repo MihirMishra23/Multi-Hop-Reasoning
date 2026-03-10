@@ -2285,7 +2285,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             # producing ordering [GPU0_phase1(B_local*K) + GPU0_phase2(B_local*N), GPU1_phase1 + GPU1_phase2, ...].
             # The slicing below assumes [all_phase1 (B_total*K), all_phase2 (B_total*N)], which is WRONG for
             # NUM_GPUS > 1. rewards[:B*K] and rewards[B*K:] will mix Phase-1 and Phase-2 across GPUs,
-            # making r_b_i, db_cov, and all derived advantages incorrect. Currently only single-GPU is safe.
+            # making r_b_k_m, db_cov_b_k, and all derived advantages incorrect. Currently only single-GPU is safe.
             # Fix: reorder gathered tensor before slicing, or gather phase1/phase2 rewards separately.
 
             # TRR++ advantage computation (two groups: DB and QA)
@@ -2301,7 +2301,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             print(f"[TRR++] Advantage: B={B}, K={K}, N={N}, M={M} | rewards shape={tuple(rewards.shape)} (expected B*K+B*N={B*K + B*N})")
 
             weights = self.reward_weights.to(device)          # [w_em, w_db]
-            r_b_i   = rewards[B*K:, 0].nan_to_num(0.0)       # (B*N,) QA EM scores
+            r_b_k_m   = rewards[B*K:, 0].nan_to_num(0.0)       # (B*K*M,) QA EM scores
             # Always gather utilization for logging (computed unconditionally in _generate_two_phase)
             if hasattr(self, '_phase1_utilization'):
                 all_utilization = gather_object(self._phase1_utilization)
@@ -2311,79 +2311,81 @@ class LMLMGRPOTrainer(BaseTrainer):
             else:
                 self._phase1_utilization_gathered = None
 
+            # --- phase1 DB advantage ---
             # r_db_b_k: composite reward for each (question b, DB k) pair — shape (B*K,)
             if self.phase1_reward_type == "utilization":
-                # rollout_util: per-rollout triplet utilization ratio (used/total), shape (B*N,).
+                # rollout_util_b_k_m: per-rollout triplet utilization ratio (used/total), shape (B*K*M,).
                 # Always set by _generate_two_phase before this point.
-                # r_b_i: (B*N,) per-rollout QA correctness. Element-wise product then mean over M rollouts per (b,k).
-                rollout_util = torch.tensor(self._phase1_utilization_gathered, dtype=torch.float32, device=device)  # (B*N,)
-                r_b_i_format = r_b_i + 0.1  # even in incorrect rollout, retrieved db has small reward
-                r_db_b_k = (r_b_i_format * rollout_util).view(B, K, M).mean(dim=2).view(B * K)  # (B*K,)
+                # r_b_k_m: (B*K*M,) per-rollout QA correctness. Element-wise product then mean over M rollouts per (b,k).
+                rollout_util_b_k_m = torch.tensor(self._phase1_utilization_gathered, dtype=torch.float32, device=device)  # (B*K*M,)
+                r_b_k_m_format = r_b_k_m + 0.1  # even in incorrect rollout, retrieved db has small reward
+                r_db_b_k = (r_b_k_m_format * rollout_util_b_k_m).view(B, K, M).mean(dim=2).view(B * K)  # (B*K,)
             else:
-                db_cov = rewards[:B*K, 1].nan_to_num(0.0)   # (B*K,) db quality scores from reward func
-                qa_mean_per_bk = r_b_i.view(B, K, M).mean(dim=2).view(B * K)  # (B*K,)
-                r_db_b_k = qa_mean_per_bk * weights[0] + db_cov * weights[1]  # (B*K,) additive
+                db_cov_b_k = rewards[:B*K, 1].nan_to_num(0.0)   # (B*K,) db quality scores from reward func
+                r_b_k_mean = r_b_k_m.view(B, K, M).mean(dim=2).view(B * K)  # (B*K,)
+                r_db_b_k = r_b_k_mean * weights[0] + db_cov_b_k * weights[1]  # (B*K,) additive
 
-            # --- DB group advantage ---
             if K == 1:
                 # K=1: batch-level normalization across B questions (original behavior)
-                db_baseline    = r_db_b_k.mean()               # scalar
-                db_std         = r_db_b_k.std()                # scalar
-                A_db           = r_db_b_k - db_baseline        # (B*K,) = (B,) when K=1
-                std_db_expanded = db_std.expand(B)             # (B*K,) = (B,) when K=1
+                db_baseline_b    = r_db_b_k.mean()               # scalar
+                db_std_b         = r_db_b_k.std()                # scalar
+                A_db_b_k           = r_db_b_k - db_baseline_b        # (B*K,) = (B,) when K=1
+                std_db_b_expanded = db_std_b.expand(B)             # (B*K,) = (B,) when K=1
             else:
                 # K>1: within-question normalization across K DBs
-                r_db_mat       = r_db_b_k.view(B, K)
-                A_db           = (r_db_mat - r_db_mat.mean(dim=1, keepdim=True)).view(B * K)  # (B*K,)
-                std_db_expanded = r_db_mat.std(dim=1).repeat_interleave(K)                    # (B*K,)
+                r_db_mat_b_k        = r_db_b_k.view(B, K)
+                db_baseline_b       = r_db_mat_b_k.mean(dim=1, keepdim=True)                          # (B, 1)
+                db_std_b            = r_db_mat_b_k.std(dim=1)                                         # (B,)
+                A_db_b_k            = (r_db_mat_b_k - db_baseline_b).view(B * K)                      # (B*K,)
+                std_db_b_expanded = db_std_b.repeat_interleave(K)                                   # (B*K,)
 
-            # --- QA group advantage: within (b,k) group across M rollouts ---
+            # --- phase2 QA advantage: within (b,k) group across M rollouts ---
             # For K=1 (M=N): reduces to standard GRPO per-question normalization
-            r_qa_mat       = r_b_i.view(B, K, M)
-            per_group_mean = r_qa_mat.mean(dim=2)              # (B, K)
-            per_group_std  = r_qa_mat.std(dim=2)               # (B, K)
-            A_qa           = (r_qa_mat - per_group_mean.unsqueeze(2)).view(B * N)             # (B*N,)
-            std_qa_expanded = per_group_std.repeat_interleave(M, dim=1).view(B * N)           # (B*N,)
+            r_qa_mat_b_k_m       = r_b_k_m.view(B, K, M)
+            qa_baseline_b_k = r_qa_mat_b_k_m.mean(dim=2)              # (B, K)
+            qa_std_b_k  = r_qa_mat_b_k_m.std(dim=2)               # (B, K)
+            A_qa_b_k_m     = (r_qa_mat_b_k_m - qa_baseline_b_k.unsqueeze(2)).view(B * N)             # (B*K*M,)
+            std_qa_b_k_expanded = qa_std_b_k.repeat_interleave(M, dim=1).view(B * N)           # (B*N,)
 
-            # --- A_db weighting ---
+            # --- phase1 vs phase2 weighting ---
             # mode format: "none" | "fixed_<w>" (e.g. "fixed_2.0") | "dynamic" | "count" | "count_dynamic"
             raw_mode = self.phase1_db_weight_mode
             if raw_mode == "none":
                 db_weight = 1.0
             elif raw_mode == "dynamic":
-                db_weight = min(r_b_i.mean() / (r_db_b_k.mean() + 1e-8), 10).item()
+                db_weight = min(r_b_k_m.mean() / (r_db_b_k.mean() + 1e-8), 10).item()
             elif raw_mode == "count":
                 db_weight = float(M)
             elif raw_mode == "count_dynamic":
-                db_weight = M * (r_b_i.mean() / (r_db_b_k.mean() + 1e-8)).clamp(max=10).item()
+                db_weight = M * (r_b_k_m.mean() / (r_db_b_k.mean() + 1e-8)).clamp(max=10).item()
             elif raw_mode.startswith("fixed"):
                 # "fixed" → 1.0, "fixed_2.0" → 2.0
                 db_weight = float(raw_mode[6:]) if len(raw_mode) > 5 else 1.0
             else:
                 raise ValueError(f"Unknown phase1_db_weight_mode: {raw_mode!r}. Choose from: none, fixed, fixed_<w>, dynamic, count, count_dynamic")
             print(f"[TRR++] phase1_db_weight_mode={raw_mode}, db_weight={db_weight:.4f}")
-            advantages         = torch.cat([A_db * db_weight, A_qa])  # (B*K + B*N,)
-            mean_grouped_rewards = torch.cat([r_db_b_k, r_b_i])               # for logging
-            std_rewards        = torch.cat([std_db_expanded, std_qa_expanded]) # (B*K + B*N,)
+            advantages         = torch.cat([A_db_b_k * db_weight, A_qa_b_k_m])  # (B*K + B*K*M,)
+            mean_grouped_rewards = torch.cat([r_db_b_k, r_b_k_m])               # for logging
+            std_rewards        = torch.cat([std_db_b_expanded, std_qa_b_k_expanded]) # (B*K + B*N,)
 
             # Verify shapes
-            assert r_b_i.shape == (B * N,),      f"[TRR++] r_b_i shape {r_b_i.shape} != ({B * N},)"
+            assert r_b_k_m.shape == (B * N,),      f"[TRR++] r_b_k_m shape {r_b_k_m.shape} != ({B * N},)"
             assert r_db_b_k.shape == (B * K,),   f"[TRR++] r_db_b_k shape {r_db_b_k.shape} != ({B * K},)"
-            assert A_db.shape == (B * K,),        f"[TRR++] A_db shape {A_db.shape} != ({B * K},)"
-            assert A_qa.shape == (B * N,),        f"[TRR++] A_qa shape {A_qa.shape} != ({B * N},)"
+            assert A_db_b_k.shape == (B * K,),        f"[TRR++] A_db_b_k shape {A_db_b_k.shape} != ({B * K},)"
+            assert A_qa_b_k_m.shape == (B * N,),  f"[TRR++] A_qa_b_k_m shape {A_qa_b_k_m.shape} != ({B * N},)"
             assert advantages.shape == (B * K + B * N,), f"[TRR++] advantages shape {advantages.shape} != ({B*K + B*N},)"
             assert std_rewards.shape == (B * K + B * N,), f"[TRR++] std_rewards shape {std_rewards.shape} != ({B*K + B*N},)"
 
-            print(f"[TRR++] Number of rewards non-zero for QA: {torch.sum(r_b_i != 0).item()}")
+            print(f"[TRR++] Number of rewards non-zero for QA: {torch.sum(r_b_k_m != 0).item()}")
             print(f"[TRR++] Number of rewards non-zero for DB: {torch.sum(r_db_b_k != 0).item()}")
             print(
-                f"[TRR++] r_b_i (QA): mean={r_b_i.mean():.4f} | "
+                f"[TRR++] r_b_k_m (QA): mean={r_b_k_m.mean():.4f} | "
                 f"r_db_b_k: mean={r_db_b_k.mean():.4f}, std={r_db_b_k.std():.4f} | "
-                f"per_group_std: mean={per_group_std.mean():.4f}"
+                f"qa_std_b_k: mean={qa_std_b_k.mean():.4f}"
             )
             print(
-                f"[TRR++] Pre-norm — A_db: mean={A_db.mean():.4f}, std={A_db.std():.4f} | "
-                f"A_qa: mean={A_qa.mean():.4f}, std={A_qa.std():.4f}"
+                f"[TRR++] Pre-norm — A_db_b_k: mean={A_db_b_k.mean():.4f}, std={A_db_b_k.std():.4f} | "
+                f"A_qa_b_k_m: mean={A_qa_b_k_m.mean():.4f}, std={A_qa_b_k_m.std():.4f}"
             )
 
             is_std_zero = torch.isclose(std_rewards, torch.zeros_like(std_rewards))
@@ -2391,8 +2393,8 @@ class LMLMGRPOTrainer(BaseTrainer):
                 advantages = advantages / (std_rewards + 1e-4)
 
             print(
-                f"[TRR++] Post-norm — A_db: mean={advantages[:B*K].mean():.4f}, std={advantages[:B*K].std():.4f} | "
-                f"A_qa: mean={advantages[B*K:].mean():.4f}, std={advantages[B*K:].std():.4f}"
+                f"[TRR++] Post-norm — A_db_b_k: mean={advantages[:B*K].mean():.4f}, std={advantages[:B*K].std():.4f} | "
+                f"A_qa_b_k_m: mean={advantages[B*K:].mean():.4f}, std={advantages[B*K:].std():.4f}"
             )
         else:
             # Apply weights to each reward function's output and sum
@@ -2454,6 +2456,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             all_advantages = all_process_advantages.tolist()
             em_accuracy_rewards_list = rewards_per_func[BK:, 0].tolist()  # Phase 2 EM scores
             if self.phase1_reward_type == "utilization" and getattr(self, '_phase1_utilization_gathered', None) is not None:
+                ## TODO: this part is misleading as utilization is different from db_threshold
                 # _phase1_utilization_gathered is (B*N,); collapse to (B*K,) by averaging over M rollouts per (b,k)
                 N = self.num_generations
                 M = N // K
