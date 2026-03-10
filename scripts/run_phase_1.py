@@ -22,7 +22,7 @@ class ScriptArguments:
         default=42,
         metadata={"help": "Random seed"}
     )
-    NB_EXAMPLES: int = field(
+    nb_examples: int = field(
         default=1000,
         metadata={"help": "Number of examples to process"}
     )
@@ -45,7 +45,7 @@ def main():
 
     print(f"Loading dataset: {script_args.dataset}")
     print(f"  Split: {script_args.split}")
-    print(f"  Limit: {script_args.NB_EXAMPLES}")
+    print(f"  Limit: {script_args.nb_examples}")
     print(f"  Seed: {script_args.seed}")
 
     ds = get_dataset(
@@ -53,7 +53,7 @@ def main():
         setting="distractor",
         split=script_args.split,
         seed=script_args.seed,
-        limit=script_args.NB_EXAMPLES
+        limit=script_args.nb_examples
     )
 
     print(f"Loading model from: {script_args.model_path}")
