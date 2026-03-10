@@ -132,7 +132,7 @@ class DatabaseManager:
             "triplets": set(),
         }
         self.topk_retriever = None
-        self._queried_pairs: set = set()  # tracks unique (entity, relationship) pairs successfully retrieved
+        self._queried_pairs: set = set()  # To track the utilization ratio, tracks unique (entity, relationship) pairs successfully retrieved
 
     def __len__(self):
         return len(self.database["triplets"])
