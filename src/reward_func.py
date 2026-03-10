@@ -1,6 +1,7 @@
 from collections import defaultdict, deque, Counter
 import re
 from multi_lmlm.constants import ANSWER_START_TOKEN, ANSWER_END_TOKEN, THINKING_START_TOKEN
+from eval.metrics import exact_match_score
 
 
 def extract_answer_from_tags(text: str):
@@ -50,6 +51,7 @@ def db_size_threshold(completions, **kwargs):
                         ratio = num_triplets / context_chars
                         print(f"DEBUG: Example {i} - Num Triplets: {num_triplets}, Context Chars: {context_chars}, Ratio: {ratio:.4f}")
                         reward = 1 if ratio > 0.005 else 0
+                        reward = 1 # DEBUG - disable size reward
                     else:
                         reward = 0  
                 else:
