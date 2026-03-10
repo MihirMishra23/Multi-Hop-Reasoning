@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, field
 from typing import List, Optional
 from datasets import load_dataset
@@ -9,7 +10,7 @@ from trl.trainer.grpo_config import GRPOConfig
 from reward_func import em_accuracy, f1_reward, db_coverage_reward, db_size_threshold
 import wandb
 import os
-from data import get_dataset
+from data import get_dataset, get_dataset_from_path
 import random
 
 @dataclass
@@ -29,6 +30,14 @@ class ScriptArguments:
     )
     train_size: int = field(default=8000, metadata={"help": "Number of training examples"})
     eval_size: int = field(default=100, metadata={"help": "Number of evaluation examples"})
+    train_data_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to custom train JSON (list of QA objects). If set, overrides dataset_name for training."},
+    )
+    eval_data_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to custom eval JSON. If set, overrides dataset_name for eval. If only train_data_path set, eval uses HotpotQA."},
+    )
 
 
 @dataclass
@@ -90,13 +99,48 @@ def main():
         print(f"Wandb run is not initialized, skipping wandb name setting")
 
     # Load and process dataset
-    print(f"Loading dataset: {script_args.dataset_name}")
+    if script_args.train_data_path:
+        print(f"Loading custom train data from: {script_args.train_data_path}")
+        train_dataset = get_dataset_from_path(
+            script_args.train_data_path, limit=script_args.train_size, seed=42
+        )
+        if script_args.eval_data_path:
+            print(f"Loading custom eval data from: {script_args.eval_data_path}")
+            test_dataset = get_dataset_from_path(
+                script_args.eval_data_path, limit=script_args.eval_size, seed=42
+            )
+        else:
+            print(f"Loading eval from HotpotQA (eval_data_path not set)")
+            test_dataset = get_dataset(
+                name=script_args.dataset_name,
+                setting=script_args.dataset_config,
+                split="train",
+                sub_split="eval",
+                limit=script_args.eval_size,
+                seed=42,
+            )
+    else:
+        print(f"Loading dataset: {script_args.dataset_name}")
+        train_dataset = get_dataset(
+            name=script_args.dataset_name,
+            setting=script_args.dataset_config,
+            split="train",
+            sub_split="train",
+            limit=script_args.train_size,
+            seed=42,
+        )
+        test_dataset = get_dataset(
+            name=script_args.dataset_name,
+            setting=script_args.dataset_config,
+            split="train",
+            sub_split="eval",
+            limit=script_args.eval_size,
+            seed=42,
+        )
 
-    train_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "train", limit = script_args.train_size, seed = 42)
-    test_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "eval", limit = script_args.eval_size, seed = 42)
-    
     train_set = train_dataset.map(process_example)
     eval_set = test_dataset.map(process_example)
+    
     
     print(f"Train set size: {len(train_set)}")
     print(f"Eval set size: {len(eval_set)}")

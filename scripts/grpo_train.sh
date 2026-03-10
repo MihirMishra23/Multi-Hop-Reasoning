@@ -1,16 +1,39 @@
 #!/bin/bash
 
+
+# SLURM Directives
+#SBATCH -J grpo_train                           # Job name
+#SBATCH -o /home/as2637/lmlm_debug/Multi-Hop-Reasoning/grpo_train_%j.out   # Standard output file
+#SBATCH -e /home/as2637/lmlm_debug/Multi-Hop-Reasoning/grpo_train_%j.err   # Standard error file
+#SBATCH -N 1                                    # Number of nodes
+#SBATCH -n 1                                    # Number of tasks (or cores)
+#SBATCH --get-user-env                          # Retrieve the user's login environment
+#SBATCH --cpus-per-task=64
+#SBATCH --mem=256G                              # Memory requested (2GB per node)
+#SBATCH -t infinite                              # Time limit (2 hours)
+#SBATCH --partition=aimi,jjs533,default_partition          # Request partition
+#SBATCH --gres=gpu:nvidia_b200:1                # Request 1 NVIDIA A6000 GPU
+#SBATCH --requeue
+
+
+# Load the required environmentt
+source activate lmlm_multihop 
+
 # GRPO Training Script for LMLM Multi-Hop QA
 export CUDA_LAUNCH_BLOCKING=1
-export VLLM_BATCH_INVARIANT=1
+# 1 breaks training backward (vLLM overrides aten::mm → aten::linear_backward has no CUDA kernel)
+export VLLM_BATCH_INVARIANT=0
 export TORCH_USE_CUDA_DSA=1
 #export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-export WANDB_ENTITY=ryan-noonan-cornell-university
+# export WANDB_ENTITY=ryan-noonan-cornell-university
+# export WANDB_PROJECT=LMLM-Multihop
+
+export WANDB_ENTITY=as2637-cornell-university   
 export WANDB_PROJECT=LMLM-Multihop
 
 # DEBUG
-export VLLM_ATTENTION_BACKEND=FLASH_ATTN   # or TRITON
+export VLLM_ATTENTION_BACKEND=TRITON_ATTN   # with batch_invariant=0; FLASH_ATTN→PTX error on some clusters
 export VLLM_USE_FLASHINFER=0
 
 
@@ -18,22 +41,25 @@ export VLLM_USE_FLASHINFER=0
 # Default values
 GPU_TYPE="B200"
 # MODEL_PATH="Qwen/Qwen3-1.7B"
-MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1
-#DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
-DATABASE_PATH="" # -> Not used for two phase
-SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
-DATASET_NAME="hotpotqa"
-NUM_GPUS=1
+MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz32_th-1
+DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+# DATABASE_PATH="" # -> Not used for two phase
+#SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
 
-# config
+SAVE_DIR=/share/j_sun/as2637/lmlm_multihop/checkpoints/debug
+DATASET_NAME="hotpotqa"
+NUM_GPUS=2
+
 LOSS_TYPE="grpo"
 VLLM_GPU_MEMORY_UTILIZATION=0.15
 BETA=0.0
 LEARNING_RATE=1e-6
-NUM_GENERATIONS=8
+NUM_GENERATIONS=4
 NUM_TRAIN_EPOCHS=5 # default 3
-TRAIN_SIZE=7000
+TRAIN_SIZE=700
 EVAL_SIZE=100
+TRAIN_DATA_PATH=""
+EVAL_DATA_PATH=""
 MAX_COMPLETION_LENGTH=1024
 EVAL_STEPS=1
 LOGGING_STEPS=5
@@ -95,6 +121,14 @@ while [[ $# -gt 0 ]]; do
             REWARD_FUNC="$2"
             shift 2
             ;;
+        --train_data_path)
+            TRAIN_DATA_PATH="$2"
+            shift 2
+            ;;
+        --eval_data_path)
+            EVAL_DATA_PATH="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown argument: $1"
             exit 1
@@ -107,13 +141,13 @@ if [ "$GPU_TYPE" == "B200" ]; then
     if [[ "${MODEL_PATH}" == *"1.7B"* ]]; then
         NUM_GPUS=2
         NUM_GENERATIONS=8
-        PER_DEVICE_TRAIN_BATCH_SIZE=16
+        PER_DEVICE_TRAIN_BATCH_SIZE=4
         GRADIENT_ACCUMULATION_STEPS=8
         VLLM_GPU_MEMORY_UTILIZATION=0.15
     elif [[ "${MODEL_PATH}" == *"4B"* ]]; then
         NUM_GPUS=2
         NUM_GENERATIONS=8
-        PER_DEVICE_TRAIN_BATCH_SIZE=16
+        PER_DEVICE_TRAIN_BATCH_SIZE=4
         GRADIENT_ACCUMULATION_STEPS=8
         VLLM_GPU_MEMORY_UTILIZATION=0.15
     elif [[ "${MODEL_PATH}" == *"382M"* ]]; then
@@ -130,8 +164,8 @@ elif [ "$GPU_TYPE" == "H100" ]; then
     # H100 debug
     NUM_GPUS=2
     NUM_GENERATIONS=8
-    PER_DEVICE_TRAIN_BATCH_SIZE=8
-    GRADIENT_ACCUMULATION_STEPS=16
+    PER_DEVICE_TRAIN_BATCH_SIZE=4
+    GRADIENT_ACCUMULATION_STEPS=8
     VLLM_GPU_MEMORY_UTILIZATION=0.2
 fi
 
@@ -242,6 +276,8 @@ accelerate launch \
   --vllm_max_model_length=4096 \
   --train_size=${TRAIN_SIZE} \
   --eval_size=${EVAL_SIZE} \
+  $([ -n "${TRAIN_DATA_PATH}" ] && echo "--train_data_path=${TRAIN_DATA_PATH}") \
+  $([ -n "${EVAL_DATA_PATH}" ] && echo "--eval_data_path=${EVAL_DATA_PATH}") \
   --top_p=${TOP_P} \
   --temperature=${TEMPERATURE} \
   --top_k=${TOP_K} \
