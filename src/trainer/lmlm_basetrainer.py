@@ -138,7 +138,14 @@ def parse_triplets(text: str) -> list[tuple[str, str, str]]:
         if len(parts) >= 3:
             triplets.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
 
-    return triplets
+    # Deduplicate while preserving order
+    seen = set()
+    unique_triplets = []
+    for t in triplets:
+        if t not in seen:
+            seen.add(t)
+            unique_triplets.append(t)
+    return unique_triplets
 
 
 def extract_db_lookup_last(text : str) -> str | None:
@@ -307,7 +314,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         phase1_reward_type: str = "binary",
         phase1_prompt_type: str = "context_only",
         num_db_rollouts: int = 1,
-        phase1_db_weight_mode: str = "count_dynamic",
+        phase1_db_weight_mode: str = "fixed_1.0",
     ):
         #LMLM db initialization
         self.retrieval_threshold = retrieval_threshold
@@ -1877,7 +1884,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             tool_call_count = 0
             tool_failure_count = 0
 
-        # Always compute per-rollout triplet utilization ratio (used/total) for logging (and as reward if phase1_reward_type == "utilization")
+        # Compute per-rollout triplet utilization ratio (used/total) for logging (and as reward if phase1_reward_type == "utilization")
         # Each QA rollout has its own DB copy, so _queried_pairs reflects only that rollout's queries.
         per_rollout_utilization = []
         for db, db_size_floor in zip(per_example_dbs_expanded, db_size_floor_expanded):
