@@ -52,7 +52,6 @@ class TopkRetriever:
         else:
             self.model = model
         if precomputed_embeddings is None:
-            self.model = model
             self.model = self.model.half().eval()
             self.embedding_dim = self.model.get_sentence_embedding_dimension()
         else:

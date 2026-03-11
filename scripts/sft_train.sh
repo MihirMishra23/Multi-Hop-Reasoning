@@ -18,8 +18,8 @@ export TORCH_USE_CUDA_DSA=1
 
 # input arguments for 
 TWO_PHASE=true
-OUTPUT_ROOT=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/
-MODEL_NAME_OR_PATH=Qwen/Qwen3-1.7B
+OUTPUT_ROOT=/share/j_sun/mx253/checkpoints/lmlm_multi_hop/
+MODEL_NAME_OR_PATH=Qwen/Qwen3-4B
 THRESHOLD=-1
 DATASET=hotpotqa
 
@@ -49,22 +49,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-MODEL_SIZE=1.7B
+MODEL_SIZE=4B
 export CUDA_VISIBLE_DEVICES=0
 NUM_GPUS=1
+
 NUM_TRAIN_EPOCHS=5 #change to 5
 
 if [ "${MODEL_SIZE}" = "1.7B" ]; then
     MODEL_NAME_OR_PATH="Qwen/Qwen3-1.7B"
-    PER_DEVICE_TRAIN_BATCH_SIZE=8
-    GRADIENT_ACCUMULATION_STEPS=6   # change to 4
+    PER_DEVICE_TRAIN_BATCH_SIZE=24
+    GRADIENT_ACCUMULATION_STEPS=2   # change to 4
     MAX_SEQ_LENGTH=2048
+    MAX_SEQ_LENGTH=8096
+
 
 elif [ "${MODEL_SIZE}" = "4B" ]; then
     MODEL_NAME_OR_PATH="Qwen/Qwen3-4B"
     PER_DEVICE_TRAIN_BATCH_SIZE=8
     GRADIENT_ACCUMULATION_STEPS=6   # change to 4
-    MAX_SEQ_LENGTH=1024
+    MAX_SEQ_LENGTH=8096
 
 elif [ "${MODEL_SIZE}" = "3B" ]; then
     MODEL_NAME_OR_PATH="Qwen/Qwen2.5-3B"
@@ -120,15 +123,21 @@ fi
 EVAL_ACCUMULATION_STEPS=1 #number of steps before copying metrics to CPU, avoids OOM
 
 ADD_DBLOOKUP_TOKENS=True
-if [ "${TWO_PHASE}" = "true" ]; then
-    DATASET_PATH=/share/j_sun/lmlm_multihop/sft_data/dual_mode_2k_ex_full_context_2k_sft_total_4k.json
-fi
 
 
 # Compute effective batch size
 EFFECTIVE_BATCH_SIZE=$((PER_DEVICE_TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS * NUM_GPUS))
 
 export WANDB_NAME="${MODEL_NAME_OR_PATH##*/}-SFT_${DATASET}_ep${NUM_TRAIN_EPOCHS}_bsz${EFFECTIVE_BATCH_SIZE}_th${THRESHOLD}"
+
+if [ "${TWO_PHASE}" = "true" ]; then
+    DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/march-08-2phase-sft-2k-2k-NO_TRIPLETS.json"
+    export WANDB_NAME="${WANDB_NAME}_2phase"
+fi
+
+
+
+
 OUTPUT_DIR="${OUTPUT_ROOT}/${WANDB_NAME}"
 
 echo "Running for $DATASET_PATH"
@@ -171,4 +180,3 @@ accelerate launch \
     # --truncation \
     # --padding "max_length" \
     # --eval_on_start \
-done

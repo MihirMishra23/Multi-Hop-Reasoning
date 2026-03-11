@@ -23,14 +23,20 @@
 #     --split dev \
 #     --num_samples 100
 #
-MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48
+MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1
+# MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop//Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
+# uncomment above to use two_phase model
 LLM_MODEL=gpt-4
-DATASET=2wiki
+DATASET=hotpotqa
 SPLIT=dev
-USE_INVERSES="" # or "--use-inverses"
-NUM_SAMPLES=12
-SAVE_VERSION="v1"
-METHODS=("direct" "icl" "rag" "lmlm")
+USE_INVERSES="true" # or "--use-inverses"
+NUM_SAMPLES=1000
+SAVE_VERSION="put-anything-here" #use this to add info to save path
+TOP_K=4
+METHODS=("lmlm")
+# METHODS=("direct" "icl" "rag" "lmlm")
+# uncomment above to eval on all methods
+SIMILARITY_THRESHOLD=0.6
 
 
 # Parse command line arguments
@@ -142,7 +148,7 @@ MAX_TOKENS=1024
 BATCH_SIZE_DIRECT=32
 BATCH_SIZE_ICL=1
 BATCH_SIZE_RAG=1
-BATCH_SIZE_LMLM=32
+BATCH_SIZE_LMLM=64
 OUTPUT_DIR=./output
 SETTING=distractor
 SAVE_EVERY=64
@@ -153,6 +159,12 @@ if [[ "${MODEL_PATH}" == *"-nak"* ]]; then
     ADAPTIVE_K=""
 else
     ADAPTIVE_K="--adaptive-k"
+fi
+
+if [ -n "${USE_INVERSES}" ]; then
+    USE_INVERSES="--use-inverses"
+else
+    USE_INVERSES=""
 fi
 
 # th-3
@@ -184,8 +196,9 @@ for METHOD in "${METHODS[@]}"; do
             ${ADAPTIVE_K} \
             ${RETURN_TRIPLETS} \
             ${USE_INVERSES} \
-            --eval \
-            --resume
+            --top-k ${TOP_K} \
+            --similarity-threshold ${SIMILARITY_THRESHOLD} \
+            --eval 
     else
         if [ "${METHOD}" = "icl" ]; then
             BATCH_SIZE=${BATCH_SIZE_ICL}
