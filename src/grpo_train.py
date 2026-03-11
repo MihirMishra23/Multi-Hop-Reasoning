@@ -62,6 +62,14 @@ class LMLMArguments:
         default="em_coverage",
         metadata={"help": "Reward function to use"}
     )
+    num_db_rollouts: int = field(
+        default=1,
+        metadata={"help": "Number of database rollouts per question in Phase 1 (two-phase mode only)"}
+    )
+    retrieval_top_k: int = field(
+        default=1,
+        metadata={"help": "Nb of examples retrieved from db"}
+    )
 
 
 def process_example(example):
@@ -153,6 +161,8 @@ def main():
         eval_dataset=eval_set,
         args=grpo_config,
         two_phase=lmlm_args.two_phase,
+        num_db_rollouts=lmlm_args.num_db_rollouts,
+        retrieval_top_k = lmlm_args.retrieval_top_k,
     )
     
     # Start training

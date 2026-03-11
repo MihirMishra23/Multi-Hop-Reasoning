@@ -203,7 +203,6 @@ def main(script_args, training_args, model_args, pretrain_args):
     training_args.compute_loss_func=partial(compute_loss_func, include_eos=True) # pretrain weighted loss
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
     # data_collator = default_data_collator
-
     assert tokenizer.eos_token_id in train_dataset[0]["input_ids"], "Eos token not in input_ids"
     check(train_dataset, data_collator, tokenizer)
     # import pdb; pdb.set_trace()
