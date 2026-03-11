@@ -32,7 +32,7 @@ NUM_GPUS=1
 LOSS_TYPE="grpo"
 VLLM_GPU_MEMORY_UTILIZATION=0.15
 BETA=0.0
-LEARNING_RATE=1e-6
+LEARNING_RATE=5e-6
 # two_phase generation dimensions (set GPU-type block below overrides NUM_GENERATIONS):
 #   B  = (PER_DEVICE_TRAIN_BATCH_SIZE * NUM_GPUS) / NUM_GENERATIONS  — unique questions per step (e.g. (16*2)/8 = 4)
 #   K  = NUM_DB_ROLLOUTS   — DB rollouts per question   (Phase 1 completions: B*K)
@@ -124,6 +124,10 @@ while [[ $# -gt 0 ]]; do
             PHASE1_DB_WEIGHT_MODE="$2"
             shift 2
             ;;
+        --learning_rate)
+            LEARNING_RATE="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown argument: $1"
             exit 1
@@ -176,11 +180,13 @@ if [ -n "${DEBUG}" ]; then
     EVAL_SIZE=10
     NUM_TRAIN_EPOCHS=10
     NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
+    RETRIEVAL_THRESHOLD=0.6
+    TOP_K=4
     echo "  Detected ${NUM_GPUS} GPU(s)"
 
-    NUM_GENERATIONS=16
+    NUM_GENERATIONS=2
     GRADIENT_ACCUMULATION_STEPS=8
-    PER_DEVICE_TRAIN_BATCH_SIZE=16
+    PER_DEVICE_TRAIN_BATCH_SIZE=2
     VLLM_GPU_MEMORY_UTILIZATION=0.15
 fi
 
@@ -304,7 +310,6 @@ accelerate launch \
   --phase1_reward_type=${PHASE1_REWARD_TYPE} \
   --phase1_prompt_type=${PHASE1_PROMPT_TYPE} \
   --num_db_rollouts=${NUM_DB_ROLLOUTS} \
-  --phase1_db_weight_mode=${PHASE1_DB_WEIGHT_MODE} \
-  --learning_rate 5e-6
+  --phase1_db_weight_mode=${PHASE1_DB_WEIGHT_MODE}
 
 echo "Training completed!"
