@@ -23,7 +23,7 @@ MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop//Qwen3-1.7B-SFT_hotpotq
 DATABASE_PATH="" # -> Not used for two phase
 SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
 DATASET_NAME="hotpotqa"
-NUM_GPUS=1
+NUM_GPUS=2
 SAVE_VERSION="full-overfit" #Put anything here, it is added to the model path
 
 # config
@@ -32,7 +32,7 @@ VLLM_GPU_MEMORY_UTILIZATION=0.15
 BETA=0.0
 LEARNING_RATE=1e-6
 NUM_GENERATIONS=8
-NUM_TRAIN_EPOCHS=5 # default 3
+NUM_TRAIN_EPOCHS=1 # default 3
 TRAIN_SIZE=128
 EVAL_SIZE=100
 MAX_COMPLETION_LENGTH=1024
@@ -45,10 +45,9 @@ IS_ADAPTIVE_K=False
 RETRIEVAL_THRESHOLD=0.6
 REWARD_FUNC="em_size"
 TWO_PHASE=true
-NUM_GPUS=1
 NUM_DB_ROLLOUTS=2
-PER_DEVICE_TRAIN_BATCH_SIZE=4
-GRADIENT_ACCUMULATION_STEPS=8
+PER_DEVICE_TRAIN_BATCH_SIZE=2
+GRADIENT_ACCUMULATION_STEPS=16
 USE_INVERSES=True
 
 # Parse command line arguments
@@ -211,7 +210,7 @@ else
     OUTPUT_DIR="${OUTPUT_DIR}-nak"
 fi
 
-if [ "${USE_INVERSES}" = 'True']; then
+if [ "${USE_INVERSES}" = 'True' ]; then
     USE_INVERSES="--use-inverses"
 else
     USE_INVERSES=""
