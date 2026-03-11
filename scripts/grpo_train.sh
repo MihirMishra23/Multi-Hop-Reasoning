@@ -23,7 +23,7 @@ MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop//Qwen3-1.7B-SFT_hotpotq
 DATABASE_PATH="" # -> Not used for two phase
 SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
 DATASET_NAME="hotpotqa"
-NUM_GPUS=2
+NUM_GPUS=1
 SAVE_VERSION="full-overfit" #Put anything here, it is added to the model path
 
 # config
@@ -47,7 +47,7 @@ REWARD_FUNC="em_size"
 TWO_PHASE=true
 NUM_DB_ROLLOUTS=2
 PER_DEVICE_TRAIN_BATCH_SIZE=2
-GRADIENT_ACCUMULATION_STEPS=16
+GRADIENT_ACCUMULATION_STEPS=32
 USE_INVERSES=True
 
 # Parse command line arguments
