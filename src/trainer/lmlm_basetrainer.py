@@ -2318,7 +2318,8 @@ class LMLMGRPOTrainer(BaseTrainer):
                 # Always set by _generate_two_phase before this point.
                 # r_b_k_m: (B*K*M,) per-rollout QA correctness. Element-wise product then mean over M rollouts per (b,k).
                 rollout_util_b_k_m = torch.tensor(self._phase1_utilization_gathered, dtype=torch.float32, device=device)  # (B*K*M,)
-                r_b_k_m_format = r_b_k_m + 0.1  # even in incorrect rollout, retrieved db has small reward
+                # r_b_k_m_format = r_b_k_m + 0.1  # even in incorrect rollout, retrieved db has small reward
+                r_b_k_m_format = r_b_k_m # DEBUG
                 r_db_b_k = (r_b_k_m_format * rollout_util_b_k_m).view(B, K, M).mean(dim=2).view(B * K)  # (B*K,)
             else:
                 db_cov_b_k = rewards[:B*K, 1].nan_to_num(0.0)   # (B*K,) db quality scores from reward func
@@ -2353,7 +2354,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             if raw_mode == "none":
                 db_weight = 1.0
             elif raw_mode == "dynamic":
-                db_weight = min(r_b_k_m.mean() / (r_db_b_k.mean() + 1e-8), 10).item()
+                db_weight = (r_b_k_m.mean() / (r_db_b_k.mean() + 1e-8)).clamp(max=10).item()
             elif raw_mode == "count":
                 db_weight = float(M)
             elif raw_mode == "count_dynamic":
@@ -2825,38 +2826,43 @@ class LMLMGRPOTrainer(BaseTrainer):
                 logging_backends.append(wandb)
 
             if self.two_phase:
-                # Phase 1 table: B*K rows
-                phase1_table = {
-                    "step": [str(self.state.global_step)] * len(self._logs["phase1_prompt"]),
-                    "phase1_prompt": list(self._logs["phase1_prompt"]),
-                    "phase1_completion": list(self._logs["phase1_completion"]),
-                    "phase1_context": list(self._logs["phase1_context"]),
-                    "generated_db": list(self._logs["generated_db"]),
-                    "phase1_advantage": list(self._logs["phase1_advantages"]),
-                    "answer": list(self._logs["answer"]),
-                    "db_size_threshold": list(self._logs["rewards"]["db_size_threshold"]),
-                }
-                # Phase 2 table: B*N rows (flattened across all rollouts)
+                K = self.num_db_rollouts
                 N = self.num_generations
-                p2_prompts, p2_completions, p2_advantages, p2_em = [], [], [], []
-                for i in range(N):
-                    p2_prompts.extend(self._logs[f"phase2_prompt_{i}"])
-                    p2_completions.extend(self._logs[f"phase2_completion_{i}"])
-                    p2_advantages.extend(self._logs[f"phase2_advantages_{i}"])
-                    p2_em.extend(self._logs["rewards"][f"em_accuracy_{i}"])
-                phase2_table = {
-                    "step": [str(self.state.global_step)] * len(p2_prompts),
-                    "phase2_prompt": p2_prompts,
-                    "phase2_completion": p2_completions,
-                    "phase2_advantage": p2_advantages,
-                    "em_accuracy": p2_em,
+                M = N // K
+
+                phase1_prompts = list(self._logs["phase1_prompt"])
+                phase1_completions = list(self._logs["phase1_completion"])
+                phase1_contexts = list(self._logs["phase1_context"])
+                generated_dbs = list(self._logs["generated_db"])
+                phase1_advantages = list(self._logs["phase1_advantages"])
+                phase1_answers = list(self._logs["answer"])
+                db_thresholds = list(self._logs["rewards"]["db_size_threshold"])
+
+                B = len(phase1_prompts) // K
+
+                combined_table = {
+                    "step": [str(self.state.global_step)] * B,
+                    "answer": [phase1_answers[b * K] for b in range(B)],
+                    "phase1_prompt": [phase1_prompts[b * K] for b in range(B)],  # same for all k
+                    "phase2_prompt": list(self._logs["phase2_prompt_0"]),          # same for all k, m
                 }
-                df_phase1 = pd.DataFrame(phase1_table)
-                df_phase2 = pd.DataFrame(phase2_table)
+                for k in range(K):
+                    combined_table[f"phase1_completion_{k}"] = [phase1_completions[b * K + k] for b in range(B)]
+                    combined_table[f"phase1_context_{k}"] = [phase1_contexts[b * K + k] for b in range(B)]
+                    combined_table[f"generated_db_{k}"] = [generated_dbs[b * K + k] for b in range(B)]
+                    combined_table[f"phase1_advantage_{k}"] = [phase1_advantages[b * K + k] for b in range(B)]
+                    combined_table[f"db_size_threshold_{k}"] = [db_thresholds[b * K + k] for b in range(B)]
+                for k in range(K):
+                    for m in range(M):
+                        i = k * M + m
+                        combined_table[f"phase2_completion_{k}_{m}"] = list(self._logs[f"phase2_completion_{i}"])
+                        combined_table[f"phase2_advantage_{k}_{m}"] = list(self._logs[f"phase2_advantages_{i}"])
+                        combined_table[f"em_accuracy_{k}_{m}"] = list(self._logs["rewards"][f"em_accuracy_{i}"])
+
+                df_combined = pd.DataFrame(combined_table)
                 for logging_backend in logging_backends:
                     logging_backend.log({
-                        "completions/phase1": logging_backend.Table(dataframe=df_phase1),
-                        "completions/phase2": logging_backend.Table(dataframe=df_phase2),
+                        "completions": logging_backend.Table(dataframe=df_combined),
                     })
             else:
                 table = {
