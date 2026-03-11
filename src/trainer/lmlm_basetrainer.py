@@ -1904,7 +1904,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             f"[TRR++] expected {B * N_db + B * N_db * N} combined completions (B*N_db={B * N_db} + B*N_db*N={B * N_db * N}), got {len(combined_completion_ids)}"
         )
         assert len(phase1_prompts) == B
-        assert len(extended_phase1_prompts) == B * N_db
+        assert len(combined_prompts) == B * N_db + B * N_db * N
         assert len(combined_prompt_ids) == len(combined_completion_ids), (
             f"[TRR++] combined_prompt_ids/completion_ids length mismatch: {len(combined_prompt_ids)} vs {len(combined_completion_ids)}"
         )
@@ -2403,9 +2403,14 @@ class LMLMGRPOTrainer(BaseTrainer):
             self._logs["phase1_completion"].extend(phase1_completions)
             self._logs["phase1_advantages"].extend(phase1_advantages)
             self._logs["rewards"]["db_size_threshold"].extend(db_threshold_rewards_list)
-            self._logs["phase1_context"].extend(["\n\n".join(ctx_list) for ctx_list in contexts for _ in range(N_db)])
-            self._logs["generated_db"].extend(self._generated_db_triplet_list)
-            self._logs["answer"].extend([a for a in answers[::N] for _ in range(N_db)])
+            # self._logs["phase1_context"].extend(["\n\n".join(ctx_list) for ctx_list in contexts for _ in range(N_db)])
+            all_contexts = gather_object(contexts)
+            self._logs["phase1_context"].extend(["\n\n".join(ctx_list) for ctx_list in all_contexts for _ in range(N_db)])
+            # self._logs["generated_db"].extend(self._generated_db_triplet_list)
+            self._logs["generated_db"].extend(gather_object(self._generated_db_triplet_list))
+            # self._logs["answer"].extend([a for a in answers[::N] for _ in range(N_db)])
+            all_answers = gather_object(answers[::N])
+            self._logs["answer"].extend([a for a in all_answers for _ in range(N_db)])
 
             for i in range(N):
                 phase2_prompts_i = [phase2_prompts[b*N + i] for b in range(B_total)]
@@ -2768,7 +2773,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                     **self._logs["rewards"],
                     "advantage": self._logs["advantages"],
                 }
-
+            print({k: len(v) if isinstance(v, (list, deque)) else type(v) for k, v in table.items()})
             df_base = pd.DataFrame(table)
 
             for logging_backend in logging_backends:
