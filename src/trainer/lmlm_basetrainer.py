@@ -2773,7 +2773,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                     **self._logs["rewards"],
                     "advantage": self._logs["advantages"],
                 }
-            print({k: len(v) if isinstance(v, (list, deque)) else type(v) for k, v in table.items()})
+
             df_base = pd.DataFrame(table)
 
             for logging_backend in logging_backends:
