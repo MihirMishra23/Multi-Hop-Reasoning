@@ -17,6 +17,7 @@ PHASE1_PROMPT_TYPE="context_only"  # "context_only" or "with_question"
 NUM_DB_ROLLOUTS=1  # K: DB rollouts per question (N must be divisible by K)
 NUM_DB_ROLLOUTS_SET=0  # tracks whether --num_db_rollouts was explicitly passed
 PHASE1_DB_WEIGHT_MODE="count_dynamic"  # none | fixed[_<w>] | dynamic | count | count_dynamic
+LEARNING_RATE=""
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -40,6 +41,10 @@ while [[ $# -gt 0 ]]; do
         --num_db_rollouts)
             NUM_DB_ROLLOUTS="$2"
             NUM_DB_ROLLOUTS_SET=1
+            shift 2
+            ;;
+        --learning_rate)
+            LEARNING_RATE="--learning_rate $2"
             shift 2
             ;;
         *)
@@ -118,6 +123,7 @@ ${TWO_PHASE} \
 --phase1_reward_type ${PHASE1_REWARD_TYPE} \
 --phase1_prompt_type ${PHASE1_PROMPT_TYPE} \
 --num_db_rollouts ${NUM_DB_ROLLOUTS} \
---phase1_db_weight_mode ${PHASE1_DB_WEIGHT_MODE}
+--phase1_db_weight_mode ${PHASE1_DB_WEIGHT_MODE} \
+${LEARNING_RATE}
 
 echo "GRPO Training complete!"
