@@ -22,6 +22,9 @@ DB_SEP_TOKEN = "<|db_relationship|>"                # Separates entity and relat
 DB_RETRIEVE_TOKEN = "<|db_return|>"   # Signals insertion point for returned value
 DB_END_TOKEN = "<|db_end|>"            # Marks end of lookup block
 
+# New format experiment, the model is allowed to look up all relatinoships for an entity.
+DB_ALL_RELATIONSHIPS_TOKEN="<|db_all_relationships|>" # Signals retrieval of all relationships for an entity
+
 
 # --- Legacy format (used for annotation) ---
 LEGACY_DB_START_TOKEN = "[dblookup"

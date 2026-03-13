@@ -138,6 +138,59 @@ class TopkRetriever:
         self.index.add_with_ids(embeddings, ids)
         self.id_to_triplet = {i: triplet for i, triplet in enumerate(self.database)}
 
+        # Build a separate entity-only index for all-relationships lookup
+        self._build_entity_index()
+
+    def _build_entity_index(self):
+        """Build a FAISS index over unique entity names for all-relationships lookup."""
+        # Collect unique entities and their (relationship, value) pairs
+        entity_to_rels: dict = {}
+        for ent, rel, val in self.database:
+            ent_norm = self._normalize_text(ent)
+            entity_to_rels.setdefault(ent_norm, []).append((rel, val))
+
+        self._entity_to_rels = entity_to_rels
+        unique_entities = list(entity_to_rels.keys())
+        self._entity_index_keys = unique_entities  # id → entity string
+
+        entity_embeddings = self.model.encode(
+            unique_entities,
+            batch_size=self.batch_size,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        self._entity_index = faiss.IndexIDMap(faiss.IndexFlatIP(entity_embeddings.shape[1]))
+        self._entity_index.add_with_ids(entity_embeddings, np.arange(len(unique_entities)))
+
+    def retrieve_all_relationships_for_entity(self, entity: str, threshold: float, max_relationships: int) -> List[str]:
+        """Return up to *max_relationships* ``(relationship, value)`` strings for the
+        entity whose embedding is closest to *entity* and whose similarity is at
+        least *threshold*.  Returns an empty list when nothing passes the threshold.
+        """
+        from multi_lmlm.constants import DB_ALL_RELATIONSHIPS_TOKEN
+
+        entity = entity.replace(DB_ALL_RELATIONSHIPS_TOKEN, "").strip()
+
+        if self._entity_index is None:
+            return []
+
+        query_emb = self.model.encode(
+            [self._normalize_text(entity)],
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        distances, indices = self._entity_index.search(query_emb, 1)
+        dist, idx = float(distances[0][0]), int(indices[0][0])
+
+        if idx == -1 or dist < threshold:
+            return []
+
+        matched_entity = self._entity_index_keys[idx]
+        rels = self._entity_to_rels.get(matched_entity, [])
+        return [rel for rel, val in rels][:max_relationships]
+
     def retrieve_top_k(self, entity: str, relation: str, threshold: Optional[float] = None, return_triplets: bool = False) -> List[str]:
         query_text = f"{self._normalize_text(entity)} {self._normalize_text(relation)}"
         query_embedding = self.model.encode([query_text], convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=False)
