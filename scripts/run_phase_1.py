@@ -96,8 +96,12 @@ def main():
     lmlm_database = {"triplets": []}
 
     for triplet in all_triplets:
-        if len(triplet) != 3:
-            print(f"\n[ERROR]: malformed triplet: {triplet}")
+        if triplet is None or not isinstance(triplet, (list, tuple)) or len(triplet) != 3:
+            preview = repr(triplet)
+            if len(preview) > 200:
+                n = len(triplet) if triplet is not None and hasattr(triplet, "__len__") else "?"
+                preview = preview[:200] + f" ... (len={n})"
+            print(f"\n[ERROR]: malformed triplet: {preview}")
             continue
         entities.add(triplet[0])
         relationships.add(triplet[1])

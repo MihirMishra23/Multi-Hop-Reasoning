@@ -28,7 +28,7 @@ fi
 # Generates LMLM database triplets from model completions
 
 # Default values
-MODEL_PATH="/share/j_sun/lmlm_multihop/checkpoints/debug/Qwen3-1.7B-SFT_two_phase_hotpotqa_ep5_bsz48-grpo-B1-K4-M4-bs16-s8-b0.0-ep5-n7000-em_size-v2-p1binary-ptcontext_only-wmcount-nak/checkpoint-1750"
+MODEL_PATH="/share/j_sun/lmlm_multihop/checkpoints/debug/full-overfit-Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed-grpo-g8-bs16-s8-b0.0-ep5-n1000-em_size-v2-nak/checkpoint-240"
 DATASET="hotpotqa"
 SPLIT="dev"
 SEED=42

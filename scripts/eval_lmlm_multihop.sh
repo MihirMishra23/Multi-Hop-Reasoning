@@ -23,7 +23,7 @@
 #     --split dev \
 #     --num_samples 100
 #
-MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1
+MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/debug/full-overfit-Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed-grpo-g8-bs16-s8-b0.0-ep5-n1000-em_size-v2-nak/checkpoint-240
 # MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop//Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
 # uncomment above to use two_phase model
 LLM_MODEL=gpt-4
@@ -84,7 +84,7 @@ done
 
 if [ "${DATASET}" = "hotpotqa" ]; then
     if [ "${SPLIT}" = "dev" ]; then
-        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json"
+        DATABASE_PATH="/home/as2637/lmlm_12/Multi-Hop-Reasoning/phase1_database_checkpoint-240_hotpotqa_dev_2026-03-12_23-33-23.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
     elif [ "${SPLIT}" = "debug_dev" ]; then

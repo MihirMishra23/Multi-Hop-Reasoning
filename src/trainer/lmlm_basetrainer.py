@@ -1402,6 +1402,8 @@ class LMLMGRPOTrainer(BaseTrainer):
                         self.llm.sleep(level=2)
 
         elif self.use_transformers_paged:
+            if num_rollouts > 1:
+                prompts = [p for p in prompts for _ in range(num_rollouts)]
             if is_conversational({"prompt": prompts[0]}):
                 processor_outputs = self.processing_class.apply_chat_template(
                     conversation=prompts,
@@ -1442,6 +1444,9 @@ class LMLMGRPOTrainer(BaseTrainer):
             extra_fields = {}  # No extra fields for paged mode
 
         else:
+            # Transformers path: expand prompts so we get num_rollouts completions per prompt (Phase 2 expects B*N_db*N)
+            if num_rollouts > 1:
+                prompts = [p for p in prompts for _ in range(num_rollouts)]
             generate_inputs = self.processing_class(
                     text=prompts, padding=True, padding_side="left", return_tensors="pt"
                 )
@@ -1453,7 +1458,6 @@ class LMLMGRPOTrainer(BaseTrainer):
                     self.model_wrapped,
                     self.accelerator,
                     gather_deepspeed3_params=self.args.ds3_gather_for_generation,
-                    generation_kwargs=self.generation_kwargs,  # Override model.generation_config with generation_kwargs to fix transformers#42762
                 ) as unwrapped_model,
                 torch.no_grad(),
                 FSDP.summon_full_params(self.model_wrapped, recurse=False) if self.is_fsdp_enabled else nullcontext(),
@@ -1896,7 +1900,11 @@ class LMLMGRPOTrainer(BaseTrainer):
         combined_prompt_ids = phase1_prompt_ids + prompt_ids
         combined_completion_ids = phase1_completion_ids + completion_ids
         combined_completions = phase1_completions + completions
-        combined_logprobs = phase1_logprobs + logprobs
+        # Logprobs can be None when using transformers (non-vLLM) path
+        if phase1_logprobs is None and logprobs is None:
+            combined_logprobs = None
+        else:
+            combined_logprobs = (phase1_logprobs or []) + (logprobs or [])
         combined_prompts = [p for p in phase1_prompts for _ in range(N_db)] + [p for p in qa_prompts for _ in range(N_db * num_generations)]
 
         # [TRR++] Combined output: B*N_db Phase-1 + B*N_db*N Phase-2 = B*N_db*(N+1)
