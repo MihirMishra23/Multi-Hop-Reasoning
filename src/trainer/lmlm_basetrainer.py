@@ -312,11 +312,13 @@ class LMLMGRPOTrainer(BaseTrainer):
         use_inverses: bool = False,
         retrieval_threshold : float = 0.6,
         two_phase: bool = False,
+        retrieval_top_k: int = 1,
         phase1_reward_type: str = "binary",
         phase1_prompt_type: str = "context_only",
         num_db_rollouts: int = 1,
         phase1_db_weight_mode: str = "fixed_1.0",
     ):
+        self.retrieval_top_k = retrieval_top_k
         #LMLM db initialization
         self.retrieval_threshold = retrieval_threshold
         self.use_inverses = use_inverses
@@ -1714,7 +1716,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                 )
         return tool_mask, completions, completion_ids, logprobs, tool_call_count, tool_failure_count
 
-    def _generate_two_phase(self, qa_prompts: list[str], contexts: list[list[str]], questions: list[str] | None = None):
+    def _generate_two_phase(self, qa_prompts: list[str], contexts: list[list[str]], questions: list[str] | None = None, fast_build_db: bool = None):
         """Two-phase generation: Phase 1 (triplet gen) → Phase 2 (QA with per-example DB).
 
         Phase 1: Model generates knowledge triplets from context paragraphs.
@@ -1722,6 +1724,11 @@ class LMLMGRPOTrainer(BaseTrainer):
         Phase 2: Model answers questions using DB lookups against the per-example
                  databases built in Phase 1.
 
+        Args:
+            qa_prompts: List of QA prompts
+            contexts: List of context lists
+            fast_build_db: If True, uses fast database building for eval. Not used in training.
+                          Defaults to None.
 
         Returns:
             Tuple of (prompt_ids, completion_ids, tool_mask, completions,
@@ -1791,6 +1798,11 @@ class LMLMGRPOTrainer(BaseTrainer):
             context_lengths.append(context_length)
 
 
+        if fast_build_db:
+            return [t for triplet_list in all_triplets for t in triplet_list]
+
+
+
         # Log triplet to context ratio
         # print(f"[DEBUG] Triplet to context character ratio for first 5 examples:")
         # for i in range(min(5, len(all_triplets))):
@@ -1801,7 +1813,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Build per-example DBs in batch (one embedding pass for all triplets)
         per_example_dbs = build_databases_from_triplets_batch(
             all_triplets,
-            top_k=self.top_k,
+            top_k=self.retrieval_top_k,
             default_threshold=self.retrieval_threshold,
             adaptive=self.adaptive_k,
             use_inverses=self.use_inverses
