@@ -27,7 +27,6 @@ DATABASE_PATH="" # -> Not used for two phase
 SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
 DATASET_NAME="hotpotqa"
 NUM_GPUS=1
-SAVE_VERSION="full-overfit" #Put anything here, it is added to the model path
 
 # config
 LOSS_TYPE="grpo"
@@ -319,7 +318,6 @@ accelerate launch \
   --save_total_limit=5 \
   --save_steps=0.1 \
   ${RESUME_FROM_CHECKPOINT} \
-  --use-inverses \
   --retrieval-threshold ${RETRIEVAL_THRESHOLD} \
   ${TWO_PHASE} \
   ${RETURN_TRIPLES} \
