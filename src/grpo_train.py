@@ -78,6 +78,10 @@ class LMLMArguments:
         default="count_dynamic",
         metadata={"help": "How to weight A_db before combining with A_qa. Options: 'none' (no weight), 'fixed' (phase1_advantage_weight), 'dynamic' (scale_ratio=r_qa_mean/r_db_mean), 'count' (M=N/K), 'count_dynamic' (M*scale_ratio, current default)."}
     )
+    retrieval_top_k: int = field(
+        default=1,
+        metadata={"help": "Nb of examples retrieved from db"}
+    )
 
 
 def process_example(example):
@@ -172,6 +176,7 @@ def main():
         phase1_prompt_type=lmlm_args.phase1_prompt_type,
         num_db_rollouts=lmlm_args.num_db_rollouts,
         phase1_db_weight_mode=lmlm_args.phase1_db_weight_mode,
+        retrieval_top_k = lmlm_args.retrieval_top_k,
     )
     
     # Start training

@@ -39,6 +39,7 @@ logging.basicConfig(level=logging.INFO)
 @dataclass
 class PretrainConfig:
     use_special_dblookup_tokens: bool = False
+    use_all_relationships_token: bool = False
     plain_baseline: bool = False
     eval_only: bool = False
     max_seq_length: int = 2048
@@ -97,11 +98,13 @@ def main(script_args, training_args, model_args, pretrain_args):
 
     if accelerator.is_main_process:
         logger.info(f"use_special_dblookup_tokens = {pretrain_args.use_special_dblookup_tokens}")
+        logger.info(f"use_all_relationships_token = {pretrain_args.use_all_relationships_token}")
 
     model, tokenizer = load_model_for_ft_baseline(
         model_args,
         resume_from_checkpoint=training_args.resume_from_checkpoint, # HACK: this is a hack to load the model from the checkpoint
         use_special_dblookup_tokens=pretrain_args.use_special_dblookup_tokens,
+        use_all_relationships_token=pretrain_args.use_all_relationships_token,
     )
 
     # tokenizer.pad_token = tokenizer.eos_token
@@ -124,11 +127,15 @@ def main(script_args, training_args, model_args, pretrain_args):
         return tokenized
 
     def tokenize_fn(example, max_length = 2048):
-
-        # Prepare prompt
-        # prompt = "Question:\n" + example["question"] + "\nAnswer:\n"
-        prompt = example["annotated_text"].split("\nAnswer:\n")[0] + "\nAnswer:\n"
-        answer = example["annotated_text"].split("\nAnswer:\n")[1]
+        # old sft data stored the prompt and answer in the same field, under the format "Question:\n{prompt}\nAnswer:\n". This is hard to parse / does not generalize, 
+        # so from now can have a seperate field for the prompt and answer. Ideally the old sft data should be done this way as well.
+        if "format_version" in example and example['format_version'] is not None: 
+            assert(example['format_version'] == 1) # 1 is a dummy value
+            prompt = example["prompt"]
+            answer = example["answer"]
+        else:
+            prompt = example["annotated_text"].split("\nAnswer:\n")[0] + "\nAnswer:\n"
+            answer = example["annotated_text"].split("\nAnswer:\n")[1]
 
         # Tokenize separately
         prompt_tokens = tokenizer(
@@ -170,7 +177,7 @@ def main(script_args, training_args, model_args, pretrain_args):
             "labels": labels,
         }
 
-    train_dataset = train_dataset.map(tokenize_fn, batched=False, remove_columns=["annotated_text"], fn_kwargs={"max_length" : pretrain_args.max_seq_length })
+    train_dataset = train_dataset.map(tokenize_fn, batched=False, fn_kwargs={"max_length" : pretrain_args.max_seq_length })
 
     keep_keys = ["input_ids", "attention_mask", "labels"]
     train_dataset = train_dataset.remove_columns([col for col in train_dataset.column_names if col not in keep_keys])
@@ -199,7 +206,6 @@ def main(script_args, training_args, model_args, pretrain_args):
     training_args.compute_loss_func=partial(compute_loss_func, include_eos=True) # pretrain weighted loss
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
     # data_collator = default_data_collator
-
     assert tokenizer.eos_token_id in train_dataset[0]["input_ids"], "Eos token not in input_ids"
     check(train_dataset, data_collator, tokenizer)
     # import pdb; pdb.set_trace()

@@ -153,6 +153,15 @@ class DatabaseManager:
             )
             logger.info(f"Top-k retriever initialized with {len(self)} triplets and threshold {self.topk_retriever.default_threshold}.")
 
+    def retrieve_all_relationships_for_entity(self, entity: str, threshold: float, max_relationships: int) -> List[str]:
+        """Return all (relationship, value) pairs for the entity closest to *entity*.
+
+        Delegates to :meth:`TopkRetriever.retrieve_all_relationships_for_entity`.
+        """
+        if self.topk_retriever is None:
+            raise RuntimeError("TopkRetriever is not initialized. Call init_topk_retriever() first.")
+        return self.topk_retriever.retrieve_all_relationships_for_entity(entity, threshold, max_relationships)
+
     def retrieve_from_database(self, prompt: str, threshold: Optional[float] = None, top_k : int  = 4, return_triplets : bool = False):
         """Retrieve a single top-1 database result from a prompt containing dblookup. If lookup fails, raise an error."""
         pattern_lst = [

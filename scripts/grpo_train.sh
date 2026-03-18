@@ -19,9 +19,9 @@ export LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}
 
 # bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/grpo_train.sh --gpu_type H100
 # Default values
-GPU_TYPE="B200"
+GPU_TYPE="None"
 # MODEL_PATH="Qwen/Qwen3-1.7B"
-MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1
+MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop//Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
 #DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
 DATABASE_PATH="" # -> Not used for two phase
 SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
@@ -49,9 +49,9 @@ EVAL_STEPS=5000 # disable it for now
 LOGGING_STEPS=5
 TOP_P=0.95
 TEMPERATURE=1.3
-TOP_K=0
+TOP_K=4
 IS_ADAPTIVE_K=False
-RETRIEVAL_THRESHOLD=0.9
+RETRIEVAL_THRESHOLD=0.6
 REWARD_FUNC="em_size"
 PHASE1_REWARD_TYPE="binary"
 PHASE1_PROMPT_TYPE="context_only"
@@ -260,6 +260,13 @@ else
     OUTPUT_DIR="${OUTPUT_DIR}-nak"
 fi
 
+if [ "${USE_INVERSES}" = 'True' ]; then
+    USE_INVERSES="--use-inverses"
+else
+    USE_INVERSES=""
+fi
+
+
 echo "Starting GRPO training with:"
 echo "  Model: ${MODEL_PATH}"
 echo "  Database: ${DATABASE_PATH}"
@@ -311,10 +318,10 @@ accelerate launch \
   --save_total_limit=5 \
   --save_steps=0.1 \
   ${RESUME_FROM_CHECKPOINT} \
-  --use-inverses \
   --retrieval-threshold ${RETRIEVAL_THRESHOLD} \
   ${TWO_PHASE} \
   ${RETURN_TRIPLES} \
+  ${USE_INVERSES} \
   ${ADAPTIVE_K} \
   --reward_func=${REWARD_FUNC} \
   --phase1_reward_type=${PHASE1_REWARD_TYPE} \
