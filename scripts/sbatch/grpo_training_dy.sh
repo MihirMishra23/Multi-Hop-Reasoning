@@ -18,6 +18,8 @@ NUM_DB_ROLLOUTS=1  # K: DB rollouts per question (N must be divisible by K)
 NUM_DB_ROLLOUTS_SET=0  # tracks whether --num_db_rollouts was explicitly passed
 PHASE1_DB_WEIGHT_MODE="count_dynamic"  # none | fixed[_<w>] | dynamic | count | count_dynamic
 LEARNING_RATE=""
+RETRIEVAL_THRESHOLD_ARG=""
+TOP_K_ARG=""
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -45,6 +47,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --learning_rate)
             LEARNING_RATE="--learning_rate $2"
+            shift 2
+            ;;
+        --threshold)
+            RETRIEVAL_THRESHOLD_ARG="--retrieval-threshold $2"
+            shift 2
+            ;;
+        --top_k)
+            TOP_K_ARG="--top_k $2"
             shift 2
             ;;
         *)
@@ -124,6 +134,8 @@ ${TWO_PHASE} \
 --phase1_prompt_type ${PHASE1_PROMPT_TYPE} \
 --num_db_rollouts ${NUM_DB_ROLLOUTS} \
 --phase1_db_weight_mode ${PHASE1_DB_WEIGHT_MODE} \
-${LEARNING_RATE}
+${LEARNING_RATE} \
+${RETRIEVAL_THRESHOLD_ARG} \
+${TOP_K_ARG}
 
 echo "GRPO Training complete!"
