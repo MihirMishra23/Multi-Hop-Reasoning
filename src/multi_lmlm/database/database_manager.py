@@ -132,6 +132,7 @@ class DatabaseManager:
             "triplets": set(),
         }
         self.topk_retriever = None
+        self._queried_pairs: set = set()  # To track the utilization ratio, tracks unique (entity, relationship) pairs successfully retrieved
 
     def __len__(self):
         return len(self.database["triplets"])
@@ -190,6 +191,7 @@ class DatabaseManager:
                 f"[dblookup_fail_3] No retrieval results for entity='{entity}', relationship='{relationship}'",
                 "no_retrieval_data_found"
             )
+        self._queried_pairs.add((entity.strip(), relationship.strip()))
         return results
 
     def build_database(self, dataset: Union[DatasetDict, List[Dict]], database_name: Optional[str] = None, database_org_file: Optional[str] = None):
@@ -232,6 +234,17 @@ class DatabaseManager:
             adaptive: Whether to use adaptive threshold
             use_inverses: Whether to include inverse relationships
         """
+        # Deduplicate triplets (keep first occurrence), selecting matching embeddings
+        seen = set()
+        unique_indices = []
+        for i, t in enumerate(triplets):
+            key = tuple(t)
+            if key not in seen:
+                seen.add(key)
+                unique_indices.append(i)
+        triplets = [triplets[i] for i in unique_indices]
+        embeddings = embeddings[unique_indices]
+
         self.database["entities"] = [t[0] for t in triplets]
         self.database["relationships"] = [t[1] for t in triplets]
         self.database["return_values"] = [t[2] for t in triplets]
