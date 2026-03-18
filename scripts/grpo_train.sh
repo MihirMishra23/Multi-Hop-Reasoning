@@ -1,17 +1,20 @@
 #!/bin/bash
 
 # GRPO Training Script for LMLM Multi-Hop QA
-export CUDA_LAUNCH_BLOCKING=1
-export VLLM_BATCH_INVARIANT=1
-export TORCH_USE_CUDA_DSA=1
+#export CUDA_LAUNCH_BLOCKING=1  # Removed: causes vLLM CUDA errors to propagate synchronously to NCCL → hang at DDP init
+export VLLM_BATCH_INVARIANT=0
+#export TORCH_USE_CUDA_DSA=1  # Removed: paired with CUDA_LAUNCH_BLOCKING for debugging only
 #export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+# export WANDB_ENTITY=dongyoung-go-cornell-university
 export WANDB_ENTITY=ryan-noonan-cornell-university
 export WANDB_PROJECT=LMLM-Multihop
 
 # DEBUG
-export VLLM_ATTENTION_BACKEND=FLASH_ATTN   # or TRITON
+export VLLM_ATTENTION_BACKEND=TRITON_ATTN
 export VLLM_USE_FLASHINFER=0
+export CUDA_HOME=/usr/local/cuda
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}
 
 
 # bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/grpo_train.sh --gpu_type H100
@@ -30,25 +33,30 @@ SAVE_VERSION="full-overfit" #Put anything here, it is added to the model path
 LOSS_TYPE="grpo"
 VLLM_GPU_MEMORY_UTILIZATION=0.15
 BETA=0.0
-LEARNING_RATE=1e-6
-NUM_GENERATIONS=8
-NUM_TRAIN_EPOCHS=1 # default 3
-TRAIN_SIZE=128
+LEARNING_RATE=5e-6
+# two_phase generation dimensions (set GPU-type block below overrides NUM_GENERATIONS):
+#   B  = (PER_DEVICE_TRAIN_BATCH_SIZE * NUM_GPUS) / NUM_GENERATIONS  — unique questions per step (e.g. (16*2)/8 = 4)
+#   K  = NUM_DB_ROLLOUTS   — DB rollouts per question   (Phase 1 completions: B*K)
+#   N  = NUM_GENERATIONS   — QA rollouts per question   (Phase 2 completions: B*N, must be divisible by K)
+#   M  = N / K             — QA rollouts per (question, DB) pair
+NUM_GENERATIONS=16    # N
+NUM_DB_ROLLOUTS=4    # K  (set >1 to compare multiple DBs per question; N must be divisible by K)
+NUM_TRAIN_EPOCHS=5 # default 3
+TRAIN_SIZE=7000
 EVAL_SIZE=100
 MAX_COMPLETION_LENGTH=1024
-EVAL_STEPS=10
-LOGGING_STEPS=1
+# EVAL_STEPS=1
+EVAL_STEPS=5000 # disable it for now
+LOGGING_STEPS=5
 TOP_P=0.95
 TEMPERATURE=1.3
 TOP_K=4
 IS_ADAPTIVE_K=False
 RETRIEVAL_THRESHOLD=0.6
 REWARD_FUNC="em_size"
-TWO_PHASE=true
-NUM_DB_ROLLOUTS=2
-PER_DEVICE_TRAIN_BATCH_SIZE=2
-GRADIENT_ACCUMULATION_STEPS=32
-USE_INVERSES=True
+PHASE1_REWARD_TYPE="binary"
+PHASE1_PROMPT_TYPE="context_only"
+PHASE1_DB_WEIGHT_MODE="count_dynamic"  # none | fixed[_<w>] | dynamic | count | count_dynamic
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -101,8 +109,24 @@ while [[ $# -gt 0 ]]; do
             REWARD_FUNC="$2"
             shift 2
             ;;
+        --phase1_reward_type)
+            PHASE1_REWARD_TYPE="$2"
+            shift 2
+            ;;
+        --phase1_prompt_type)
+            PHASE1_PROMPT_TYPE="$2"
+            shift 2
+            ;;
         --num_db_rollouts)
             NUM_DB_ROLLOUTS="$2"
+            shift 2
+            ;;
+        --phase1_db_weight_mode)
+            PHASE1_DB_WEIGHT_MODE="$2"
+            shift 2
+            ;;
+        --learning_rate)
+            LEARNING_RATE="$2"
             shift 2
             ;;
         *)
@@ -115,11 +139,17 @@ done
 if [ "$GPU_TYPE" == "B200" ]; then
     # B200
     if [[ "${MODEL_PATH}" == *"1.7B"* ]]; then
-        NUM_GPUS=2
-        NUM_GENERATIONS=8
-        PER_DEVICE_TRAIN_BATCH_SIZE=16
+        NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
+        echo "  Detected ${NUM_GPUS} GPU(s)"
+        NUM_GENERATIONS=16
         GRADIENT_ACCUMULATION_STEPS=8
+        PER_DEVICE_TRAIN_BATCH_SIZE=16
         VLLM_GPU_MEMORY_UTILIZATION=0.15
+        # NUM_GPUS=2
+        # NUM_GENERATIONS=8
+        # PER_DEVICE_TRAIN_BATCH_SIZE=16
+        # GRADIENT_ACCUMULATION_STEPS=8
+        # VLLM_GPU_MEMORY_UTILIZATION=0.15
     elif [[ "${MODEL_PATH}" == *"4B"* ]]; then
         NUM_GPUS=2
         NUM_GENERATIONS=8
@@ -145,34 +175,46 @@ elif [ "$GPU_TYPE" == "H100" ]; then
     VLLM_GPU_MEMORY_UTILIZATION=0.2
 fi
 
-if [ "$NUM_GPUS" == 2 ]; then
-    export CUDA_VISIBLE_DEVICES=0,1
-elif [ "$NUM_GPUS" == 1 ]; then
-    export CUDA_VISIBLE_DEVICES=0
-else
-    echo "Invalid number of GPUs: ${NUM_GPUS}"
-    exit 1
-fi
-
 if [ -n "${DEBUG}" ]; then
     echo "Debug mode enabled"
     TRAIN_SIZE=100
     EVAL_SIZE=10
     NUM_TRAIN_EPOCHS=10
-    NUM_GPUS=1
+    NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
+    RETRIEVAL_THRESHOLD=0.6
+    TOP_K=4
+    echo "  Detected ${NUM_GPUS} GPU(s)"
 
-    NUM_GENERATIONS=4
-    GRADIENT_ACCUMULATION_STEPS=16
-    PER_DEVICE_TRAIN_BATCH_SIZE=8
+    NUM_GENERATIONS=2
+    GRADIENT_ACCUMULATION_STEPS=8
+    PER_DEVICE_TRAIN_BATCH_SIZE=2
     VLLM_GPU_MEMORY_UTILIZATION=0.15
 fi
 
+CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((NUM_GPUS - 1)))
+export CUDA_VISIBLE_DEVICES
+echo "  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+
+# TODO (multi-GPU): In two_phase mode, gather(rewards_per_func) produces ordering
+# [GPU0_phase1+phase2, GPU1_phase1+phase2, ...] but the advantage computation in
+# lmlm_basetrainer.py assumes [all_phase1 (B*K), all_phase2 (B*N)]. This causes
+# completely wrong Phase-1/Phase-2 advantage grouping when NUM_GPUS > 1.
+# Fix: reorder the gathered tensor before the advantage split, or gather phase1/phase2 separately.
+if [ "${TWO_PHASE}" = "--two_phase" ] && [ "${NUM_GPUS}" -gt 1 ]; then
+    echo "WARNING: two_phase mode with NUM_GPUS=${NUM_GPUS} > 1 is not yet supported." >&2
+    echo "         Advantage computation will be incorrect. See TODO in grpo_train.sh and lmlm_basetrainer.py." >&2
+fi
+# NUM_TRAIN_EPOCHS=100
+
 
 #-------------------------------- Save dir --------------------------------
-# output_dir = script_args.model_path.split('/')[-1]+'-'+str(grpo_config.loss_type)+'-g'+str(grpo_config.num_generations)+'-bs'+str(grpo_config.per_device_train_batch_size)+'-s'+str(grpo_config.gradient_accumulation_steps)+'-b'+str(grpo_config.beta)+'-ep'+str(grpo_config.num_train_epochs)+'-n'+str(script_args.train_size)
-OUTPUT_DIR="${SAVE_DIR}/${SAVE_VERSION}-${MODEL_PATH##*/}-${LOSS_TYPE}-g${NUM_GENERATIONS}-bs${PER_DEVICE_TRAIN_BATCH_SIZE}-s${GRADIENT_ACCUMULATION_STEPS}-b${BETA}-ep${NUM_TRAIN_EPOCHS}-n${TRAIN_SIZE}-${REWARD_FUNC}"
+# Dimensions: B=unique questions/step, K=DB rollouts, M=QA rollouts per (B,K), N=K*M=num_generations
+# bs=per_device_train_batch_size, s=gradient_accumulation_steps
+M=$((NUM_GENERATIONS / NUM_DB_ROLLOUTS))
+B=$((PER_DEVICE_TRAIN_BATCH_SIZE * NUM_GPUS / NUM_GENERATIONS))
+OUTPUT_DIR="${SAVE_DIR}/${MODEL_PATH##*/}-${LOSS_TYPE}-B${B}-K${NUM_DB_ROLLOUTS}-M${M}-bs${PER_DEVICE_TRAIN_BATCH_SIZE}-s${GRADIENT_ACCUMULATION_STEPS}-b${BETA}-ep${NUM_TRAIN_EPOCHS}-n${TRAIN_SIZE}-${REWARD_FUNC}"
 if [ -n "${TWO_PHASE}" ]; then
-    OUTPUT_DIR="${OUTPUT_DIR}-v2"
+    OUTPUT_DIR="${OUTPUT_DIR}-v2-p1${PHASE1_REWARD_TYPE}-pt${PHASE1_PROMPT_TYPE}-wm${PHASE1_DB_WEIGHT_MODE}"
     TWO_PHASE="--two_phase"
 else
     TWO_PHASE=""
@@ -274,6 +316,9 @@ accelerate launch \
   ${USE_INVERSES} \
   ${ADAPTIVE_K} \
   --reward_func=${REWARD_FUNC} \
-  --num_db_rollouts=${NUM_DB_ROLLOUTS}
+  --phase1_reward_type=${PHASE1_REWARD_TYPE} \
+  --phase1_prompt_type=${PHASE1_PROMPT_TYPE} \
+  --num_db_rollouts=${NUM_DB_ROLLOUTS} \
+  --phase1_db_weight_mode=${PHASE1_DB_WEIGHT_MODE}
 
 echo "Training completed!"
