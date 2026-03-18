@@ -311,7 +311,6 @@ class LMLMGRPOTrainer(BaseTrainer):
         use_inverses: bool = False,
         retrieval_threshold : float = 0.6,
         two_phase: bool = False,
-        num_db_rollouts: int = 1,
         retrieval_top_k: int = 1,
         phase1_reward_type: str = "binary",
         phase1_prompt_type: str = "context_only",
@@ -1796,6 +1795,11 @@ class LMLMGRPOTrainer(BaseTrainer):
             # Calculate context length for this example (K completions share the same context)
             context_length = sum(len(ctx) for ctx in contexts[i // K])
             context_lengths.append(context_length)
+
+
+        if fast_build_db:
+            return [t for triplet_list in all_triplets for t in triplet_list]
+
 
 
         # Log triplet to context ratio
