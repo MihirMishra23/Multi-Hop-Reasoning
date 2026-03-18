@@ -129,6 +129,14 @@ while [[ $# -gt 0 ]]; do
             LEARNING_RATE="$2"
             shift 2
             ;;
+        --retrieval-threshold)
+            RETRIEVAL_THRESHOLD="$2"
+            shift 2
+            ;;
+        --top_k)
+            TOP_K="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown argument: $1"
             exit 1
@@ -177,18 +185,18 @@ fi
 
 if [ -n "${DEBUG}" ]; then
     echo "Debug mode enabled"
-    TRAIN_SIZE=100
-    EVAL_SIZE=10
-    NUM_TRAIN_EPOCHS=10
+    # TRAIN_SIZE=100
+    # EVAL_SIZE=10
+    # NUM_TRAIN_EPOCHS=10
     NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
     RETRIEVAL_THRESHOLD=0.6
     TOP_K=4
     echo "  Detected ${NUM_GPUS} GPU(s)"
 
-    NUM_GENERATIONS=2
-    GRADIENT_ACCUMULATION_STEPS=8
-    PER_DEVICE_TRAIN_BATCH_SIZE=2
-    VLLM_GPU_MEMORY_UTILIZATION=0.15
+    # NUM_GENERATIONS=2
+    # GRADIENT_ACCUMULATION_STEPS=8
+    # PER_DEVICE_TRAIN_BATCH_SIZE=2
+    # VLLM_GPU_MEMORY_UTILIZATION=0.15
 fi
 
 CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((NUM_GPUS - 1)))
@@ -219,6 +227,7 @@ if [ -n "${TWO_PHASE}" ]; then
 else
     TWO_PHASE=""
 fi
+OUTPUT_DIR="${OUTPUT_DIR}-th${RETRIEVAL_THRESHOLD}-topk${TOP_K}"
 if [ -n "${DEBUG}" ]; then
     OUTPUT_DIR="${OUTPUT_DIR}-debug"
 fi
@@ -298,6 +307,7 @@ accelerate launch \
   --loss_type=${LOSS_TYPE} \
   --max_grad_norm=1.0 \
   --warmup_ratio=0.1 \
+  --lr_scheduler_type=cosine \
   --vllm_max_model_length=4096 \
   --train_size=${TRAIN_SIZE} \
   --eval_size=${EVAL_SIZE} \
@@ -307,7 +317,7 @@ accelerate launch \
   --num_train_epochs=${NUM_TRAIN_EPOCHS} \
   --save_strategy=steps \
   --save_total_limit=5 \
-  --save_steps=0.01 \
+  --save_steps=0.1 \
   ${RESUME_FROM_CHECKPOINT} \
   --use-inverses \
   --retrieval-threshold ${RETRIEVAL_THRESHOLD} \
