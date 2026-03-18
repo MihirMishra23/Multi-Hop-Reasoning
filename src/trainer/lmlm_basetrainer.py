@@ -135,17 +135,18 @@ def parse_triplets(text: str) -> list[tuple[str, str, str]]:
 
         # Fall back to tab-separated format
         parts = line.split("\t")
-        if len(parts) >= 3:
+        if len(parts) == 3:
             triplets.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
 
-    # Deduplicate while preserving order
-    seen = set()
-    unique_triplets = []
-    for t in triplets:
-        if t not in seen:
-            seen.add(t)
-            unique_triplets.append(t)
-    return unique_triplets
+    return triplets # Rollback as dedulication has weird collapsing behavior
+    # # Deduplicate while preserving order
+    # seen = set()
+    # unique_triplets = []
+    # for t in triplets:
+    #     if t not in seen:
+    #         seen.add(t)
+    #         unique_triplets.append(t)
+    # return unique_triplets
 
 
 def extract_db_lookup_last(text : str) -> str | None:
