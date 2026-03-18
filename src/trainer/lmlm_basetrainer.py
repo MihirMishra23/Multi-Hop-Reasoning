@@ -315,6 +315,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         retrieval_top_k: int = 1,
         phase1_reward_type: str = "binary",
         phase1_prompt_type: str = "context_only",
+        num_db_rollouts: int = 1,
         phase1_db_weight_mode: str = "fixed_1.0",
     ):
         self.retrieval_top_k = retrieval_top_k
@@ -651,10 +652,10 @@ class LMLMGRPOTrainer(BaseTrainer):
                 "answer": deque(maxlen=B * K),
             }
             for i in range(N):
-                self._logs[f"phase2_prompt_{i}"] = deque(maxlen=B_log)
-                self._logs[f"phase2_completion_{i}"] = deque(maxlen=B_log)
-                self._logs[f"phase2_advantages_{i}"] = deque(maxlen=B_log)
-                self._logs["rewards"][f"em_accuracy_{i}"] = deque(maxlen=B_log)
+                self._logs[f"phase2_prompt_{i}"] = deque(maxlen=B)
+                self._logs[f"phase2_completion_{i}"] = deque(maxlen=B)
+                self._logs[f"phase2_advantages_{i}"] = deque(maxlen=B)
+                self._logs["rewards"][f"em_accuracy_{i}"] = deque(maxlen=B)
 
         else:
             self._logs = {
@@ -1796,9 +1797,6 @@ class LMLMGRPOTrainer(BaseTrainer):
             context_length = sum(len(ctx) for ctx in contexts[i // K])
             context_lengths.append(context_length)
 
-        if fast_build_db:
-            return [t for triplet_list in all_triplets for t in triplet_list]
-
 
         # Log triplet to context ratio
         # print(f"[DEBUG] Triplet to context character ratio for first 5 examples:")
@@ -1847,32 +1845,31 @@ class LMLMGRPOTrainer(BaseTrainer):
         print(f"[TRR++] Built {B*K} per-example DBs (B={B}, K={K}), expanded to {len(per_example_dbs_expanded)} for B*N={B*N} QA rollouts")
 
         # ===== Phase 2: QA with per-example DB lookups =====
-        # Generate N rollouts for each of the N_db databases per question
         (
             prompt_ids,
             completion_ids,
             logprobs,
             extra_fields,
-        ) = self._generate_single_turn(qa_prompts, num_rollouts=N_db * N)
+        ) = self._generate_single_turn(qa_prompts, num_rollouts=N)
 
         completions = self.processing_class.batch_decode(
             completion_ids, skip_special_tokens=False
         )
 
-        # [TRR++] Phase 2 must produce exactly B*N_db*N completions
-        assert len(completion_ids) == B * N_db * N, (
-            f"[TRR++] Phase 2: expected {B * N_db * N} completions (B={B} * N_db={N_db} * N={N}), got {len(completion_ids)}"
+        # [TRR++] Phase 2 must produce exactly B*N completions
+        assert len(completion_ids) == B * N, (
+            f"[TRR++] Phase 2: expected {B * N} completions (B={B} * N={N}), got {len(completion_ids)}"
         )
-        assert len(prompt_ids) == B * N_db * N, (
-            f"[TRR++] Phase 2: expected {B * N_db * N} prompt_ids, got {len(prompt_ids)}"
+        assert len(prompt_ids) == B * N, (
+            f"[TRR++] Phase 2: expected {B * N} prompt_ids, got {len(prompt_ids)}"
         )
-        print(f"[TRR++] Phase 2: generated {len(completion_ids)} QA completions (expected B*N_db*N={B * N_db * N})")
+        print(f"[TRR++] Phase 2: generated {len(completion_ids)} QA completions (expected B*N={B*N})")
 
         # Run tool call loop with per-example DBs
-        # Expand qa_prompts from B to B*N_db*N to match completions
-        qa_prompts_expanded = [p for p in qa_prompts for _ in range(N_db * num_generations)]
-        assert len(qa_prompts_expanded) == B * N_db * N, (
-            f"[TRR++] expected {B * N_db * N} qa_prompts_expanded, got {len(qa_prompts_expanded)}"
+        # Expand qa_prompts from B to B*N to match completions
+        qa_prompts_expanded = [p for p in qa_prompts for _ in range(num_generations)]
+        assert len(qa_prompts_expanded) == B * N, (
+            f"[TRR++] expected {B * N} qa_prompts_expanded, got {len(qa_prompts_expanded)}"
         )
         if self.tools:
             (
@@ -1944,8 +1941,6 @@ class LMLMGRPOTrainer(BaseTrainer):
         assert len(combined_completion_ids) == B * K + B * N, (
             f"[TRR++] expected {B*K + B*N} combined completions (B*K={B*K} + B*N={B*N}), got {len(combined_completion_ids)}"
         )
-        assert len(phase1_prompts) == B
-        assert len(combined_prompts) == B * N_db + B * N_db * N
         assert len(combined_prompt_ids) == len(combined_completion_ids), (
             f"[TRR++] combined_prompt_ids/completion_ids length mismatch: {len(combined_prompt_ids)} vs {len(combined_completion_ids)}"
         )
@@ -1983,7 +1978,6 @@ class LMLMGRPOTrainer(BaseTrainer):
           :class:`PerExampleRetriever` per sample.
           **Phase 2** – answer the question (original *prompts*) using
           ``_tool_call_loop`` with the per-example databases from Phase 1.
-
 
         Only Phase 2 tokens contribute to the GRPO loss; Phase 1 acts as
         a differentiable-through-reward preprocessing step (the reward depends
@@ -2111,7 +2105,6 @@ class LMLMGRPOTrainer(BaseTrainer):
                 return y
 
             N = self.num_generations if mode == "train" else self.num_generations_eval
-            N_db = self.num_db_rollouts
             contexts = [x.get("contexts", []) for x in inputs]
             questions = [x.get("question", "") for x in inputs]
 
@@ -2501,10 +2494,10 @@ class LMLMGRPOTrainer(BaseTrainer):
             self._logs["answer"].extend([ans for ans in answers[::N] for _ in range(K)])
 
             for i in range(N):
-                phase2_prompts_i = [phase2_prompts[b*N + i] for b in range(B_total)]
-                phase2_completions_i = [phase2_completions[b*N + i] for b in range(B_total)]
-                phase2_advantages_i = [phase2_advantages[b*N + i] for b in range(B_total)]
-                em_accuracy_rewards_i = [em_accuracy_rewards_list[b*N + i] for b in range(B_total)]
+                phase2_prompts_i = [phase2_prompts[b*N + i] for b in range(B)]
+                phase2_completions_i = [phase2_completions[b*N + i] for b in range(B)]
+                phase2_advantages_i = [phase2_advantages[b*N + i] for b in range(B)]
+                em_accuracy_rewards_i = [em_accuracy_rewards_list[b*N + i] for b in range(B)]
 
                 self._logs[f"phase2_prompt_{i}"].extend(phase2_prompts_i)
                 self._logs[f"phase2_completion_{i}"].extend(phase2_completions_i)
