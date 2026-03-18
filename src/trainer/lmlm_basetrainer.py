@@ -1782,6 +1782,9 @@ class LMLMGRPOTrainer(BaseTrainer):
             context_length = sum(len(ctx) for ctx in contexts[i // N_db])
             context_lengths.append(context_length)
 
+        if fast_build_db:
+            return [t for triplet_list in all_triplets for t in triplet_list]
+
 
         # Log triplet to context ratio
         # print(f"[DEBUG] Triplet to context character ratio for first 5 examples:")

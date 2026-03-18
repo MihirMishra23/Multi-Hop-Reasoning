@@ -91,6 +91,7 @@ def parse_args(argv=None) -> argparse.Namespace:
         DB_END_TOKEN=DB_END_TOKEN,
         THINKING_START_TOKEN=THINKING_START_TOKEN,
         THINKING_END_TOKEN=THINKING_END_TOKEN,
+        DB_ALL_RELATIONSHIPS_TOKEN=DB_ALL_RELATIONSHIPS_TOKEN,
     )
 
     # Load database and add to args

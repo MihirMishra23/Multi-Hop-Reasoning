@@ -213,7 +213,6 @@ class LMLMAgent(Agent):
                         return_value = ", ".join(return_values)
                     except Exception as e:
                         lookup_log["error"] = str(e)
-                        print(f"Database lookup failed: {e}")
                     self._lookup_logs[i].append(lookup_log)
 
                     # Append retrieved value and db_end token
