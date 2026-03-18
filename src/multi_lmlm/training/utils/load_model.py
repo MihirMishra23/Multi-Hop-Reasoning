@@ -9,10 +9,10 @@ from transformers import (
     GPT2TokenizerFast,
 )
 from peft import PeftModel
-from multi_lmlm.constants import CONFIGS_DIR, DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, DB_END_TOKEN, TINY_LLAMA2_TOKENIZER_PATH
+from multi_lmlm.constants import CONFIGS_DIR, DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, DB_END_TOKEN, TINY_LLAMA2_TOKENIZER_PATH, DB_ALL_RELATIONSHIPS_TOKEN
 
 
-def initialize_model_for_pretraining(model_args, resume_from_checkpoint=None, use_special_dblookup_tokens=False):
+def initialize_model_for_pretraining(model_args, resume_from_checkpoint=None, use_special_dblookup_tokens=False, use_all_relationships_token=False):
     """
     Load a pretrained model and tokenizer based on the provided model arguments.
     """
@@ -22,14 +22,14 @@ def initialize_model_for_pretraining(model_args, resume_from_checkpoint=None, us
         return load_model_from_checkpoint(resume_from_checkpoint, model_args)
 
     if "gpt2" in model_name_or_path:
-        return load_gpt2_model(model_name_or_path, use_special_dblookup_tokens)
+        return load_gpt2_model(model_name_or_path, use_special_dblookup_tokens, use_all_relationships_token)
     elif "tiny-llama2" in model_name_or_path:
-        return load_tiny_llama2_model(model_name_or_path, model_args, use_special_dblookup_tokens)
+        return load_tiny_llama2_model(model_name_or_path, model_args, use_special_dblookup_tokens, use_all_relationships_token)
     else:
         return load_custom_model(model_name_or_path, model_args)
 
 
-def load_model_for_ft_baseline(model_args, resume_from_checkpoint=None, use_special_dblookup_tokens=False):
+def load_model_for_ft_baseline(model_args, resume_from_checkpoint=None, use_special_dblookup_tokens=False, use_all_relationships_token=False):
     """
     Load a LLaMA3 model and tokenizer. Ensures the pad token is set and embeddings are resized if needed.
     """
@@ -40,7 +40,7 @@ def load_model_for_ft_baseline(model_args, resume_from_checkpoint=None, use_spec
     )
 
     if use_special_dblookup_tokens:
-        tokenizer, _ = add_dblookup_special_tokens(tokenizer)
+        tokenizer, _ = add_dblookup_special_tokens(tokenizer, use_all_relationships_token=use_all_relationships_token)
         print(f"vocab_size: {len(tokenizer)}")
 
     model = AutoModelForCausalLM.from_pretrained(
@@ -79,7 +79,7 @@ def load_model_from_checkpoint(resume_from_checkpoint, model_args):
         raise ValueError(f"Failed to load from checkpoint {resume_from_checkpoint}: {e}")
 
 
-def load_gpt2_model(model_name_or_path, use_special_dblookup_tokens=False):
+def load_gpt2_model(model_name_or_path, use_special_dblookup_tokens=False, use_all_relationships_token=False):
     """
     Load GPT-2 model and tokenizer. Optionally add special dblookup tokens.
     """
@@ -88,7 +88,7 @@ def load_gpt2_model(model_name_or_path, use_special_dblookup_tokens=False):
     tokenizer.pad_token = tokenizer.eos_token
 
     if use_special_dblookup_tokens:
-        tokenizer, config = add_dblookup_special_tokens(tokenizer, config)
+        tokenizer, config = add_dblookup_special_tokens(tokenizer, config, use_all_relationships_token=use_all_relationships_token)
 
     model = GPT2LMHeadModel(config)
 
@@ -96,16 +96,20 @@ def load_gpt2_model(model_name_or_path, use_special_dblookup_tokens=False):
     return model, tokenizer
 
 
-def add_dblookup_special_tokens(tokenizer, config=None):
+def add_dblookup_special_tokens(tokenizer, config=None, use_all_relationships_token=False):
     """
     Add special dblookup tokens to tokenizer and optionally update config.
     """
+
     db_tokens = {
         "entity": DB_START_TOKEN,
         "relationship": DB_SEP_TOKEN,
         "return": DB_RETRIEVE_TOKEN,
         "end": DB_END_TOKEN,
     }
+
+    if use_all_relationships_token:
+        db_tokens["all_relationships"] = DB_ALL_RELATIONSHIPS_TOKEN
 
     new_tokens = list(db_tokens.values())
     num_added = tokenizer.add_special_tokens({"additional_special_tokens": new_tokens})
@@ -118,7 +122,7 @@ def add_dblookup_special_tokens(tokenizer, config=None):
     return tokenizer, config
 
 
-def load_tiny_llama2_tokenizer(add_special_tokens=False):
+def load_tiny_llama2_tokenizer(add_special_tokens=False, use_all_relationships_token=False):
     """
     Load tokenizer for Tiny LLaMA2, optionally with special tokens.
     """
@@ -126,11 +130,11 @@ def load_tiny_llama2_tokenizer(add_special_tokens=False):
     tokenizer.pad_token = tokenizer.eos_token
 
     if add_special_tokens:
-        tokenizer, _ = add_dblookup_special_tokens(tokenizer)
+        tokenizer, _ = add_dblookup_special_tokens(tokenizer, use_all_relationships_token=use_all_relationships_token)
     return tokenizer
 
 
-def load_tiny_llama2_model(model_name_or_path, model_args, use_special_dblookup_tokens=False):
+def load_tiny_llama2_model(model_name_or_path, model_args, use_special_dblookup_tokens=False, use_all_relationships_token=False):
     """
     Load a Tiny LLaMA2 model from CONFIGS_DIR.
     """
@@ -143,7 +147,7 @@ def load_tiny_llama2_model(model_name_or_path, model_args, use_special_dblookup_
     config = AutoConfig.from_pretrained(model_path)
 
     if use_special_dblookup_tokens:
-        tokenizer, config = add_dblookup_special_tokens(tokenizer, config)
+        tokenizer, config = add_dblookup_special_tokens(tokenizer, config, use_all_relationships_token=use_all_relationships_token)
 
     model = AutoModelForCausalLM.from_config(config, trust_remote_code=model_args.trust_remote_code)
 
