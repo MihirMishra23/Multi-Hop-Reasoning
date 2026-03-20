@@ -13,5 +13,10 @@
         "name" : "sft",
         "description" : "Used for SFT and GRPO for qwen model for database creation. Simple since the model is finetuned.",
         "prompt" : "Please extract knowledge triplets from the context.\nContext:\n\n{context}\n\nTriplets:\n"
+    },
+    "sft_with_question": {
+        "name" : "sft_with_question",
+        "description" : "Like sft, but also provides the question so the model can focus on relevant triplets.",
+        "prompt" : "Please extract knowledge triplets from the context that are relevant to answering the question.\n\nQuestion:\n{question}\n\nContext:\n{context}\n\nTriplets:\n"
     }
 }

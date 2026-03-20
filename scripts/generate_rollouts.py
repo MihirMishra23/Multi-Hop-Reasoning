@@ -6,7 +6,7 @@ import argparse
 from google import genai
 from multi_lmlm.database.database_manager import DatabaseManager
 from synthetic_data.utils import  RolloutMetadata, is_valid_rollout
-from multi_lmlm.constants import DB_END_TOKEN, DB_RETRIEVE_TOKEN, DB_SEP_TOKEN, DB_START_TOKEN,ANSWER_START_TOKEN, ANSWER_END_TOKEN, THINKING_START_TOKEN, THINKING_END_TOKEN
+from multi_lmlm.constants import DB_END_TOKEN, DB_RETRIEVE_TOKEN, DB_SEP_TOKEN, DB_START_TOKEN,ANSWER_START_TOKEN, ANSWER_END_TOKEN, THINKING_START_TOKEN, THINKING_END_TOKEN, DB_ALL_RELATIONSHIPS_TOKEN
 from openai import AsyncOpenAI
 from datetime import datetime
 from constants import REPO_ROOT
@@ -67,6 +67,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="whether to return triplets or just values")
     parser.add_argument("--triplets-in-prompt", action=argparse.BooleanOptionalAction, required=True,
                         help="whether to return triplets or just values")
+    parser.add_argument("--max-all-relationships", type=int, required=False, default=30,
+                        help="when using the all relationships token, the maximum number of relationships to return for an entity")
 
     args = parser.parse_args(argv)
 
@@ -89,6 +91,7 @@ def parse_args(argv=None) -> argparse.Namespace:
         DB_END_TOKEN=DB_END_TOKEN,
         THINKING_START_TOKEN=THINKING_START_TOKEN,
         THINKING_END_TOKEN=THINKING_END_TOKEN,
+        DB_ALL_RELATIONSHIPS_TOKEN=DB_ALL_RELATIONSHIPS_TOKEN,
     )
 
     # Load database and add to args
@@ -138,21 +141,38 @@ async def gemini_w_db_lookup(prompt: str, args: argparse.Namespace) -> str:
 
         for char in response.choices[0].message.content:
             res+= char
-            if not res.endswith(DB_RETRIEVE_TOKEN):
+            if not res.endswith(DB_RETRIEVE_TOKEN) and not res.endswith(DB_ALL_RELATIONSHIPS_TOKEN):
                 continue
-            _, query = res.rsplit(DB_START_TOKEN, 1)
-            try:
-                return_values = args.db.retrieve_from_database(DB_START_TOKEN + query, args.db_threshold, return_triplets = args.return_triplets)[:4] #limit to 4 return values
-                return_value = ", ".join(return_values)
-            except Exception as e:
-                print(f"Database lookup failed: {e}")
-                return_value = "unknown"
-                # Handle DB lookup failure with fallback policy
+            #classic db lookup
+            if res.endswith(DB_RETRIEVE_TOKEN):
+                _, query = res.rsplit(DB_START_TOKEN, 1)
+                try:
+                    return_values = args.db.retrieve_from_database(DB_START_TOKEN + query, args.db_threshold, return_triplets = args.return_triplets)[:4] #limit to 4 return values
+                    return_value = ", ".join(return_values)
+                except Exception as e:
+                    print(f"Database lookup failed: {e}")
+                    return_value = "unknown"
+                    # Handle DB lookup failure with fallback policy
 
-            #### Step 4: Append retrieved value and db_end token
-            res += return_value + DB_END_TOKEN
-            input = [{"role" : "system", "content" : args.system_prompt},{"role" : "user" , "content" : prompt}, {"role" : "assistant", "content" : res}]
-            break
+                #### Step 4: Append retrieved value and db_end token
+                res += return_value + DB_END_TOKEN
+                input = [{"role" : "system", "content" : args.system_prompt},{"role" : "user" , "content" : prompt}, {"role" : "assistant", "content" : res}]
+                break
+            #all relationships lookup
+            elif res.endswith(DB_ALL_RELATIONSHIPS_TOKEN):
+                _, entity = res.rsplit(DB_START_TOKEN, 1)
+                try:
+                    return_values = args.db.retrieve_all_relationships_for_entity(entity, args.db_threshold, args.max_all_relationships)
+                    return_value = ", ".join(return_values)
+                except Exception as e:
+                    print(f"Database lookup failed: {e}")
+                    return_value = "unknown"
+                    # Handle DB lookup failure with fallback policy
+
+                #### Step 4: Append retrieved value and db_end token
+                res += return_value + DB_END_TOKEN
+                input = [{"role" : "system", "content" : args.system_prompt},{"role" : "user" , "content" : prompt}, {"role" : "assistant", "content" : res}]
+                break
 
         current_gen += 1
         if ANSWER_END_TOKEN in res:
