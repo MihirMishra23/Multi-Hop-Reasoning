@@ -128,14 +128,6 @@ while [[ $# -gt 0 ]]; do
             LEARNING_RATE="$2"
             shift 2
             ;;
-        --retrieval-threshold)
-            RETRIEVAL_THRESHOLD="$2"
-            shift 2
-            ;;
-        --top_k)
-            TOP_K="$2"
-            shift 2
-            ;;
         *)
             echo "Unknown argument: $1"
             exit 1
@@ -184,19 +176,20 @@ fi
 
 if [ -n "${DEBUG}" ]; then
     echo "Debug mode enabled"
-    # TRAIN_SIZE=100
-    # EVAL_SIZE=10
-    # NUM_TRAIN_EPOCHS=10
+    TRAIN_SIZE=100
+    EVAL_SIZE=10
+    NUM_TRAIN_EPOCHS=10
     NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
     RETRIEVAL_THRESHOLD=0.6
     TOP_K=4
     echo "  Detected ${NUM_GPUS} GPU(s)"
 
-    # NUM_GENERATIONS=2
-    # GRADIENT_ACCUMULATION_STEPS=8
-    # PER_DEVICE_TRAIN_BATCH_SIZE=2
-    # VLLM_GPU_MEMORY_UTILIZATION=0.15
+    NUM_GENERATIONS=2
+    GRADIENT_ACCUMULATION_STEPS=8
+    PER_DEVICE_TRAIN_BATCH_SIZE=2
+    VLLM_GPU_MEMORY_UTILIZATION=0.15
 fi
+# NUM_TRAIN_EPOCHS=100
 
 CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((NUM_GPUS - 1)))
 export CUDA_VISIBLE_DEVICES

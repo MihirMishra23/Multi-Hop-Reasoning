@@ -82,6 +82,22 @@ class LMLMArguments:
         default=1,
         metadata={"help": "Nb of examples retrieved from db"}
     )
+    phase1_reward_type: str = field(
+        default="binary",
+        metadata={"help": "Phase 1 reward type in two_phase mode: 'binary' (db_size_threshold/db_coverage_reward) or 'utilization' (used_triplets/total_triplets ratio)"}
+    )
+    phase1_prompt_type: str = field(
+        default="context_only",
+        metadata={"help": "Phase 1 prompt type: 'context_only' (context only) or 'with_question' (context + question)"}
+    )
+    num_db_rollouts: int = field(
+        default=1,
+        metadata={"help": "Number of DB rollouts per question in two_phase mode (K). N must be divisible by K. Each DB gets N//K QA rollouts."}
+    )
+    phase1_db_weight_mode: str = field(
+        default="count_dynamic",
+        metadata={"help": "How to weight A_db before combining with A_qa. Options: 'none' (no weight), 'fixed' (phase1_advantage_weight), 'dynamic' (scale_ratio=r_qa_mean/r_db_mean), 'count' (M=N/K), 'count_dynamic' (M*scale_ratio, current default)."}
+    )
 
 
 def process_example(example):
