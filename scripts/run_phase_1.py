@@ -3,6 +3,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, HfArgumentParser
 from accelerate import PartialState
 from data import get_dataset
 from trainer.lmlm_basetrainer import LMLMGRPOTrainer
+from trl.trainer import GRPOConfig
 import json
 from datetime import datetime
 
@@ -57,16 +58,23 @@ def main():
     )
 
     print(f"Loading model from: {script_args.model_path}")
-    model = AutoModelForCausalLM.from_pretrained(script_args.model_path).to("cuda")
     tok = AutoTokenizer.from_pretrained(script_args.model_path)
+    args = GRPOConfig(
+        vllm_mode = 'colocate',
+        vllm_gpu_memory_utilization=0.8,
+        temperature=1.0,  # Neutral temperature for consistent generation
+        top_p=1.0,        # No nucleus filtering
+        top_k=0,          # No top-k filtering
+    )
 
     print("Initializing trainer...")
     trainer = LMLMGRPOTrainer(
-        model=model,
+        model=script_args.model_path,
         processing_class=tok,
         reward_funcs=[],
         two_phase=True,
-        lmlm_database_path=None
+        lmlm_database_path=None,
+        args=args,
     )
 
     # Collect all results
@@ -93,7 +101,7 @@ def main():
     entities = set()
     relationships = set()
     return_values = set()
-    lmlm_database = {"triplets": []}
+    triplets = []
 
     for triplet in all_triplets:
         if len(triplet) != 3:
@@ -102,16 +110,33 @@ def main():
         entities.add(triplet[0])
         relationships.add(triplet[1])
         return_values.add(triplet[2])
-        lmlm_database["triplets"].append([triplet[0], triplet[1], triplet[2]])
-
-    lmlm_database["entities"]= list(entities)
-    lmlm_database["relationships"]= list(relationships)
-    lmlm_database["return_values"] = list(return_values)
+        triplets.append([triplet[0], triplet[1], triplet[2]])
 
     # Generate output filename if not provided
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     if not script_args.output_file:
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         script_args.output_file = f"phase1_database_{script_args.model_path.split('/')[-1]}_{script_args.dataset}_{script_args.split}_{timestamp}.json"
+
+    # Build database with metadata first
+    lmlm_database = {
+        "metadata": {
+            "model_path": script_args.model_path,
+            "dataset": script_args.dataset,
+            "split": script_args.split,
+            "seed": script_args.seed,
+            "nb_examples": script_args.nb_examples,
+            "batch_size": script_args.batch_size,
+            "timestamp": timestamp,
+            "total_triplets": len(triplets),
+            "unique_entities": len(entities),
+            "unique_relationships": len(relationships),
+            "unique_return_values": len(return_values)
+        },
+        "triplets": triplets,
+        "entities": list(entities),
+        "relationships": list(relationships),
+        "return_values": list(return_values)
+    }
 
     # Save combined results
     print(f"Saving {len(all_triplets)} results to {script_args.output_file}")

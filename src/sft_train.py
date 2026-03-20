@@ -39,6 +39,7 @@ logging.basicConfig(level=logging.INFO)
 @dataclass
 class PretrainConfig:
     use_special_dblookup_tokens: bool = False
+    use_all_relationships_token: bool = False
     plain_baseline: bool = False
     eval_only: bool = False
     max_seq_length: int = 2048
@@ -97,11 +98,13 @@ def main(script_args, training_args, model_args, pretrain_args):
 
     if accelerator.is_main_process:
         logger.info(f"use_special_dblookup_tokens = {pretrain_args.use_special_dblookup_tokens}")
+        logger.info(f"use_all_relationships_token = {pretrain_args.use_all_relationships_token}")
 
     model, tokenizer = load_model_for_ft_baseline(
         model_args,
         resume_from_checkpoint=training_args.resume_from_checkpoint, # HACK: this is a hack to load the model from the checkpoint
         use_special_dblookup_tokens=pretrain_args.use_special_dblookup_tokens,
+        use_all_relationships_token=pretrain_args.use_all_relationships_token,
     )
 
     # tokenizer.pad_token = tokenizer.eos_token

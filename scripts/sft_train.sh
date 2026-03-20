@@ -16,12 +16,13 @@ export NCCL_IB_DISABLE=1
 export NCCL_DEBUG=INFO
 export TORCH_USE_CUDA_DSA=1
 
-# input arguments for 
+# input arguments for
 TWO_PHASE=true
-OUTPUT_ROOT=/share/j_sun/mx253/checkpoints/lmlm_multi_hop/
-MODEL_NAME_OR_PATH=Qwen/Qwen3-4B
+OUTPUT_ROOT=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/
 THRESHOLD=-1
 DATASET=hotpotqa
+RETURN_TRIPLETS=false
+USE_ALL_RELATIONSHIPS_TOKEN=true
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -42,6 +43,10 @@ while [[ $# -gt 0 ]]; do
             DATASET="$2"
             shift 2
             ;;
+        --use_all_relationships_token)
+            USE_ALL_RELATIONSHIPS_TOKEN="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown argument: $1"
             exit 1
@@ -49,17 +54,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-MODEL_SIZE=4B
+MODEL_SIZE=1.7B
 export CUDA_VISIBLE_DEVICES=0
 NUM_GPUS=1
 
-NUM_TRAIN_EPOCHS=5 #change to 5
+NUM_TRAIN_EPOCHS=3 #change to 5
 
 if [ "${MODEL_SIZE}" = "1.7B" ]; then
     MODEL_NAME_OR_PATH="Qwen/Qwen3-1.7B"
-    PER_DEVICE_TRAIN_BATCH_SIZE=24
-    GRADIENT_ACCUMULATION_STEPS=2   # change to 4
-    MAX_SEQ_LENGTH=2048
+    PER_DEVICE_TRAIN_BATCH_SIZE=8
+    GRADIENT_ACCUMULATION_STEPS=6   # change to 4
     MAX_SEQ_LENGTH=8096
 
 
@@ -128,17 +132,28 @@ ADD_DBLOOKUP_TOKENS=True
 # Compute effective batch size
 EFFECTIVE_BATCH_SIZE=$((PER_DEVICE_TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS * NUM_GPUS))
 
-export WANDB_NAME="${MODEL_NAME_OR_PATH##*/}-SFT_${DATASET}_ep${NUM_TRAIN_EPOCHS}_bsz${EFFECTIVE_BATCH_SIZE}_th${THRESHOLD}"
+WANDB_NAME="${MODEL_NAME_OR_PATH##*/}-SFT_${DATASET}_ep${NUM_TRAIN_EPOCHS}_bsz${EFFECTIVE_BATCH_SIZE}_th${THRESHOLD}"
 
 if [ "${TWO_PHASE}" = "true" ]; then
-    DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/march-08-2phase-sft-2k-2k-NO_TRIPLETS.json"
-    export WANDB_NAME="${WANDB_NAME}_2phase"
+    WANDB_NAME="${WANDB_NAME}_2phase"
+    if [ "${USE_ALL_RELATIONSHIPS_TOKEN}" = "true" ] || [ "${USE_ALL_RELATIONSHIPS_TOKEN}" = "True" ]; then
+        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/gemini_2phase_rollouts_hotpotqa_2k_db_train_end_context_fifths_2k_filtered_6k_qa_hotpot_rollouts_all_relationships_train_from_start.json"
+        WANDB_NAME="${WANDB_NAME}_all_rel"
+    elif [ "${RETURN_TRIPLETS}" = "true" ]; then
+        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/gemini_2phase_rollouts_hotpotqa_2k_db_golen_context_2k_hotpot_rollouts_return_triplets.json"
+        WANDB_NAME="${WANDB_NAME}_return_triplets"
+    else
+        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/gemini_2phase_rollouts_hotpotqa_2k_db_golen_context_2k_hotpot_rollouts_classic_retrieval.json"
+        WANDB_NAME="${WANDB_NAME}_classic_retrieval_6k" #TODO: CHange this
+        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/gemini_2phase_rollouts_hotpotqa_6k_db_train_end_context_fifths_1203_ex_6k_qa_hotpot_rollouts_classic_retrieval_train_from_start.json"
+    fi
 fi
 
+export WANDB_NAME=$WANDB_NAME
 
 
 
-OUTPUT_DIR="${OUTPUT_ROOT}/${WANDB_NAME}"
+OUTPUT_DIR="${OUTPUT_ROOT}${WANDB_NAME}"
 
 echo "Running for $DATASET_PATH"
 echo "Output directory: $OUTPUT_DIR"
@@ -153,6 +168,7 @@ accelerate launch \
     --dataset_text_field None \
     --output_dir ${OUTPUT_DIR} \
     --use_special_dblookup_tokens ${ADD_DBLOOKUP_TOKENS} \
+    --use_all_relationships_token ${USE_ALL_RELATIONSHIPS_TOKEN} \
     --plain_baseline False \
     --learning_rate 5e-5 \
     --num_train_epochs ${NUM_TRAIN_EPOCHS} \

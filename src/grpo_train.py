@@ -62,9 +62,21 @@ class LMLMArguments:
         default="em_coverage",
         metadata={"help": "Reward function to use"}
     )
+    phase1_reward_type: str = field(
+        default="binary",
+        metadata={"help": "Phase 1 reward type in two_phase mode: 'binary' (db_size_threshold/db_coverage_reward) or 'utilization' (used_triplets/total_triplets ratio)"}
+    )
+    phase1_prompt_type: str = field(
+        default="context_only",
+        metadata={"help": "Phase 1 prompt type: 'context_only' (context only) or 'with_question' (context + question)"}
+    )
     num_db_rollouts: int = field(
         default=1,
-        metadata={"help": "Number of database rollouts per question in Phase 1 (two-phase mode only)"}
+        metadata={"help": "Number of DB rollouts per question in two_phase mode (K). N must be divisible by K. Each DB gets N//K QA rollouts."}
+    )
+    phase1_db_weight_mode: str = field(
+        default="count_dynamic",
+        metadata={"help": "How to weight A_db before combining with A_qa. Options: 'none' (no weight), 'fixed' (phase1_advantage_weight), 'dynamic' (scale_ratio=r_qa_mean/r_db_mean), 'count' (M=N/K), 'count_dynamic' (M*scale_ratio, current default)."}
     )
     retrieval_top_k: int = field(
         default=1,
@@ -87,9 +99,8 @@ def main():
     parser = HfArgumentParser((ScriptArguments, LMLMArguments, GRPOConfig))
     script_args, lmlm_args, grpo_config = parser.parse_args_into_dataclasses()
 
-    # wandb name
-    grpo_config.run_name = script_args.model_path.split('/')[-1]+'-'+str(grpo_config.loss_type)+'-g'+str(grpo_config.num_generations)+'-bs'+str(grpo_config.per_device_train_batch_size)+'-s'+str(grpo_config.gradient_accumulation_steps)+'-b'+str(grpo_config.beta)+'-ep'+str(grpo_config.num_train_epochs)+'-n'+str(script_args.train_size)
-    # grpo_config.output_dir = os.path.join(script_args.save_dir, grpo_config.run_name)
+    # wandb run name = save dir basename (single source of truth)
+    grpo_config.run_name = os.path.basename(grpo_config.output_dir)
     os.makedirs(grpo_config.output_dir, exist_ok=True)
 
     if wandb.run is not None:
@@ -161,7 +172,10 @@ def main():
         eval_dataset=eval_set,
         args=grpo_config,
         two_phase=lmlm_args.two_phase,
+        phase1_reward_type=lmlm_args.phase1_reward_type,
+        phase1_prompt_type=lmlm_args.phase1_prompt_type,
         num_db_rollouts=lmlm_args.num_db_rollouts,
+        phase1_db_weight_mode=lmlm_args.phase1_db_weight_mode,
         retrieval_top_k = lmlm_args.retrieval_top_k,
     )
     

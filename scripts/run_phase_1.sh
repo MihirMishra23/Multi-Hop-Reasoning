@@ -10,7 +10,7 @@ SPLIT="dev"
 SEED=42
 NB_EXAMPLES=1000
 BATCH_SIZE=32
-OUTPUT_FILE=""
+OUTPUT_FILE="/share/j_sun/rtn27/phase1_databases/test_database.json"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -71,7 +71,7 @@ python scripts/run_phase_1.py \
     --dataset="${DATASET}" \
     --split="${SPLIT}" \
     --seed=${SEED} \
-    --NB_EXAMPLES=${NB_EXAMPLES} \
+    --nb_examples=${NB_EXAMPLES} \
     --batch_size=${BATCH_SIZE} \
     ${OUTPUT_FILE_ARG}
 

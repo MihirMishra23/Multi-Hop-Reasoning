@@ -132,6 +132,7 @@ class DatabaseManager:
             "triplets": set(),
         }
         self.topk_retriever = None
+        self._queried_pairs: set = set()  # To track the utilization ratio, tracks unique (entity, relationship) pairs successfully retrieved
 
     def __len__(self):
         return len(self.database["triplets"])
@@ -151,6 +152,15 @@ class DatabaseManager:
                 self.database["triplets"], model_name, top_k, adaptive, default_threshold, database_name=self.database_name, use_hf_cache = False, use_inverses = use_inverses
             )
             logger.info(f"Top-k retriever initialized with {len(self)} triplets and threshold {self.topk_retriever.default_threshold}.")
+
+    def retrieve_all_relationships_for_entity(self, entity: str, threshold: float, max_relationships: int) -> List[str]:
+        """Return all (relationship, value) pairs for the entity closest to *entity*.
+
+        Delegates to :meth:`TopkRetriever.retrieve_all_relationships_for_entity`.
+        """
+        if self.topk_retriever is None:
+            raise RuntimeError("TopkRetriever is not initialized. Call init_topk_retriever() first.")
+        return self.topk_retriever.retrieve_all_relationships_for_entity(entity, threshold, max_relationships)
 
     def retrieve_from_database(self, prompt: str, threshold: Optional[float] = None, top_k : int  = 4, return_triplets : bool = False):
         """Retrieve a single top-1 database result from a prompt containing dblookup. If lookup fails, raise an error."""
@@ -181,6 +191,7 @@ class DatabaseManager:
                 f"[dblookup_fail_3] No retrieval results for entity='{entity}', relationship='{relationship}'",
                 "no_retrieval_data_found"
             )
+        self._queried_pairs.add((entity.strip(), relationship.strip()))
         return results
 
     def build_database(self, dataset: Union[DatasetDict, List[Dict]], database_name: Optional[str] = None, database_org_file: Optional[str] = None):
@@ -223,6 +234,17 @@ class DatabaseManager:
             adaptive: Whether to use adaptive threshold
             use_inverses: Whether to include inverse relationships
         """
+        # Deduplicate triplets (keep first occurrence), selecting matching embeddings
+        seen = set()
+        unique_indices = []
+        for i, t in enumerate(triplets):
+            key = tuple(t)
+            if key not in seen:
+                seen.add(key)
+                unique_indices.append(i)
+        triplets = [triplets[i] for i in unique_indices]
+        embeddings = embeddings[unique_indices]
+
         self.database["entities"] = [t[0] for t in triplets]
         self.database["relationships"] = [t[1] for t in triplets]
         self.database["return_values"] = [t[2] for t in triplets]
