@@ -27,7 +27,6 @@ DATABASE_PATH="" # -> Not used for two phase
 SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
 DATASET_NAME="hotpotqa"
 NUM_GPUS=1
-SAVE_VERSION="full-overfit" #Put anything here, it is added to the model path
 
 # config
 LOSS_TYPE="grpo"
@@ -190,6 +189,7 @@ if [ -n "${DEBUG}" ]; then
     PER_DEVICE_TRAIN_BATCH_SIZE=2
     VLLM_GPU_MEMORY_UTILIZATION=0.15
 fi
+# NUM_TRAIN_EPOCHS=100
 
 CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((NUM_GPUS - 1)))
 export CUDA_VISIBLE_DEVICES
@@ -219,6 +219,7 @@ if [ -n "${TWO_PHASE}" ]; then
 else
     TWO_PHASE=""
 fi
+OUTPUT_DIR="${OUTPUT_DIR}-th${RETRIEVAL_THRESHOLD}-topk${TOP_K}"
 if [ -n "${DEBUG}" ]; then
     OUTPUT_DIR="${OUTPUT_DIR}-debug"
 fi
@@ -298,6 +299,7 @@ accelerate launch \
   --loss_type=${LOSS_TYPE} \
   --max_grad_norm=1.0 \
   --warmup_ratio=0.1 \
+  --lr_scheduler_type=cosine \
   --vllm_max_model_length=4096 \
   --train_size=${TRAIN_SIZE} \
   --eval_size=${EVAL_SIZE} \
@@ -307,9 +309,8 @@ accelerate launch \
   --num_train_epochs=${NUM_TRAIN_EPOCHS} \
   --save_strategy=steps \
   --save_total_limit=5 \
-  --save_steps=0.01 \
+  --save_steps=0.1 \
   ${RESUME_FROM_CHECKPOINT} \
-  --use-inverses \
   --retrieval-threshold ${RETRIEVAL_THRESHOLD} \
   ${TWO_PHASE} \
   ${RETURN_TRIPLES} \
