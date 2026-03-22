@@ -1,163 +1,176 @@
 #!/usr/bin/env python3
 """
-Script to create a research paper style results table from JSON files.
-Usage: python summarize_results.py <folder_path>
+Script to summarize lmlm results from the output/lmlm directory structure.
+Usage: python print_multihop_table.py [lmlm_root] [--dataset DATASET] [--split SPLIT] [--format simple|markdown|latex]
 """
 
 import json
 import sys
+import re
+import argparse
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import pandas as pd
 
 
-def load_json_files(folder_path: str) -> List[Dict[str, Any]]:
-    """Load all JSON files from the specified folder."""
-    results = []
-    folder = Path(folder_path)
-    
-    if not folder.exists():
-        print(f"Error: Folder '{folder_path}' does not exist")
-        return results
-    
-    json_files = sorted(folder.glob("*.json"))
-    
-    if not json_files:
-        print(f"Warning: No JSON files found in '{folder_path}'")
-        return results
-    
-    for json_file in json_files:
-        try:
-            with open(json_file, 'r') as f:
-                data = json.load(f)
-                results.append(data)
-        except Exception as e:
-            print(f"Error loading {json_file.name}: {e}")
-    
-    return results
+def find_results_files(lmlm_root: str) -> List[Path]:
+    """Recursively find all results JSON files under lmlm_root."""
+    root = Path(lmlm_root)
+    if not root.exists():
+        print(f"Error: Path '{lmlm_root}' does not exist")
+        return []
+    # Results files live under results_<date>/ subdirs
+    return sorted(root.glob("*/*/results_*/*.json"))
 
 
-def extract_setting_name(preds_path: str) -> str:
-    """Extract a clean setting name from the preds_path."""
-    # Example: "./output_eval/generations/eval_hotpotqa_train_Qwen2.5-3B-SFT_ep5_bsz48_th-1-ckpt600_n100_i90347.json"
-    # Extract the meaningful part
-    filename = Path(preds_path).stem
-    
-    # Remove common prefixes
-    if filename.startswith('eval_'):
-        filename = filename[5:]
-    
-    return filename
+def parse_path(path: Path) -> Dict[str, str]:
+    """Extract dataset, model, and date from the file path."""
+    # Expected: .../lmlm/{dataset}/{model}/results_{date}/{filename}.json
+    parts = path.parts
+    try:
+        # Find the index of the results_* directory
+        results_idx = next(i for i, p in enumerate(parts) if re.match(r"results_\d+", p))
+        date = parts[results_idx][len("results_"):]
+        model = parts[results_idx - 1]
+        dataset = parts[results_idx - 2]
+    except StopIteration:
+        dataset = model = date = "unknown"
+    return {"dataset": dataset, "model": model, "date": date}
 
 
-def create_results_table(results: List[Dict[str, Any]]) -> pd.DataFrame:
-    """Create a clean results table."""
+def load_results(lmlm_root: str) -> List[Dict[str, Any]]:
+    """Load all results from the lmlm directory structure."""
+    files = find_results_files(lmlm_root)
+    if not files:
+        print(f"No results files found under '{lmlm_root}'")
+        return []
+
     rows = []
-    
-    for result in results:
-        metrics = result.get('metrics', {})
-        meta = result.get('meta', {})
-        
-        row = {
-            'Setting': extract_setting_name(meta.get('preds_path', 'unknown')),
-            'Split': meta.get('split', 'unknown'),
-            'Count': metrics.get('count', 0),
-            'EM': f"{metrics.get('em', 0.0) * 100:.2f}",
-            'F1': f"{metrics.get('f1', 0.0) * 100:.2f}",
-        }
-        
-        rows.append(row)
-    
+    for f in files:
+        try:
+            with open(f) as fh:
+                data = json.load(fh)
+        except Exception as e:
+            print(f"Warning: could not load {f}: {e}")
+            continue
+
+        path_info = parse_path(f)
+        metrics = data.get("metrics", {})
+        meta = data.get("meta", {})
+
+        # Infer split from filename if meta is missing it
+        split = meta.get("split", "unknown")
+        if split == "unknown":
+            m = re.search(r"_(train[^_]*|dev|test)", f.stem)
+            if m:
+                split = m.group(1)
+
+        rows.append({
+            "Dataset": path_info["dataset"],
+            "Model": path_info["model"],
+            "Date": path_info["date"],
+            "Split": split,
+            "Count": metrics.get("count", 0),
+            "EM": metrics.get("em", 0.0) * 100,
+            "F1": metrics.get("f1", 0.0) * 100,
+            "Precision": metrics.get("precision", 0.0) * 100,
+            "Recall": metrics.get("recall", 0.0) * 100,
+        })
+
+    return rows
+
+
+def build_table(rows: List[Dict[str, Any]],
+                dataset_filter: Optional[str],
+                split_filter: Optional[str]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
-    
-    # Sort by F1 score (descending)
-    df['_f1_sort'] = df['F1'].astype(float)
-    df = df.sort_values('_f1_sort', ascending=False).drop('_f1_sort', axis=1)
-    
-    return df
+    if df.empty:
+        return df
+
+    if dataset_filter:
+        df = df[df["Dataset"].str.lower() == dataset_filter.lower()]
+    if split_filter:
+        df = df[df["Split"].str.lower() == split_filter.lower()]
+
+    # Format float columns
+    for col in ("EM", "F1", "Precision", "Recall"):
+        df[col] = df[col].map(lambda x: f"{x:.2f}")
+
+    df = df.sort_values(["Dataset", "Split", "F1"], ascending=[True, True, False])
+    return df.reset_index(drop=True)
 
 
-def print_latex_table(df: pd.DataFrame):
-    """Print LaTeX formatted table."""
+def print_simple(df: pd.DataFrame):
+    cols = ["Dataset", "Model", "Date", "Split", "Count", "EM", "F1", "Precision", "Recall"]
+    display = df[[c for c in cols if c in df.columns]]
+    print("\n" + "=" * 140)
+    print("LMLM RESULTS SUMMARY")
+    print("=" * 140 + "\n")
+    # Print grouped by dataset
+    for dataset, group in display.groupby("Dataset", sort=True):
+        print(f"--- {dataset.upper()} ---")
+        print(group.drop(columns=["Dataset"]).to_string(index=False))
+        print()
+    print("=" * 140)
+
+
+def print_markdown(df: pd.DataFrame):
+    cols = ["Dataset", "Model", "Date", "Split", "Count", "EM", "F1", "Precision", "Recall"]
+    display = df[[c for c in cols if c in df.columns]]
+    print("\n# LMLM Results\n")
+    print(display.to_markdown(index=False))
+
+
+def print_latex(df: pd.DataFrame):
     print("\n% LaTeX Table")
     print("\\begin{table}[t]")
     print("\\centering")
-    print("\\begin{tabular}{l|c|c|c|c}")
+    print("\\begin{tabular}{l|l|c|c|c|c|c}")
     print("\\toprule")
-    print("Setting & Split & Count & EM & F1 \\\\")
+    print("Dataset & Model & Split & Count & EM & F1 & Recall \\\\")
     print("\\midrule")
-    
     for _, row in df.iterrows():
-        print(f"{row['Setting']} & {row['Split']} & {row['Count']} & {row['EM']} & {row['F1']} \\\\")
-    
+        model_short = row["Model"][:60] + ("..." if len(row["Model"]) > 60 else "")
+        print(f"{row['Dataset']} & {model_short} & {row['Split']} & {row['Count']} & {row['EM']} & {row['F1']} & {row['Recall']} \\\\")
     print("\\bottomrule")
     print("\\end{tabular}")
-    print("\\caption{Experimental results on different settings.}")
-    print("\\label{tab:results}")
+    print("\\caption{LMLM experimental results.}")
+    print("\\label{tab:lmlm-results}")
     print("\\end{table}")
 
 
-def print_markdown_table(df: pd.DataFrame):
-    """Print Markdown formatted table."""
-    print("\n# Results Table\n")
-    print(df.to_markdown(index=False))
-
-
-def print_simple_table(df: pd.DataFrame):
-    """Print simple ASCII table."""
-    print("\n" + "="*100)
-    print("RESULTS TABLE")
-    print("="*100 + "\n")
-    print(df.to_string(index=False))
-    print("\n" + "="*100)
-
-
 def main():
-    # Get folder path from command line or use default
-    if len(sys.argv) > 1:
-        folder_path = sys.argv[1]
-    else:
-        folder_path = input("Enter folder path (or press Enter for current directory): ").strip()
-        if not folder_path:
-            folder_path = "."
-    
-    # Get output format
-    format_type = sys.argv[2] if len(sys.argv) > 2 else 'simple'
-    
-    # Load and process results
-    print(f"Loading JSON files from: {folder_path}")
-    results = load_json_files(folder_path)
-    
-    if not results:
-        print("No results to process")
+    parser = argparse.ArgumentParser(description="Summarize lmlm results.")
+    parser.add_argument("lmlm_root", nargs="?",
+                        default="/home/lz586/icl/Multi-Hop-Reasoning/output/lmlm",
+                        help="Path to the lmlm output root directory")
+    parser.add_argument("--dataset", "-d", default=None,
+                        help="Filter by dataset (hotpotqa, musique, 2wiki, mquake)")
+    parser.add_argument("--split", "-s", default=None,
+                        help="Filter by split (dev, train, test, ...)")
+    parser.add_argument("--format", "-f", default="simple",
+                        choices=["simple", "markdown", "latex"],
+                        help="Output format")
+    args = parser.parse_args()
+
+    print(f"Loading results from: {args.lmlm_root}")
+    rows = load_results(args.lmlm_root)
+    if not rows:
         return
-    
-    print(f"Loaded {len(results)} files successfully\n")
-    
-    # Create results table
-    df = create_results_table(results)
-    
-    # Print in requested format
-    if format_type == 'latex':
-        print_latex_table(df)
-    elif format_type == 'markdown':
-        print_markdown_table(df)
+
+    print(f"Loaded {len(rows)} result entries\n")
+
+    df = build_table(rows, args.dataset, args.split)
+    if df.empty:
+        print("No results match the specified filters.")
+        return
+
+    if args.format == "latex":
+        print_latex(df)
+    elif args.format == "markdown":
+        print_markdown(df)
     else:
-        print_simple_table(df)
-    
-    # Save options
-    print("\n" + "="*100)
-    print("Save options:")
-    print("  CSV: python script.py <folder> csv")
-    print("  Markdown: python script.py <folder> markdown")
-    print("  LaTeX: python script.py <folder> latex")
-    print("="*100)
-    
-    # Save to CSV if requested
-    if format_type == 'csv' or input("\nSave to CSV? (y/n): ").strip().lower() == 'y':
-        output_file = "results_table.csv"
-        df.to_csv(output_file, index=False)
-        print(f"Results saved to {output_file}")
+        print_simple(df)
 
 
 if __name__ == "__main__":
