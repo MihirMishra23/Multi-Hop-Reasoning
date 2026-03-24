@@ -6,8 +6,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:1
-#SBATCH --constraint='6000ada'
 #SBATCH --mem=256G
+#SBATCH -p jjs533
 #SBATCH --time=10:00:00
 #SBATCH --output=logs/%j.out
 #SBATCH --error=logs/%j.err
@@ -19,5 +19,5 @@ mkdir -p logs
 
 
 echo "Launching eval..."
-bash /home/rtn27/Multi-Hop-Reasoning/ryan-scripts/eval_lmlm_multihop_grid_ry.sh
+bash /home/rtn27/Multi-Hop-Reasoning/ryan-scripts/eval_lmlm_multihop_grid_ry.sh --limit 32
 echo "Eval complete!"
