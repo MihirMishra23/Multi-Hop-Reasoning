@@ -6,13 +6,14 @@ from .agent_class import Agent
 from .rag_agent import RAGAgent
 from .icl_agent import ICLAgent
 from .lmlm_agent import LMLMAgent
+from .two_phase_agent import TwoPhaseAgent
 
 
 def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
     """Return an Agent instance for the given method.
 
     Args:
-        method: Agent method type ("rag", "icl", "db", "lmlm")
+        method: Agent method type ("rag", "icl", "db", "lmlm", "two_phase")
         agent_kwargs: Dictionary containing agent-specific parameters
 
     Returns:
@@ -71,10 +72,16 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
                 raise Exception("You must set an LLM for direct inference.")
             agent = Agent(llm=llm, max_steps=agent_kwargs.get("max_steps", 8))
 
+        case "two_phase":
+            model_path = agent_kwargs.get("model_path")
+            if model_path is None:
+                raise Exception("You must set --model-path for two_phase method.")
+            agent = TwoPhaseAgent(**agent_kwargs)
+
         case _:
             raise NotImplementedError(f"Method '{method}' is not implemented.")
 
     return agent
 
 
-__all__ = ["Agent", "RAGAgent", "ICLAgent", "LMLMAgent", "get_agent"]
+__all__ = ["Agent", "RAGAgent", "ICLAgent", "LMLMAgent", "TwoPhaseAgent", "get_agent"]

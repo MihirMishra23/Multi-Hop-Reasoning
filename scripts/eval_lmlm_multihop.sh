@@ -30,6 +30,7 @@ LLM_MODEL=gpt-4
 DATASET=hotpotqa
 SPLIT=train_val1k
 USE_INVERSES="true" # or "--use-inverses"
+USE_TRAIN_PARAMS=""   # set to "--use-train-params" to use grpo_train.sh sampling params instead of greedy
 NUM_SAMPLES=1000
 SAVE_VERSION="put-anything-here" #use this to add info to save path
 TOP_K=4
@@ -68,6 +69,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --use-inverses)
             USE_INVERSES="--use-inverses"
+            shift
+            ;;
+        --use-train-params)
+            USE_TRAIN_PARAMS="--use-train-params"
             shift
             ;;
         --save_version)
@@ -200,8 +205,29 @@ for METHOD in "${METHODS[@]}"; do
             ${USE_INVERSES} \
             --top-k ${TOP_K} \
             --similarity-threshold ${SIMILARITY_THRESHOLD} \
-            --phase-1 \
-            --eval 
+            --eval
+    elif [ "${METHOD}" = "two_phase" ]; then
+        echo "ignoring database path"
+        python src/eval_multihop.py \
+            --model-path ${MODEL_PATH} \
+            --method ${METHOD} \
+            --max-tokens ${MAX_TOKENS} \
+            --batch-size ${BATCH_SIZE_LMLM} \
+            --total-count ${NUM_SAMPLES} \
+            --output-dir ${OUTPUT_DIR}/ \
+            --save-version ${SAVE_VERSION} \
+            --split ${SPLIT} \
+            --setting ${SETTING} \
+            --dataset ${DATASET} \
+            --seed ${SEED} \
+            --save-every ${SAVE_EVERY} \
+            --start-index ${START_IDX} \
+            ${RETURN_TRIPLETS} \
+            ${USE_INVERSES} \
+            --top-k ${TOP_K} \
+            --similarity-threshold ${SIMILARITY_THRESHOLD} \
+            ${USE_TRAIN_PARAMS} \
+            --eval
     else
         if [ "${METHOD}" = "icl" ]; then
             BATCH_SIZE=${BATCH_SIZE_ICL}
