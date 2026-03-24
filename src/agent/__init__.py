@@ -56,10 +56,12 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
             # Extract parameters
             model_path = agent_kwargs.get("model_path")
             database_path = agent_kwargs.get("database_path")
+            phase_1 = agent_kwargs.get("phase_1", False)
+
             if model_path is None:
                 raise Exception("You must set a local model path for lmlm setting")
-            if database_path is None:
-                raise Exception("You must set a local database path for lmlm setting")
+            if database_path is None and not phase_1:
+                raise Exception("You must set a local database path for lmlm setting (or use --phase-1)")
 
             agent = LMLMAgent(**agent_kwargs)
 

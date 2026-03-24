@@ -23,12 +23,12 @@
 #     --split dev \
 #     --num_samples 100
 #
-MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1
+MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k
 # MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop//Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
 # uncomment above to use two_phase model
 LLM_MODEL=gpt-4
 DATASET=hotpotqa
-SPLIT=dev
+SPLIT=train_val1k
 USE_INVERSES="true" # or "--use-inverses"
 NUM_SAMPLES=1000
 SAVE_VERSION="put-anything-here" #use this to add info to save path
@@ -174,6 +174,8 @@ else
     RETURN_TRIPLETS=""
 fi
 
+DATABASE_PATH="none"
+
 
 for METHOD in "${METHODS[@]}"; do
     echo "Running method: ${METHOD}"
@@ -198,6 +200,7 @@ for METHOD in "${METHODS[@]}"; do
             ${USE_INVERSES} \
             --top-k ${TOP_K} \
             --similarity-threshold ${SIMILARITY_THRESHOLD} \
+            --phase-1 \
             --eval 
     else
         if [ "${METHOD}" = "icl" ]; then
@@ -221,6 +224,7 @@ for METHOD in "${METHODS[@]}"; do
             --save-every ${SAVE_EVERY} \
             --start-index ${START_IDX} \
             --eval \
+            --phase-1 \
             --resume
     fi
 done

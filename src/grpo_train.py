@@ -82,6 +82,14 @@ class LMLMArguments:
         default=1,
         metadata={"help": "Nb of examples retrieved from db"}
     )
+    use_all_rel_token: bool = field(
+        default=False,
+        metadata={"help": "Enable all-relationships token lookup using DB_ALL_RELATIONSHIPS_TOKEN"}
+    )
+    max_relationships: int = field(
+        default=30,
+        metadata={"help": "Maximum number of relationships to retrieve when using all-relationships token"}
+    )
 
 
 def process_example(example):
@@ -111,11 +119,22 @@ def main():
     # Load and process dataset
     print(f"Loading dataset: {script_args.dataset_name}")
 
+
+    print(f"Loading dataset: {script_args.dataset_name}")
+    print(f"  Split: {script_args.dataset_config}")
+    print(f"  Limit: {script_args.train_size}")
+    print(f"  Seed: 42")
+    print(f" sub split :", "train")
     train_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "train", limit = script_args.train_size, seed = 42)
+    print("First element is : ", train_dataset[0])
+    print("elemnt at last index is :", train_dataset[-1])
     test_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "eval", limit = script_args.eval_size, seed = 42)
     
     train_set = train_dataset.map(process_example)
     eval_set = test_dataset.map(process_example)
+
+    print("The first el of train_dataset is: ", train_dataset[0])
+    print("The 999 index of train_dataset is: ", train_dataset[999])
     
     print(f"Train set size: {len(train_set)}")
     print(f"Eval set size: {len(eval_set)}")
@@ -177,6 +196,8 @@ def main():
         num_db_rollouts=lmlm_args.num_db_rollouts,
         phase1_db_weight_mode=lmlm_args.phase1_db_weight_mode,
         retrieval_top_k = lmlm_args.retrieval_top_k,
+        use_all_rel_token=lmlm_args.use_all_rel_token,
+        max_relationships=lmlm_args.max_relationships,
     )
     
     # Start training

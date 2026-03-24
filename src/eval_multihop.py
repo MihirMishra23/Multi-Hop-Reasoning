@@ -16,6 +16,7 @@ The JSON format uses deduplicated metadata at the top level:
 }
 """
 
+from datasets import Dataset as HFDataset
 import argparse
 import json
 import os
@@ -147,13 +148,16 @@ def process_single_batch(
     # Collect queries and info for batch
     queries = []
     examples_metadata = []
+    golden_contexts_batch = []
 
     for ex in ds:
         qid = ex.get("id") or ex.get("_id")
         question = ex["question"]
         contexts = ex.get("contexts") or []
+        golden_contexts = ex.get("golden_contexts") or []
 
         queries.append(question)
+        golden_contexts_batch.append(golden_contexts)
         examples_metadata.append({
             "qid": qid,
             "question": question,
@@ -180,6 +184,14 @@ def process_single_batch(
             )
             answers.append(answer_list[0] if answer_list else None)
             traces.append(trace_list[0] if trace_list else None)
+    elif args.method == "lmlm" and args.phase_1:
+        # For phase_1, pass golden contexts to agent for database building
+        answers, traces = agent.run(
+            queries,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+            golden_contexts=golden_contexts_batch,
+        )
     else:
         answers, traces = agent.run(
             queries,
@@ -313,6 +325,12 @@ def main() -> None:
         help="Dataset split",
     )
     parser.add_argument(
+        "--sub-split",
+        default=None,
+        type=str,
+        help="Optional subsplit of the split (e.g., 'train' or 'eval' for train_val1k). See hotpotqa.py for details.",
+    )
+    parser.add_argument(
         "--method",
         default="icl",
         choices=["db", "rag", "icl", "lmlm", "direct"],
@@ -400,6 +418,12 @@ def main() -> None:
         action="store_true"
     )
     parser.add_argument(
+        "--phase-1",
+        default=False,
+        help="Build database dynamically from golden contexts before each batch",
+        action="store_true"
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Resume from existing results file, skipping already processed examples.",
@@ -415,6 +439,12 @@ def main() -> None:
         action="store_true",
         help="Evaluate the predictions",
     )
+    parser.add_argument(
+        "--questions-file",
+        type=str,
+        default=None,
+        help="Path to JSON file containing questions to evaluate (bypasses normal dataset loading)",
+    )
     args = parser.parse_args()
 
     # Logging
@@ -423,6 +453,33 @@ def main() -> None:
         format="%(asctime)s %(levelname)s [run_agent] %(message)s",
     )
     logger = logging.getLogger("run_agent")
+
+    # Validate questions_file usage
+    if args.questions_file:
+        logger.info(f"Using questions from file: {args.questions_file}")
+        # Set defaults for dataset/split if not provided (needed for agent initialization)
+        if not args.dataset:
+            args.dataset = "hotpotqa"
+            logger.info(f"  --dataset not provided, defaulting to: {args.dataset}")
+        if not args.split:
+            args.split = "train"
+            logger.info(f"  --split not provided, defaulting to: {args.split}")
+        # Warn if sub_split or start_index are set (they will be ignored)
+        if args.sub_split:
+            logger.warning("--questions-file is provided; ignoring --sub-split")
+            args.sub_split = None
+        if args.start_index != 0:
+            logger.warning("--questions-file is provided; ignoring --start-index")
+            args.start_index = 0
+
+    # Validate phase_1 usage
+    if args.phase_1:
+        if args.method != "lmlm":
+            logger.error("--phase-1 flag requires --method lmlm")
+            return
+        if args.database_path:
+            logger.warning("--phase-1 is enabled; ignoring --database-path (will build database dynamically)")
+            args.database_path = None
 
     if (
         args.method == "rag"
@@ -495,23 +552,59 @@ def main() -> None:
 
     print("split is :", args.split)
 
-    # Load full dataset once (with seed for deterministic shuffling)
-    full_dataset = get_dataset(name = args.dataset, setting = args.setting, split =  args.split, seed=args.seed)
-    total_dataset_size = len(full_dataset)
+    # Load dataset with appropriate parameters based on whether sub_split is used or questions_file is provided
+    # When questions_file is provided: load questions from JSON file
+    # When sub_split is set: pass limit to get_dataset() (sub_split logic needs it)
+    # When sub_split is NOT set: load full dataset, then slice using start_index
+    if args.questions_file is not None:
+        # Load questions from JSON file
+        logger.info(f"Loading questions from file: {args.questions_file}")
+        with open(args.questions_file, 'r', encoding='utf-8') as f:
+            questions_data = json.load(f)
 
-    # Validate start_index
-    if args.start_index >= total_dataset_size:
-        logger.warning(f"Start index {args.start_index} is at or beyond dataset size {total_dataset_size}")
-        return
+        # Convert to HuggingFace Dataset format
+        full_dataset = HFDataset.from_list(questions_data)
+        total_dataset_size = len(full_dataset)
+        args.start_index = 0
+        examples_to_process = total_dataset_size
+        end_index = total_dataset_size
+        logger.info(f"Loaded {total_dataset_size} questions from {args.questions_file}")
+    elif args.sub_split is not None:
+        # Sub_split mode: let hotpotqa.py handle indexing via sub_split + limit
+        full_dataset = get_dataset(
+            name=args.dataset,
+            setting=args.setting,
+            split=args.split,
+            seed=args.seed,
+            sub_split=args.sub_split,
+            limit=args.total_count  # Required when sub_split is set
+        )
+        total_dataset_size = len(full_dataset)
+        args.start_index = 0  # Sub_split already selected the right subset
+        examples_to_process = total_dataset_size
+        end_index = total_dataset_size
+        logger.info(f"Using sub_split={args.sub_split}, loaded {total_dataset_size} examples")
+    else:
+        # Standard mode: load full dataset, then slice using start_index
+        full_dataset = get_dataset(
+            name=args.dataset,
+            setting=args.setting,
+            split=args.split,
+            seed=args.seed
+        )
+        total_dataset_size = len(full_dataset)
 
-    # Calculate how many examples to process (total_count is NUMBER of examples from start_index)
-    examples_to_process = min(args.total_count, total_dataset_size - args.start_index)
+        # Validate start_index
+        if args.start_index >= total_dataset_size:
+            logger.warning(f"Start index {args.start_index} is at or beyond dataset size {total_dataset_size}")
+            return
 
-    # TODO: how to make the training and eval use the same split function (e.g. create_train_val_splits)?
-    # Calculate the exclusive end index
-    end_index = args.start_index + examples_to_process
+        # Calculate how many examples to process (total_count is NUMBER of examples from start_index)
+        examples_to_process = min(args.total_count, total_dataset_size - args.start_index)
 
-    logger.info(f"Dataset size: {total_dataset_size}, Processing {examples_to_process} examples from index {args.start_index} to {end_index}")
+        # Calculate the exclusive end index
+        end_index = args.start_index + examples_to_process
+        logger.info(f"Dataset size: {total_dataset_size}, Processing {examples_to_process} examples from index {args.start_index} to {end_index}")
 
     # Prepare output location
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
@@ -603,6 +696,8 @@ def main() -> None:
         "use_inverses" : args.use_inverses,
         "top_k": args.top_k,
         "similarity_threshold": args.similarity_threshold,
+        "phase_1": args.phase_1,
+        "batch_size": args.batch_size,
     }
 
     # Get agent instance using factory function

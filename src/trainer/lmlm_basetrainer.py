@@ -18,6 +18,7 @@ import copy
 import inspect
 import json
 import os
+import re
 import textwrap
 import time
 import warnings
@@ -30,7 +31,7 @@ from typing import Any
 
 import datasets
 from multi_lmlm.database.database_manager import DatabaseManager, PerExampleRetriever, build_databases_from_triplets_batch
-from multi_lmlm.constants import DB_START_TOKEN, DB_END_TOKEN, DB_RETRIEVE_TOKEN
+from multi_lmlm.constants import DB_START_TOKEN, DB_END_TOKEN, DB_RETRIEVE_TOKEN, DB_ALL_RELATIONSHIPS_TOKEN
 import pandas as pd
 import torch
 import torch.utils.data
@@ -155,6 +156,8 @@ def extract_db_lookup_last(text : str) -> str | None:
     if DB_START_TOKEN in text and DB_RETRIEVE_TOKEN in text:
         return DB_START_TOKEN + text.split(DB_START_TOKEN)[1].split(DB_RETRIEVE_TOKEN)[0] + DB_RETRIEVE_TOKEN # BUG
         # return DB_START_TOKEN + text.split(DB_START_TOKEN)[1].split(DB_END_TOKEN)[0] + DB_RETRIEVE_TOKEN # BUG
+    if DB_START_TOKEN in text and DB_ALL_RELATIONSHIPS_TOKEN in text:
+        return DB_START_TOKEN + text.split(DB_START_TOKEN)[1].split(DB_ALL_RELATIONSHIPS_TOKEN)[0] + DB_ALL_RELATIONSHIPS_TOKEN # BUG 
     else:
         return None
 
@@ -317,10 +320,15 @@ class LMLMGRPOTrainer(BaseTrainer):
         phase1_prompt_type: str = "context_only",
         num_db_rollouts: int = 1,
         phase1_db_weight_mode: str = "fixed_1.0",
+        use_all_rel_token: bool = False,
+        max_relationships: int = 30,
     ):
         self.retrieval_top_k = retrieval_top_k
         #LMLM db initialization
-        self.retrieval_threshold = retrieval_threshold
+        self.use_all_rel_token = use_all_rel_token
+        self.max_relationships = max_relationships
+        # Set retrieval_threshold to 0.95 if use_all_rel_token is enabled
+        self.retrieval_threshold = 0.95 if use_all_rel_token else retrieval_threshold
         self.use_inverses = use_inverses
 
         self.return_triples = return_triples
@@ -394,6 +402,8 @@ class LMLMGRPOTrainer(BaseTrainer):
         self.eos_token_id = tokenizer.eos_token_id
 
         self.stop_token_ids = [tokenizer.eos_token_id, tokenizer.encode(DB_RETRIEVE_TOKEN, add_special_tokens = False)[0]]
+        if self.use_all_rel_token:
+            self.stop_token_ids.append(tokenizer.encode(DB_ALL_RELATIONSHIPS_TOKEN, add_special_tokens = False)[0])
 
         # fix BUG
         self.db_retrieve_token_id = tokenizer.encode(DB_RETRIEVE_TOKEN)[0]
@@ -636,33 +646,34 @@ class LMLMGRPOTrainer(BaseTrainer):
         self.log_completions = args.log_completions
         self.log_unique_prompts = args.log_unique_prompts
         self.num_completions_to_print = args.num_completions_to_print
-        # Keep logs sized to the generation batch to record only outputs from the latest model update.
+        # Keep logs sized to record only a few examples from the latest model update for wandb logging.
         # In two-phase mode, Phase 1 generates K DBs per question and Phase 2 generates N QA rollouts.
-        B = args.generation_batch_size
+        # Only log 2 examples to keep wandb tables small.
+        B_log = 2  # Number of examples to log to wandb
         N = args.num_generations
         K = self.num_db_rollouts
         if self.two_phase:
             self._logs = {
-                "phase1_prompt": deque(maxlen=B * K),
-                "phase1_completion": deque(maxlen=B * K),
-                "phase1_context": deque(maxlen=B * K),
-                "generated_db": deque(maxlen=B * K),
-                "rewards": defaultdict(lambda bk=B*K: deque(maxlen=bk)),
-                "phase1_advantages": deque(maxlen=B * K),
-                "answer": deque(maxlen=B * K),
+                "phase1_prompt": deque(maxlen=B_log * K),
+                "phase1_completion": deque(maxlen=B_log * K),
+                "phase1_context": deque(maxlen=B_log * K),
+                "generated_db": deque(maxlen=B_log * K),
+                "rewards": defaultdict(lambda bk=B_log*K: deque(maxlen=bk)),
+                "phase1_advantages": deque(maxlen=B_log * K),
+                "answer": deque(maxlen=B_log * K),
             }
             for i in range(N):
-                self._logs[f"phase2_prompt_{i}"] = deque(maxlen=B)
-                self._logs[f"phase2_completion_{i}"] = deque(maxlen=B)
-                self._logs[f"phase2_advantages_{i}"] = deque(maxlen=B)
-                self._logs["rewards"][f"em_accuracy_{i}"] = deque(maxlen=B)
+                self._logs[f"phase2_prompt_{i}"] = deque(maxlen=B_log)
+                self._logs[f"phase2_completion_{i}"] = deque(maxlen=B_log)
+                self._logs[f"phase2_advantages_{i}"] = deque(maxlen=B_log)
+                self._logs["rewards"][f"em_accuracy_{i}"] = deque(maxlen=B_log)
 
         else:
             self._logs = {
-                "prompt": deque(maxlen=args.generation_batch_size),
-                "completion": deque(maxlen=args.generation_batch_size),
-                "rewards": defaultdict(lambda: deque(maxlen=args.generation_batch_size)),
-                "advantages": deque(maxlen=args.generation_batch_size),
+                "prompt": deque(maxlen=B_log),
+                "completion": deque(maxlen=B_log),
+                "rewards": defaultdict(lambda: deque(maxlen=B_log)),
+                "advantages": deque(maxlen=B_log),
             }
 
         # Ensure each process receives a unique seed to prevent duplicate completions when generating with
@@ -1528,9 +1539,27 @@ class LMLMGRPOTrainer(BaseTrainer):
                 try:
                     # Use per-example DB (two-phase) or the global shared DB
                     db = per_example_dbs[idx_with_tool] if per_example_dbs is not None else self.db
-                    result = ", ".join(db.retrieve_from_database(
-                        tool_call, return_triplets=self.return_triples, threshold=self.retrieval_threshold
-                    )) + DB_END_TOKEN
+
+                    # Check if this is an all-relationships lookup
+                    if self.use_all_rel_token and DB_ALL_RELATIONSHIPS_TOKEN in tool_call:
+                        # Extract entity name from the tool call
+                        # Format: <|db_entity|>entity<|db_all_relationships|><|db_return|>
+                        entity_pattern = f"{re.escape(DB_START_TOKEN)}(.+?){re.escape(DB_ALL_RELATIONSHIPS_TOKEN)}"
+                        entity_match = re.search(entity_pattern, tool_call)
+                        if entity_match:
+                            entity = entity_match.group(1).strip()
+                            relationships = db.retrieve_all_relationships_for_entity(
+                                entity,
+                                threshold=self.retrieval_threshold,
+                                max_relationships=self.max_relationships
+                            )
+                            result = ", ".join(relationships) + DB_END_TOKEN
+                        else:
+                            raise ValueError(f"Could not extract entity from all-relationships lookup: {tool_call}")
+                    else:
+                        result = ", ".join(db.retrieve_from_database(
+                            tool_call, return_triplets=self.return_triples, threshold=self.retrieval_threshold
+                        )) + DB_END_TOKEN
                 except Exception as e:
                     tool_failure_count += 1
                     result = "unknown" + DB_END_TOKEN
@@ -1716,7 +1745,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                 )
         return tool_mask, completions, completion_ids, logprobs, tool_call_count, tool_failure_count
 
-    def _generate_two_phase(self, qa_prompts: list[str], contexts: list[list[str]], questions: list[str] | None = None, fast_build_db: bool = None):
+    def _generate_two_phase(self, qa_prompts: list[str], contexts: list[list[str]], questions: list[str] | None = None, fast_build_db: bool = None, return_per_question_dbs: bool = False):
         """Two-phase generation: Phase 1 (triplet gen) → Phase 2 (QA with per-example DB).
 
         Phase 1: Model generates knowledge triplets from context paragraphs.
@@ -1753,6 +1782,11 @@ class LMLMGRPOTrainer(BaseTrainer):
                 self._phase1_prompt_template.format(context="\n\n".join(ctx_list))
                 for ctx_list in contexts
             ]
+
+        if fast_build_db:
+            K = 1
+
+        print("The phase1 prompts are :", phase1_prompts)
 
         (
             phase1_prompt_ids,
@@ -1799,6 +1833,9 @@ class LMLMGRPOTrainer(BaseTrainer):
 
 
         if fast_build_db:
+            if return_per_question_dbs:
+                # Return grouped triplets for per-question database building
+                return all_triplets
             return [t for triplet_list in all_triplets for t in triplet_list]
 
 
@@ -2269,6 +2306,8 @@ class LMLMGRPOTrainer(BaseTrainer):
         # NOTE: only affect the logging
         completions_text = self.processing_class.batch_decode(completion_ids, skip_special_tokens=False)
 
+        print("completions text is : ", completions_text)
+
         # Merge extra_fields from rollout_func into inputs for reward functions
         if extra_fields:
             for i, inp in enumerate(inputs):
@@ -2293,6 +2332,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             # rewards_per_func[B*K:, 0] = em_accuracy scores for Phase-2 QA
             # rewards_per_func[B*K:, 1] = NaN  (db quality skips Phase-2)
             rewards = rewards_per_func
+            print("rewards per func is :", rewards_per_func)
 
             # TODO (multi-GPU): gather(rewards_per_func) concatenates per-process tensors along dim=0,
             # producing ordering [GPU0_phase1(B_local*K) + GPU0_phase2(B_local*N), GPU1_phase1 + GPU1_phase2, ...].
@@ -2852,25 +2892,27 @@ class LMLMGRPOTrainer(BaseTrainer):
                 db_thresholds = list(self._logs["rewards"]["db_size_threshold"])
 
                 B = len(phase1_prompts) // K
+                # Limit to 2 examples to keep wandb tables small
+                B_to_log = min(B, 2)
 
                 combined_table = {
-                    "step": [str(self.state.global_step)] * B,
-                    "answer": [phase1_answers[b * K] for b in range(B)],
-                    "phase1_prompt": [phase1_prompts[b * K] for b in range(B)],  # same for all k
-                    "phase2_prompt": list(self._logs["phase2_prompt_0"]),          # same for all k, m
+                    "step": [str(self.state.global_step)] * B_to_log,
+                    "answer": [phase1_answers[b * K] for b in range(B_to_log)],
+                    "phase1_prompt": [phase1_prompts[b * K] for b in range(B_to_log)],  # same for all k
+                    "phase2_prompt": list(self._logs["phase2_prompt_0"])[:B_to_log],          # same for all k, m
                 }
                 for k in range(K):
-                    combined_table[f"phase1_completion_{k}"] = [phase1_completions[b * K + k] for b in range(B)]
-                    combined_table[f"phase1_context_{k}"] = [phase1_contexts[b * K + k] for b in range(B)]
-                    combined_table[f"generated_db_{k}"] = [generated_dbs[b * K + k] for b in range(B)]
-                    combined_table[f"phase1_advantage_{k}"] = [phase1_advantages[b * K + k] for b in range(B)]
-                    combined_table[f"db_size_threshold_{k}"] = [db_thresholds[b * K + k] for b in range(B)]
+                    combined_table[f"phase1_completion_{k}"] = [phase1_completions[b * K + k] for b in range(B_to_log)]
+                    combined_table[f"phase1_context_{k}"] = [phase1_contexts[b * K + k] for b in range(B_to_log)]
+                    combined_table[f"generated_db_{k}"] = [generated_dbs[b * K + k] for b in range(B_to_log)]
+                    combined_table[f"phase1_advantage_{k}"] = [phase1_advantages[b * K + k] for b in range(B_to_log)]
+                    combined_table[f"db_size_threshold_{k}"] = [db_thresholds[b * K + k] for b in range(B_to_log)]
                 for k in range(K):
                     for m in range(M):
                         i = k * M + m
-                        combined_table[f"phase2_completion_{k}_{m}"] = list(self._logs[f"phase2_completion_{i}"])
-                        combined_table[f"phase2_advantage_{k}_{m}"] = list(self._logs[f"phase2_advantages_{i}"])
-                        combined_table[f"em_accuracy_{k}_{m}"] = list(self._logs["rewards"][f"em_accuracy_{i}"])
+                        combined_table[f"phase2_completion_{k}_{m}"] = list(self._logs[f"phase2_completion_{i}"])[:B_to_log]
+                        combined_table[f"phase2_advantage_{k}_{m}"] = list(self._logs[f"phase2_advantages_{i}"])[:B_to_log]
+                        combined_table[f"em_accuracy_{k}_{m}"] = list(self._logs["rewards"][f"em_accuracy_{i}"])[:B_to_log]
 
                 df_combined = pd.DataFrame(combined_table)
                 for logging_backend in logging_backends:
@@ -2878,12 +2920,16 @@ class LMLMGRPOTrainer(BaseTrainer):
                         "completions": logging_backend.Table(dataframe=df_combined),
                     })
             else:
+                # Limit to 2 examples to keep wandb tables small
+                num_examples = len(self._logs["prompt"])
+                num_to_log = min(num_examples, 2)
+
                 table = {
-                    "step": [str(self.state.global_step)] * len(self._logs["prompt"]),
-                    "prompt": self._logs["prompt"],
-                    "completion": self._logs["completion"],
-                    **self._logs["rewards"],
-                    "advantage": self._logs["advantages"],
+                    "step": [str(self.state.global_step)] * num_to_log,
+                    "prompt": list(self._logs["prompt"])[:num_to_log],
+                    "completion": list(self._logs["completion"])[:num_to_log],
+                    **{k: list(v)[:num_to_log] for k, v in self._logs["rewards"].items()},
+                    "advantage": list(self._logs["advantages"])[:num_to_log],
                 }
                 df_base = pd.DataFrame(table)
                 for logging_backend in logging_backends:

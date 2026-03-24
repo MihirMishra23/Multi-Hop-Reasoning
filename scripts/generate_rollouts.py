@@ -36,7 +36,7 @@ def _get_formatted_triplets(example, args, idx):
     if args.dataset == "mquake-remastered":
         triplets = example["orig_triples_labeled"]
     elif args.dataset == "hotpotqa":
-        triplets = args.metadata[args.start_idx + idx]["triplets"]
+        triplets = args.metadata[idx]["triplets"]
     else:
         raise Exception(f"Unsupported dataset: {args.dataset}")
     triplets_formatted_str = "\n".join([f"({triplet[0]}, {triplet[1]}, {triplet[2]})" for triplet in triplets])

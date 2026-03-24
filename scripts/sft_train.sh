@@ -22,7 +22,7 @@ OUTPUT_ROOT=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/
 THRESHOLD=-1
 DATASET=hotpotqa
 RETURN_TRIPLETS=false
-USE_ALL_RELATIONSHIPS_TOKEN=true
+USE_ALL_RELATIONSHIPS_TOKEN=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -54,11 +54,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-MODEL_SIZE=1.7B
+MODEL_SIZE=8B
 export CUDA_VISIBLE_DEVICES=0
 NUM_GPUS=1
 
 NUM_TRAIN_EPOCHS=3 #change to 5
+NUM_TRAIN_EPOCHS=5 #change to 5
 
 if [ "${MODEL_SIZE}" = "1.7B" ]; then
     MODEL_NAME_OR_PATH="Qwen/Qwen3-1.7B"
@@ -69,8 +70,14 @@ if [ "${MODEL_SIZE}" = "1.7B" ]; then
 
 elif [ "${MODEL_SIZE}" = "4B" ]; then
     MODEL_NAME_OR_PATH="Qwen/Qwen3-4B"
-    PER_DEVICE_TRAIN_BATCH_SIZE=8
-    GRADIENT_ACCUMULATION_STEPS=6   # change to 4
+    PER_DEVICE_TRAIN_BATCH_SIZE=4
+    GRADIENT_ACCUMULATION_STEPS=12   # change to 4
+    MAX_SEQ_LENGTH=8096
+
+elif [ "${MODEL_SIZE}" = "8B" ]; then
+    MODEL_NAME_OR_PATH="Qwen/Qwen3-8B"
+    PER_DEVICE_TRAIN_BATCH_SIZE=4
+    GRADIENT_ACCUMULATION_STEPS=12   # change to 4
     MAX_SEQ_LENGTH=8096
 
 elif [ "${MODEL_SIZE}" = "3B" ]; then
@@ -137,7 +144,9 @@ WANDB_NAME="${MODEL_NAME_OR_PATH##*/}-SFT_${DATASET}_ep${NUM_TRAIN_EPOCHS}_bsz${
 if [ "${TWO_PHASE}" = "true" ]; then
     WANDB_NAME="${WANDB_NAME}_2phase"
     if [ "${USE_ALL_RELATIONSHIPS_TOKEN}" = "true" ] || [ "${USE_ALL_RELATIONSHIPS_TOKEN}" = "True" ]; then
-        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/gemini_2phase_rollouts_hotpotqa_2k_db_train_end_context_fifths_2k_filtered_6k_qa_hotpot_rollouts_all_relationships_train_from_start.json"
+        #DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/gemini_2phase_rollouts_hotpotqa_2k_db_train_end_context_fifths_2k_filtered_6k_qa_hotpot_rollouts_all_relationships_train_from_start.json"
+        #DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/gemini_2phase_rollouts_hotpotqa_6k_db_2k_hotpot_rollouts_all_relatioships_1015pm.json"
+        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/gemini_2phase_rollouts_hotpotqa_2k_db_2k_hotpot_rollouts_all_relatioships.json"
         WANDB_NAME="${WANDB_NAME}_all_rel"
     elif [ "${RETURN_TRIPLETS}" = "true" ]; then
         DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/gemini_2phase_rollouts_hotpotqa_2k_db_golen_context_2k_hotpot_rollouts_return_triplets.json"
@@ -149,7 +158,7 @@ if [ "${TWO_PHASE}" = "true" ]; then
     fi
 fi
 
-export WANDB_NAME=$WANDB_NAME
+epxport WANDB_NAME=$WANDB_NAME
 
 
 
