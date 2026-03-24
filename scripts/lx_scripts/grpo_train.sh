@@ -157,7 +157,7 @@ fi
 # Format: {model}-{loss}-tbs{total_batch}-N{num_gen}-K{db_rollouts}-B{questions/batch}-M{qa_per_db}-b{beta}-step{max_steps}-n{train_size}-{reward}[-2ph[-rw{reward_type}]-pr{prompt_type}-w{weight_mode}]-th{threshold}-topk{top_k}[-nak][-debug]
 B=$((TOTAL_BATCH_SIZE / NUM_GENERATIONS))                       # unique questions per global batch
 M=$(((NUM_GENERATIONS - NUM_DB_ROLLOUTS) / NUM_DB_ROLLOUTS))    # phase 2 QA rollouts per (question, DB) pair
-OUTPUT_DIR="${SAVE_DIR}/${MODEL_PATH##*/}-${LOSS_TYPE}-tbs${TOTAL_BATCH_SIZE}-N${NUM_GENERATIONS}-K${NUM_DB_ROLLOUTS}-B${B}-M${M}-b${BETA}-step${MAX_STEPS}-n${TRAIN_SIZE}-${REWARD_FUNC}"
+OUTPUT_DIR="${SAVE_DIR}/${MODEL_PATH##*/}-${LOSS_TYPE}-tbs${TOTAL_BATCH_SIZE}-N${NUM_GENERATIONS}-K${NUM_DB_ROLLOUTS}-B${B}-M${M}-b${BETA}-step${MAX_STEPS}-n${TRAIN_SIZE}-${REWARD_FUNC}-v2"
 if [ -n "${TWO_PHASE}" ]; then
     OUTPUT_DIR="${OUTPUT_DIR}-2ph"
     [ "${PHASE1_REWARD_TYPE}" != "binary" ] && OUTPUT_DIR="${OUTPUT_DIR}-rw${PHASE1_REWARD_TYPE}"

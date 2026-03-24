@@ -639,13 +639,11 @@ class LMLMGRPOTrainer(BaseTrainer):
         self.log_completions = args.log_completions
         self.log_unique_prompts = args.log_unique_prompts
         self.num_completions_to_print = args.num_completions_to_print
-        self._log_completions_call_count = 0
         # Keep logs sized to the generation batch to record only outputs from the latest model update.
-        # In two-phase mode, Phase 1 generates K DBs per question and Phase 2 generates N-K = K*M QA rollouts.
+        # In two-phase mode, Phase 1 generates K DBs per question and Phase 2 generates N QA rollouts.
         B = args.generation_batch_size
         N = args.num_generations
         K = self.num_db_rollouts
-        num_phase2_gen = N - K   # phase-2 rollouts per question
         if self.two_phase:
             self._logs = {
                 "phase1_prompt": deque(maxlen=B * K),
@@ -656,7 +654,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                 "phase1_advantages": deque(maxlen=B * K),
                 "answer": deque(maxlen=B * K),
             }
-            for i in range(num_phase2_gen):
+            for i in range(N):
                 self._logs[f"phase2_prompt_{i}"] = deque(maxlen=B)
                 self._logs[f"phase2_completion_{i}"] = deque(maxlen=B)
                 self._logs[f"phase2_advantages_{i}"] = deque(maxlen=B)
@@ -1741,19 +1739,11 @@ class LMLMGRPOTrainer(BaseTrainer):
         """
         mode = "train" if self.model.training else "eval"
         num_generations = self.num_generations if mode == "train" else self.num_generations_eval
-
-        # ── Batch / generation dimensions ─────────────────────────────────────────────
-        # N = num_generations = total rollouts per question (K phase-1 + K*M phase-2)
-        # K = num_db_rollouts = phase-1 DB rollouts per question
-        # M = (N-K)/K         = phase-2 QA rollouts per (question, DB) pair
-        # B = total_batch_size / N = unique questions per batch
-        # Total samples: B*K (phase-1) + B*K*M (phase-2) = B*N = total_batch_size ✓
-        B = len(qa_prompts)           # unique questions (= total_batch_size / N)
-        K = self.num_db_rollouts      # phase-1 DB rollouts per question
-        N = num_generations           # total rollouts per question (phase-1 + phase-2)
+        K = self.num_db_rollouts  # DB rollouts per question
+        N = num_generations
         assert N % K == 0, f"[TRR++] num_generations ({N}) must be divisible by num_db_rollouts ({K})"
-        num_phase2_generations = N - K          # phase-2 rollouts per question (= K*M)
-        M = num_phase2_generations // K         # phase-2 QA rollouts per (question, DB) pair
+        M = N // K  # QA rollouts per (question, DB) pair
+
 
         # ===== Phase 1: Generate K triplet DBs per question =====
         if self.phase1_prompt_type == "with_question" and questions is not None:
@@ -1783,6 +1773,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             phase1_completion_ids, skip_special_tokens=True
         )
 
+        B = len(qa_prompts)
         # [TRR++] Phase 1 must produce exactly B*K completions (K per question)
         assert len(phase1_completions) == B * K, (
             f"[TRR++] Phase 1: expected {B * K} completions (K={K} per question), got {len(phase1_completions)}"
@@ -1841,26 +1832,25 @@ class LMLMGRPOTrainer(BaseTrainer):
 
         DB_SIZE_RATIO_THRESHOLD = 0.005  # matches db_size_threshold reward func threshold
 
-        # [TRR++] B*K per-question DBs (K per question), then expanded to B*K*M for Phase 2 tool calls
+        # [TRR++] B*K per-question DBs (K per question), then expanded to B*N for Phase 2 tool calls
         assert len(per_example_dbs) == B * K, (
             f"[TRR++] expected {B * K} per_example_dbs, got {len(per_example_dbs)}"
         )
-        # Expand B*K DBs to B*K*M: each phase-2 QA rollout gets a shallow copy with its own _queried_pairs
+        # Expand B*K DBs to B*N: each QA rollout gets a shallow copy with its own _queried_pairs
         # so per-rollout utilization can be tracked independently.
-        # Rollout i (0..num_phase2_generations-1) for question b maps to DB index b*K + i//M
         per_example_dbs_expanded = []
         db_size_floor_expanded = []  # per-rollout denominator floor; prevents reward hacking via tiny DBs
         for b in range(B):
-            for i in range(num_phase2_generations):
+            for i in range(N):
                 original_db = per_example_dbs[b * K + i // M]
                 db_copy = copy.copy(original_db)
                 db_copy._queried_pairs = set()
                 per_example_dbs_expanded.append(db_copy)
                 db_size_floor_expanded.append(context_lengths[b * K + i // M] * DB_SIZE_RATIO_THRESHOLD)
-        assert len(per_example_dbs_expanded) == B * K * M, (
-            f"[TRR++] expected {B * K * M} expanded DBs (B*K*M), got {len(per_example_dbs_expanded)}"
+        assert len(per_example_dbs_expanded) == B * N, (
+            f"[TRR++] expected {B * N} expanded DBs, got {len(per_example_dbs_expanded)}"
         )
-        print(f"[TRR++] Built {B*K} per-example DBs (B={B}, K={K}), expanded to {len(per_example_dbs_expanded)} for B*K*M={B*K*M} phase-2 rollouts")
+        print(f"[TRR++] Built {B*K} per-example DBs (B={B}, K={K}), expanded to {len(per_example_dbs_expanded)} for B*N={B*N} QA rollouts")
 
         # ===== Phase 2: QA with per-example DB lookups =====
         (
@@ -1868,26 +1858,26 @@ class LMLMGRPOTrainer(BaseTrainer):
             completion_ids,
             logprobs,
             extra_fields,
-        ) = self._generate_single_turn(qa_prompts, num_rollouts=num_phase2_generations)
+        ) = self._generate_single_turn(qa_prompts, num_rollouts=N)
 
         completions = self.processing_class.batch_decode(
             completion_ids, skip_special_tokens=False
         )
 
-        # [TRR++] Phase 2 must produce exactly B*K*M completions
-        assert len(completion_ids) == B * K * M, (
-            f"[TRR++] Phase 2: expected {B * K * M} completions (B={B} * K={K} * M={M}), got {len(completion_ids)}"
+        # [TRR++] Phase 2 must produce exactly B*N completions
+        assert len(completion_ids) == B * N, (
+            f"[TRR++] Phase 2: expected {B * N} completions (B={B} * N={N}), got {len(completion_ids)}"
         )
-        assert len(prompt_ids) == B * K * M, (
-            f"[TRR++] Phase 2: expected {B * K * M} prompt_ids, got {len(prompt_ids)}"
+        assert len(prompt_ids) == B * N, (
+            f"[TRR++] Phase 2: expected {B * N} prompt_ids, got {len(prompt_ids)}"
         )
-        print(f"[TRR++] Phase 2: generated {len(completion_ids)} QA completions (expected B*K*M={B*K*M})")
+        print(f"[TRR++] Phase 2: generated {len(completion_ids)} QA completions (expected B*N={B*N})")
 
         # Run tool call loop with per-example DBs
-        # Expand qa_prompts from B to B*K*M to match completions
-        qa_prompts_expanded = [p for p in qa_prompts for _ in range(num_phase2_generations)]
-        assert len(qa_prompts_expanded) == B * K * M, (
-            f"[TRR++] expected {B * K * M} qa_prompts_expanded, got {len(qa_prompts_expanded)}"
+        # Expand qa_prompts from B to B*N to match completions
+        qa_prompts_expanded = [p for p in qa_prompts for _ in range(num_generations)]
+        assert len(qa_prompts_expanded) == B * N, (
+            f"[TRR++] expected {B * N} qa_prompts_expanded, got {len(qa_prompts_expanded)}"
         )
         if self.tools:
             (
@@ -1953,11 +1943,11 @@ class LMLMGRPOTrainer(BaseTrainer):
         combined_completions = phase1_completions + completions
         combined_logprobs = phase1_logprobs + logprobs
         # phase1_prompts has B entries; each repeated K times in phase1_completion_ids layout
-        combined_prompts = [p for p in phase1_prompts for _ in range(K)] + [p for p in qa_prompts for _ in range(num_phase2_generations)]
+        combined_prompts = [p for p in phase1_prompts for _ in range(K)] + [p for p in qa_prompts for _ in range(N)]
 
-        # [TRR++] Combined output: B*K Phase-1 + B*K*M Phase-2 = B*N = total_batch_size ✓
-        assert len(combined_completion_ids) == B * N, (
-            f"[TRR++] expected {B*N} combined completions (B*K={B*K} + B*K*M={B*K*M}), got {len(combined_completion_ids)}"
+        # [TRR++] Combined output: B*K Phase-1 + B*N Phase-2 = B*(K+N)
+        assert len(combined_completion_ids) == B * K + B * N, (
+            f"[TRR++] expected {B*K + B*N} combined completions (B*K={B*K} + B*N={B*N}), got {len(combined_completion_ids)}"
         )
         assert len(combined_prompt_ids) == len(combined_completion_ids), (
             f"[TRR++] combined_prompt_ids/completion_ids length mismatch: {len(combined_prompt_ids)} vs {len(combined_completion_ids)}"
@@ -1965,7 +1955,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         assert len(combined_prompts) == len(combined_completion_ids), (
             f"[TRR++] combined_prompts length mismatch: {len(combined_prompts)} vs {len(combined_completion_ids)}"
         )
-        print(f"[TRR++] Combined: {B*K} Phase-1 + {B*K*M} Phase-2 = {len(combined_completion_ids)} total (expected B*N={B*N})")
+        print(f"[TRR++] Combined: {B*K} Phase-1 + {B*N} Phase-2 = {len(combined_completion_ids)} total (expected {B*K + B*N})")
 
         phase1_tool_mask = [[1] * len(cids) for cids in phase1_completion_ids]
         # Phase 2 tool masks: from _tool_call_loop if tools enabled, else all 1s. Tool calls should always be enabled for LMLM.
@@ -2122,11 +2112,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                     y["prompt"] = self._phase1_prompt_template.format(context="\n\n".join(y.get("contexts", [])))
                 return y
 
-            num_generations = self.num_generations if mode == "train" else self.num_generations_eval
-            N = num_generations
-            K = self.num_db_rollouts
-            num_phase2_generations = num_generations - K # [derived] number of phase2 generations (minus 1 to match the total batch size)
-
+            N = self.num_generations if mode == "train" else self.num_generations_eval
             contexts = [x.get("contexts", []) for x in inputs]
             questions = [x.get("question", "") for x in inputs]
 
@@ -2141,8 +2127,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             #   Phase 1: B*K inputs (K per question, same contexts — different DB rollouts)
             #   Phase 2: B*N inputs unchanged (one per rollout, for QA scoring)
             phase1_inputs = [modify_input(inputs[i]) for i in range(0, len(inputs), N) for _ in range(K)]
-            phase2_inputs = [inputs[i] for i in range(0, len(inputs), N) for _ in range(num_phase2_generations)]
-            inputs = phase1_inputs + phase2_inputs  # B*K + B*(N-K) = B*N
+            inputs = phase1_inputs + list(inputs)  # B*K + B*N
 
         (
             prompt_ids_list,
@@ -2155,7 +2140,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         ) = self._generate(prompts, contexts=contexts, questions=questions)
 
         if self.two_phase:
-            # combined_prompts from _generate_two_phase = DB_prompts(B*K) + qa_prompts(B*(N-K)) = B*N total
+            # combined_prompts from _generate_two_phase = DB_prompts(B) + qa_prompts(B*N)
             prompts = [x["prompt"] for x in inputs]
 
         assert len(inputs) == len(completions), f"Mismatch: {len(inputs)} inputs vs {len(completions)} completions"
@@ -2303,8 +2288,6 @@ class LMLMGRPOTrainer(BaseTrainer):
 
         # Compute advantages
         num_generations = self.num_generations if mode == "train" else self.num_generations_eval
-        # For standard GRPO all rollouts are "phase-2"; overridden to N-K inside two_phase branch below
-        num_phase2_generations = num_generations
 
         if self.two_phase:
             # Apply weights to each reward function's output and sum.
@@ -2322,17 +2305,16 @@ class LMLMGRPOTrainer(BaseTrainer):
             # Fix: reorder gathered tensor before slicing, or gather phase1/phase2 rewards separately.
 
             # TRR++ advantage computation (two groups: DB and QA)
-            # rewards shape: (B*N, num_funcs) — first B*K are Phase-1, next B*K*M are Phase-2
-            N = num_generations           # total rollouts per question (phase-1 + phase-2)
-            K = self.num_db_rollouts      # phase-1 DB rollouts per question
-            num_phase2_generations = N - K
-            M = num_phase2_generations // K   # phase-2 QA rollouts per (question, DB) pair
-            assert len(rewards) % N == 0, (
-                f"[TRR++] rewards length {len(rewards)} not divisible by N={N}; "
-                f"expected B*N for some integer B"
+            # rewards shape: (B*K + B*N, num_funcs) — first B*K are Phase-1, next B*N are Phase-2
+            N = num_generations
+            K = self.num_db_rollouts
+            M = N // K  # QA rollouts per (question, DB) pair
+            assert len(rewards) % (K + N) == 0, (
+                f"[TRR++] rewards length {len(rewards)} not divisible by (K+N)={K + N}; "
+                f"expected B*(K+N) for some integer B"
             )
-            B = len(rewards) // N  # B*N = B*K + B*K*M = total_batch_size
-            print(f"[TRR++] Advantage: B={B}, K={K}, N={N}, M={M} | rewards shape={tuple(rewards.shape)} (expected B*N={B*N})")
+            B = len(rewards) // (K + N)  # B*(K+N) = B*K + B*N
+            print(f"[TRR++] Advantage: B={B}, K={K}, N={N}, M={M} | rewards shape={tuple(rewards.shape)} (expected B*K+B*N={B*K + B*N})")
 
             weights = self.reward_weights.to(device)          # [w_em, w_db]
             r_b_k_m   = rewards[B*K:, 0].nan_to_num(0.0)       # (B*K*M,) QA EM scores
@@ -2357,12 +2339,12 @@ class LMLMGRPOTrainer(BaseTrainer):
                 r_db_b_k = (r_b_k_m_format * rollout_util_b_k_m).view(B, K, M).mean(dim=2).view(B * K)  # (B*K,)
             else:
                 r_b_k_mean = r_b_k_m.view(B, K, M).mean(dim=2).view(B * K)  # (B*K,)
-                if rewards.shape[1] == 1:
-                    # db_cov_b_k = 0
-                    r_db_b_k = r_b_k_mean * weights[0]
-                else:
+                if rewards.shape[1] > 1:
                     db_cov_b_k = rewards[:B*K, 1].nan_to_num(0.0)   # (B*K,) db quality scores from reward func
                     r_db_b_k = r_b_k_mean * weights[0] + db_cov_b_k * weights[1]  # (B*K,) additive
+                else:
+                    # Only 1 reward function — no separate db coverage score; use QA mean directly
+                    r_db_b_k = r_b_k_mean
 
             if K == 1:
                 # K=1: batch-level normalization across B questions (original behavior)
@@ -2379,12 +2361,12 @@ class LMLMGRPOTrainer(BaseTrainer):
                 std_db_b_expanded = db_std_b.repeat_interleave(K)                                   # (B*K,)
 
             # --- phase2 QA advantage: within (b,k) group across M rollouts ---
-            # For K=1 (M=N-1): reduces to standard GRPO per-question normalization
+            # For K=1 (M=N): reduces to standard GRPO per-question normalization
             r_qa_mat_b_k_m       = r_b_k_m.view(B, K, M)
             qa_baseline_b_k = r_qa_mat_b_k_m.mean(dim=2)              # (B, K)
             qa_std_b_k  = r_qa_mat_b_k_m.std(dim=2)               # (B, K)
-            A_qa_b_k_m     = (r_qa_mat_b_k_m - qa_baseline_b_k.unsqueeze(2)).view(B * K * M)    # (B*K*M,)
-            std_qa_b_k_expanded = qa_std_b_k.repeat_interleave(M, dim=1).view(B * K * M)        # (B*K*M,)
+            A_qa_b_k_m     = (r_qa_mat_b_k_m - qa_baseline_b_k.unsqueeze(2)).view(B * N)             # (B*K*M,)
+            std_qa_b_k_expanded = qa_std_b_k.repeat_interleave(M, dim=1).view(B * N)           # (B*N,)
 
             # --- phase1 vs phase2 weighting ---
             # mode format: "none" | "fixed_<w>" (e.g. "fixed_2.0") | "dynamic" | "count" | "count_dynamic"
@@ -2408,12 +2390,12 @@ class LMLMGRPOTrainer(BaseTrainer):
             std_rewards        = torch.cat([std_db_b_expanded, std_qa_b_k_expanded]) # (B*K + B*N,)
 
             # Verify shapes
-            assert r_b_k_m.shape == (B * K * M,),      f"[TRR++] r_b_k_m shape {r_b_k_m.shape} != ({B * K * M},)"
-            assert r_db_b_k.shape == (B * K,),          f"[TRR++] r_db_b_k shape {r_db_b_k.shape} != ({B * K},)"
-            assert A_db_b_k.shape == (B * K,),          f"[TRR++] A_db_b_k shape {A_db_b_k.shape} != ({B * K},)"
-            assert A_qa_b_k_m.shape == (B * K * M,),    f"[TRR++] A_qa_b_k_m shape {A_qa_b_k_m.shape} != ({B * K * M},)"
-            assert advantages.shape == (B * N,),         f"[TRR++] advantages shape {advantages.shape} != ({B * N},)"
-            assert std_rewards.shape == (B * N,),        f"[TRR++] std_rewards shape {std_rewards.shape} != ({B * N},)"
+            assert r_b_k_m.shape == (B * N,),      f"[TRR++] r_b_k_m shape {r_b_k_m.shape} != ({B * N},)"
+            assert r_db_b_k.shape == (B * K,),   f"[TRR++] r_db_b_k shape {r_db_b_k.shape} != ({B * K},)"
+            assert A_db_b_k.shape == (B * K,),        f"[TRR++] A_db_b_k shape {A_db_b_k.shape} != ({B * K},)"
+            assert A_qa_b_k_m.shape == (B * N,),  f"[TRR++] A_qa_b_k_m shape {A_qa_b_k_m.shape} != ({B * N},)"
+            assert advantages.shape == (B * K + B * N,), f"[TRR++] advantages shape {advantages.shape} != ({B*K + B*N},)"
+            assert std_rewards.shape == (B * K + B * N,), f"[TRR++] std_rewards shape {std_rewards.shape} != ({B*K + B*N},)"
 
             print(f"[TRR++] Number of rewards non-zero for QA: {torch.sum(r_b_k_m != 0).item()}")
             print(f"[TRR++] Number of rewards non-zero for DB: {torch.sum(r_db_b_k != 0).item()}")
@@ -2440,17 +2422,17 @@ class LMLMGRPOTrainer(BaseTrainer):
             rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).nansum(dim=1)
 
             # Standard GRPO advantage computation
-            mean_grouped_rewards = rewards.view(-1, num_phase2_generations).mean(dim=1)
+            mean_grouped_rewards = rewards.view(-1, num_generations).mean(dim=1)
 
             # Normalize the rewards to compute the advantages
-            mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(num_phase2_generations, dim=0)
+            mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(num_generations, dim=0)
             advantages = rewards - mean_grouped_rewards
 
             if self.scale_rewards in ["group", "none"]:
                 # If self.scale_rewards = "none", we'll still log group level std
                 if num_generations > 1:
-                    std_rewards = rewards.view(-1, num_phase2_generations).std(dim=1)
-                    std_rewards = std_rewards.repeat_interleave(num_phase2_generations, dim=0)
+                    std_rewards = rewards.view(-1, num_generations).std(dim=1)
+                    std_rewards = std_rewards.repeat_interleave(num_generations, dim=0)
                 else:  # this case doesn't occur during training, but could in eval when num_generations_eval=1
                     std_rewards = torch.zeros_like(rewards)
             elif self.scale_rewards == "batch":
@@ -2496,11 +2478,10 @@ class LMLMGRPOTrainer(BaseTrainer):
             em_accuracy_rewards_list = rewards_per_func[BK:, 0].tolist()  # Phase 2 EM scores
             if self.phase1_reward_type == "utilization" and getattr(self, '_phase1_utilization_gathered', None) is not None:
                 ## TODO: this part is misleading as utilization is different from db_threshold
-                # _phase1_utilization_gathered is (B*K*M,); collapse to (B*K,) by averaging over M rollouts per (b,k)
+                # _phase1_utilization_gathered is (B*N,); collapse to (B*K,) by averaging over M rollouts per (b,k)
                 N = self.num_generations
-                num_phase2_generations = N - K
-                M = num_phase2_generations // K
-                util_bn = list(self._phase1_utilization_gathered)  # (B*K*M,)
+                M = N // K
+                util_bn = list(self._phase1_utilization_gathered)  # (B*N,)
                 db_threshold_rewards_list = (
                     torch.tensor(util_bn, dtype=torch.float32)
                     .view(B, K, M).mean(dim=2).view(B * K).tolist()
@@ -2525,15 +2506,13 @@ class LMLMGRPOTrainer(BaseTrainer):
             # Repeat context and answer K times so all phase1 log columns have B*K entries
             self._logs["phase1_context"].extend(["\n\n".join(ctx_list) for ctx_list in contexts for _ in range(K)])
             self._logs["generated_db"].extend(self._generated_db_triplet_list)
-            N_log = self.num_generations
-            num_phase2_log = N_log - K
-            self._logs["answer"].extend([ans for ans in answers[::N_log] for _ in range(K)])
+            self._logs["answer"].extend([ans for ans in answers[::N] for _ in range(K)])
 
-            for i in range(num_phase2_log):
-                phase2_prompts_i = [phase2_prompts[b*num_phase2_log + i] for b in range(B)]
-                phase2_completions_i = [phase2_completions[b*num_phase2_log + i] for b in range(B)]
-                phase2_advantages_i = [phase2_advantages[b*num_phase2_log + i] for b in range(B)]
-                em_accuracy_rewards_i = [em_accuracy_rewards_list[b*num_phase2_log + i] for b in range(B)]
+            for i in range(N):
+                phase2_prompts_i = [phase2_prompts[b*N + i] for b in range(B)]
+                phase2_completions_i = [phase2_completions[b*N + i] for b in range(B)]
+                phase2_advantages_i = [phase2_advantages[b*N + i] for b in range(B)]
+                em_accuracy_rewards_i = [em_accuracy_rewards_list[b*N + i] for b in range(B)]
 
                 self._logs[f"phase2_prompt_{i}"].extend(phase2_prompts_i)
                 self._logs[f"phase2_completion_{i}"].extend(phase2_completions_i)
@@ -2853,8 +2832,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         super().log(logs, start_time)
         self._metrics[mode].clear()
 
-        self._log_completions_call_count += 1
-        if self.accelerator.is_main_process and self.log_completions and self._log_completions_call_count % 10 == 0:
+        if self.accelerator.is_main_process and self.log_completions:
             if is_rich_available():
                 if not self.two_phase: #not supported for 2 phase.
                     print_prompt_completions_sample(
@@ -2873,7 +2851,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             if self.two_phase:
                 K = self.num_db_rollouts
                 N = self.num_generations
-                M = (N - K) // K  # phase-2 QA rollouts per (question, DB) pair
+                M = N // K
 
                 phase1_prompts = list(self._logs["phase1_prompt"])
                 phase1_completions = list(self._logs["phase1_completion"])
@@ -2883,13 +2861,13 @@ class LMLMGRPOTrainer(BaseTrainer):
                 phase1_answers = list(self._logs["answer"])
                 db_thresholds = list(self._logs["rewards"]["db_size_threshold"])
 
-                B = min(len(phase1_prompts) // K, 2)  # log at most 2 questions
+                B = len(phase1_prompts) // K
 
                 combined_table = {
                     "step": [str(self.state.global_step)] * B,
                     "answer": [phase1_answers[b * K] for b in range(B)],
                     "phase1_prompt": [phase1_prompts[b * K] for b in range(B)],  # same for all k
-                    "phase2_prompt": list(self._logs["phase2_prompt_0"])[:B],     # same for all k, m
+                    "phase2_prompt": list(self._logs["phase2_prompt_0"]),          # same for all k, m
                 }
                 for k in range(K):
                     combined_table[f"phase1_completion_{k}"] = [phase1_completions[b * K + k] for b in range(B)]
@@ -2900,9 +2878,9 @@ class LMLMGRPOTrainer(BaseTrainer):
                 for k in range(K):
                     for m in range(M):
                         i = k * M + m
-                        combined_table[f"phase2_completion_{k}_{m}"] = list(self._logs[f"phase2_completion_{i}"])[:B]
-                        combined_table[f"phase2_advantage_{k}_{m}"] = list(self._logs[f"phase2_advantages_{i}"])[:B]
-                        combined_table[f"em_accuracy_{k}_{m}"] = list(self._logs["rewards"][f"em_accuracy_{i}"])[:B]
+                        combined_table[f"phase2_completion_{k}_{m}"] = list(self._logs[f"phase2_completion_{i}"])
+                        combined_table[f"phase2_advantage_{k}_{m}"] = list(self._logs[f"phase2_advantages_{i}"])
+                        combined_table[f"em_accuracy_{k}_{m}"] = list(self._logs["rewards"][f"em_accuracy_{i}"])
 
                 df_combined = pd.DataFrame(combined_table)
                 for logging_backend in logging_backends:

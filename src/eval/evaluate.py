@@ -261,7 +261,11 @@ def evaluate_file(
             "bs": meta.bs,
             "split": meta.split,
             "preds_path": meta.preds_path,
+            # Pass through extra fields from preds metadata for reproducibility
+            **{k: v for k, v in (preds.get("metadata") or {}).items()
+               if k not in ("type", "model", "split", "batch_size", "batch_number")},
         },
+        "inference_params": preds.get("inference_params") or {},
     }
     if retrieval_total_gold or retrieval_total_retrieved or retrieval_total_overlap:
         output["retrieval_metrics"] = {
