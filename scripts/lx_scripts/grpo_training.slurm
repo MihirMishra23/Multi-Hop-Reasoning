@@ -31,7 +31,7 @@ DATABASE_PATH=""  # Not used in two-phase mode
 THRESHOLD=-1
 
 # Defaults (overridden per dataset below)
-REWARD_FUNC="em"
+REWARD_FUNC="f1"
 
 
 TWO_PHASE=""

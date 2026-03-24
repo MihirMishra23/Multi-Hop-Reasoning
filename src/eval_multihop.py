@@ -43,6 +43,29 @@ from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
 DEFAULT_FULLWIKI_CORPUS_PATH = "/share/j_sun/lmlm_multihop/datasets/hotpot_dev_fullwiki_v1.json"
 
 
+def _load_training_config(model_path: str) -> dict:
+    cfg = {}
+    for fname in ("training_args.json", "trainer_state.json"):
+        p = os.path.join(model_path, fname)
+        if os.path.exists(p):
+            with open(p) as f:
+                cfg.update(json.load(f))
+    return cfg
+
+
+# Sampling params used during GRPO training (grpo_train.sh).
+# Applied to TwoPhaseAgent when --use-train-params is set.
+# max_model_len is set higher than training (4096) to handle multi-turn context growth in eval.
+TRAINING_SAMPLING_PARAMS: dict = {
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "vllm_top_k": 4,
+    "repetition_penalty": 1.0,
+    "max_completion_length": 1024,
+    "max_model_len": 8192,
+}
+
+
 
 from eval.evaluate import (
     evaluate_file,
@@ -152,6 +175,10 @@ def process_single_batch(
         qid = ex.get("id") or ex.get("_id")
         question = ex["question"]
         contexts = ex.get("contexts") or []
+        # two_phase was trained on golden_contexts (2 supporting paragraphs), not all 10
+        # distractor paragraphs; use golden_contexts to match training conditions.
+        if args.method == "two_phase":
+            contexts = ex.get("golden_contexts") or contexts
 
         queries.append(question)
         examples_metadata.append({
@@ -180,6 +207,14 @@ def process_single_batch(
             )
             answers.append(answer_list[0] if answer_list else None)
             traces.append(trace_list[0] if trace_list else None)
+    elif args.method == "two_phase":
+        contexts_list = [meta["contexts"] for meta in examples_metadata]
+        answers, traces = agent.run(
+            queries,
+            contexts=contexts_list,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+        )
     else:
         answers, traces = agent.run(
             queries,
@@ -231,6 +266,13 @@ def process_single_batch(
             lookup_logs = getattr(agent, "_lookup_logs", [])
             if idx < len(lookup_logs):
                 results[str(metadata["qid"])]["lookup_logs"] = lookup_logs[idx]
+        if args.method == "two_phase":
+            lookup_logs = getattr(agent, "_lookup_logs", [])
+            if idx < len(lookup_logs):
+                results[str(metadata["qid"])]["lookup_logs"] = lookup_logs[idx]
+            phase1_info = getattr(agent, "_phase1_info", [])
+            if idx < len(phase1_info):
+                results[str(metadata["qid"])]["phase1"] = phase1_info[idx]
         if args.method == "rag":
             results[str(qid)]["retrieval"] = _compute_retrieval_stats(
                 evidence_docs=evidence_docs,
@@ -276,11 +318,20 @@ def save_results_to_file(
         },
         "inference_params": {
             "seed": args.seed,
-            "temperature": args.temperature,
-            "max_tokens": args.max_tokens,
+            **getattr(args, "_effective_sampling", {
+                "temperature": args.temperature,
+                "max_tokens": args.max_tokens,
+            }),
         },
         "results": all_results,
     }
+    # Add two_phase-specific params
+    if args.method == "two_phase":
+        output["metadata"]["two_phase_params"] = {
+            "phase1_prompt_type": args.phase1_prompt_type,
+            "top_k": args.top_k,
+            "similarity_threshold": args.similarity_threshold,
+        }
     # Add retrieval metadata for RAG
     if args.method == "rag":
         output["metadata"]["retrieval"] = {
@@ -315,8 +366,14 @@ def main() -> None:
     parser.add_argument(
         "--method",
         default="icl",
-        choices=["db", "rag", "icl", "lmlm", "direct"],
+        choices=["db", "rag", "icl", "lmlm", "direct", "two_phase"],
         help="Agent method label (for output path)",
+    )
+    parser.add_argument(
+        "--phase1-prompt-type",
+        default="sft",
+        choices=["sft", "with_question"],
+        help="Phase 1 prompt template for two_phase method",
     )
     parser.add_argument("--model-path", default=None, help="Local model path")
     parser.add_argument(
@@ -367,9 +424,12 @@ def main() -> None:
         ),
     )
 
+    parser.add_argument("--max-model-len", type=int, default=8192,
+                        help="vLLM max model length for two_phase (default 8192 > training 4096 to handle multi-turn context growth)")
+
     parser.add_argument("--model", default=None, help="LLM model name")
-    parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
-    parser.add_argument("--max-tokens", type=int, default=256, help="Max output tokens")
+    parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature (two_phase greedy default; overridden by --use-train-params)")
+    parser.add_argument("--max-tokens", type=int, default=1024, help="Max completion tokens (two_phase greedy default; overridden by --use-train-params)")
     parser.add_argument(
         "--max-steps", type=int, default=5, help="Max reasoning steps for the Agent"
     )
@@ -415,6 +475,15 @@ def main() -> None:
         action="store_true",
         help="Evaluate the predictions",
     )
+    parser.add_argument(
+        "--use-train-params",
+        action="store_true",
+        help=(
+            "For two_phase: read temperature, top_p, top_k, repetition_penalty, "
+            "max_completion_length, and vllm_max_model_length from the checkpoint's "
+            "training_args.json instead of CLI defaults."
+        ),
+    )
     args = parser.parse_args()
 
     # Logging
@@ -423,6 +492,47 @@ def main() -> None:
         format="%(asctime)s %(levelname)s [run_agent] %(message)s",
     )
     logger = logging.getLogger("run_agent")
+
+    # For two_phase: resolve sampling params.
+    # --use-train-params → use TRAINING_SAMPLING_PARAMS (grpo_train.sh values).
+    # default           → greedy eval (T=0, top_p=1, top_k=-1).
+    _extra_agent_kwargs: dict = {}
+    if args.method == "two_phase":
+        if args.use_train_params:
+            _extra_agent_kwargs = dict(TRAINING_SAMPLING_PARAMS)
+            logger.info(
+                "[two_phase] using training sampling params: T=%.3f  top_p=%.3f  vllm_top_k=%d  "
+                "rep_penalty=%.3f  max_tokens=%d  max_model_len=%d",
+                _extra_agent_kwargs["temperature"], _extra_agent_kwargs["top_p"],
+                _extra_agent_kwargs["vllm_top_k"], _extra_agent_kwargs["repetition_penalty"],
+                _extra_agent_kwargs["max_completion_length"], _extra_agent_kwargs["max_model_len"],
+            )
+        else:
+            _extra_agent_kwargs = {
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "vllm_top_k": -1,
+                "repetition_penalty": 1.0,
+                "max_completion_length": args.max_tokens,
+                "max_model_len": args.max_model_len,
+            }
+            logger.info(
+                "[two_phase] using greedy eval params: T=0.0  top_p=1.0  vllm_top_k=-1  "
+                "max_tokens=%d  max_model_len=%d",
+                _extra_agent_kwargs["max_completion_length"], _extra_agent_kwargs["max_model_len"],
+            )
+        # Sync args.temperature / args.max_tokens so agent.run() call also uses these values
+        args.temperature = _extra_agent_kwargs["temperature"]
+        args.max_tokens  = _extra_agent_kwargs["max_completion_length"]
+
+    # Store effective sampling params on args for metadata saving
+    args._effective_sampling = {
+        "temperature": args.temperature,
+        "max_tokens": args.max_tokens,
+        **({k: _extra_agent_kwargs[k] for k in ("top_p", "vllm_top_k", "repetition_penalty", "max_model_len")}
+           if args.method == "two_phase" else {}),
+        "use_train_params": getattr(args, "use_train_params", False),
+    }
 
     if (
         args.method == "rag"
@@ -515,7 +625,7 @@ def main() -> None:
 
     # Prepare output location
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
-    if args.method == 'lmlm':
+    if args.method in ('lmlm', 'two_phase'):
         model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
         output_dir = os.path.join(base_output_dir, args.method, args.dataset, model_name)
         use_inv_str = "_inv" if args.use_inverses else ""
@@ -584,7 +694,7 @@ def main() -> None:
     )
 
     llm = None
-    if args.method != "lmlm":
+    if args.method not in ("lmlm", "two_phase"):
         llm = get_llm(model_name=args.model)
 
 
@@ -603,7 +713,9 @@ def main() -> None:
         "use_inverses" : args.use_inverses,
         "top_k": args.top_k,
         "similarity_threshold": args.similarity_threshold,
+        "phase1_prompt_type": args.phase1_prompt_type,
     }
+    agent_kwargs.update(_extra_agent_kwargs)
 
     # Get agent instance using factory function
     agent: Agent = get_agent(method=args.method, agent_kwargs=agent_kwargs)
