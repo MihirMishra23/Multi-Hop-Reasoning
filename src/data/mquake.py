@@ -17,7 +17,7 @@ def _filter_example(example):
     return 'train_edited' in labels or 'test_edited' in labels 
 
 
-def load_mquake(split : str, limit : int, sub_split : str, seed : int = 42):
+def load_mquake(split : str, limit : int, seed : int = 42):
     raw_dataset = load_dataset("henryzhongsc/MQuAKE-Remastered", split = "CF6334") #Fixed constant split
 
     no_conflict_6334_subset  = raw_dataset.filter(_filter_example)
@@ -30,11 +30,11 @@ def load_mquake(split : str, limit : int, sub_split : str, seed : int = 42):
         
     if split == 'train':
         no_conflict_6334_subset = no_conflict_6334_subset.select(range(5334))
-    
-    if split == 'test':
+
+    if split == 'test' or split.startswith('eval-'):
         no_conflict_6334_subset = no_conflict_6334_subset.select(range(5334, 6334))
     no_conflict_6334_subset = no_conflict_6334_subset.map(_rename_question, load_from_cache_file=False)
 
-    return no_conflict_6334_subset.select(range(limit))
+    return no_conflict_6334_subset.select(range(min(limit, len(no_conflict_6334_subset))))
 
 

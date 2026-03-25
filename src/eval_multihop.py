@@ -368,13 +368,8 @@ def main() -> None:
     parser.add_argument(
         "--split",
         default="dev",
-        choices=["train", "dev", "validation", "test"],
+        choices=["train", "dev", "validation", "test", "eval-edit", "eval-edit-new", "eval-original"],
         help="Dataset split",
-    )
-    parser.add_argument(
-        "--sub-split",
-        default=None,
-        help="Sub split of the dataset",
     )
     parser.add_argument(
         "--method",
@@ -403,6 +398,7 @@ def main() -> None:
     parser.add_argument(
         "--top-k",
         default=4,
+        type=int,
         help="Maximum number of results to retrieve from database",
     )
     parser.add_argument(
@@ -495,12 +491,6 @@ def main() -> None:
             "max_completion_length, and vllm_max_model_length from the checkpoint's "
             "training_args.json instead of CLI defaults."
         ),
-    )
-    parser.add_argument(
-        "--answer-type",
-        default="answer",
-        choices=["answer", "new_answer"],
-        help="For MQuAKE: 'answer' for original answers, 'new_answer' for edited answers",
     )
     args = parser.parse_args()
 
@@ -626,14 +616,14 @@ def main() -> None:
     # Load full dataset once (with seed for deterministic shuffling)
     # BUG: either use start_index or sub_split, not both
     # if start_index is used, sub_split should be None
-    if args.start_index is not None:
-        sub_split = None
-        if args.sub_split is not None:
-            warnings.warn("start_index is used, sub_split will be ignored during dataset loading")
-    else:
-        sub_split = args.sub_split
+    # if args.start_index is not None:
+    #     sub_split = None
+    #     if args.sub_split is not None:
+    #         warnings.warn("start_index is used, sub_split will be ignored during dataset loading")
+    # else:
+    #     sub_split = args.sub_split
 
-    full_dataset = get_dataset(name = args.dataset, setting = args.setting, split =  args.split, sub_split = sub_split, seed=args.seed)
+    full_dataset = get_dataset(name = args.dataset, setting = args.setting, split =  args.split, seed=args.seed)
     total_dataset_size = len(full_dataset)
 
     print(f"examples in dataset: {full_dataset[0]}")
@@ -658,8 +648,7 @@ def main() -> None:
         model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
         output_dir = os.path.join(base_output_dir, args.method, args.dataset, model_name)
         use_inv_str = "_inv" if args.use_inverses else ""
-        answer_type_str = "_edit" if args.answer_type == "new_answer" else ""
-        save_postfix = f"{args.dataset}_{args.sub_split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}{answer_type_str}.json"
+        save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}.json"
         save_path = os.path.join(output_dir, f"generations{args.save_version}", f"eval_{save_postfix}")
         save_results_path = os.path.join(output_dir, f"results{args.save_version}", f"results_{save_postfix}")
     else:
@@ -698,7 +687,6 @@ def main() -> None:
                         setting=args.setting,
                         split=args.split,
                         source='hf',
-                        answer_type=args.answer_type,
                     )
                     logger.info(f"Evaluation results: {json.dumps(results, indent=2)}")
 
@@ -796,7 +784,6 @@ def main() -> None:
             setting=args.setting,
             split=args.split,
             source='hf',
-            answer_type=args.answer_type,
         )
         logging.info(f"Evaluation results: {json.dumps(results, indent=2)}")
 

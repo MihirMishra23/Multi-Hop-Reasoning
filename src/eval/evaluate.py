@@ -149,13 +149,11 @@ def evaluate_file(
     setting: Optional[str] = None,
     split: Optional[str] = None,
     source: str = "hf",
-    answer_type: str = "answer",
 ) -> Dict[str, Any]:
     """Evaluate a single preds JSON file and return metrics + metadata.
 
-    Args:
-        preds_path: Path to preds JSON saved by scripts/run_agent.py
-        answer_type: For MQuAKE, 'answer' uses original answers, 'new_answer' uses edited answers
+    For MQuAKE, answer_type is auto-inferred from the split name:
+    splits starting with 'eval-edit' use new_answer, all others use answer.
 
     Returns:
         dict with keys:
@@ -172,6 +170,10 @@ def evaluate_file(
     setting_name = setting or meta.setting
     split_name = split or meta.split
 
+    # Determine answer_type from split: eval-edit* → new_answer, else → answer
+    is_mquake = dataset_name and dataset_name.lower() in ("mquake", "mquake-remastered")
+    answer_type = "new_answer" if (is_mquake and split_name and split_name.startswith("eval-edit")) else "answer"
+
     # Lazily loaded mapping from qid -> joined gold answers
     gold_by_id: Dict[str, str] | None = None
 
@@ -187,9 +189,6 @@ def evaluate_file(
     # Extract results from new format (with fallback for potential edge cases)
     results = preds.get("results", preds)
     
-    # Determine if this is MQuAKE dataset for special evaluation
-    is_mquake = dataset_name and dataset_name.lower() in ("mquake", "mquake-remastered")
-    # For MQuAKE, determine which answer field to use based on answer_type
     use_new_answer = is_mquake and answer_type == "new_answer"
 
     for _qid, rec in results.items():
