@@ -60,6 +60,7 @@ class TwoPhaseAgent(Agent):
         similarity_threshold: float = 0.6,
         use_inverses: bool = False,
         return_triplets: bool = False,
+        concat_all_db: bool = False,
         # vLLM sampling (should match training)
         temperature: float = 1.0,
         top_p: float = 0.95,
@@ -74,6 +75,7 @@ class TwoPhaseAgent(Agent):
         self.similarity_threshold = similarity_threshold
         self.use_inverses = use_inverses
         self.return_triplets = return_triplets
+        self.concat_all_db = concat_all_db
         # sampling params
         self.temperature = temperature
         self.top_p = top_p
@@ -136,8 +138,58 @@ class TwoPhaseAgent(Agent):
         _temperature = temperature if temperature is not None else self.temperature
         _max_tokens  = max_tokens  if max_tokens  is not None else self.max_completion_length
 
-        per_example_dbs = self._phase1_build_dbs(queries, contexts)
-        return self._phase2_qa(queries, per_example_dbs, _max_tokens, _temperature)
+        if self.concat_all_db:
+            # Use pre-built unified database
+            if not hasattr(self, '_unified_db') or self._unified_db is None:
+                raise RuntimeError(
+                    "concat_all_db is True but unified database has not been built. "
+                    "Call build_unified_db_from_dataset() before run()."
+                )
+            # Pass empty list for per_example_dbs, use unified_db parameter
+            return self._phase2_qa(queries, [], _max_tokens, _temperature, unified_db=self._unified_db)
+        else:
+            # Original behavior: build per-example DBs from this batch's contexts
+            per_example_dbs = self._phase1_build_dbs(queries, contexts)
+            return self._phase2_qa(queries, per_example_dbs, _max_tokens, _temperature)
+
+    def build_unified_db_from_dataset(
+        self,
+        all_queries: list[str],
+        all_contexts: list[list[str]],
+    ) -> None:
+        """Pre-build ONE unified database from entire dataset (called once before batching).
+
+        This method should be called BEFORE running batch inference when concat_all_db=True.
+        It generates triplets from all examples' contexts and builds a single unified database.
+
+        Args:
+            all_queries: All questions in the dataset.
+            all_contexts: All contexts in the dataset (one list of contexts per question).
+        """
+        # Use _phase1_build_dbs to generate triplets for all examples
+        # (we don't actually need the per-example DBs, just the triplets)
+        _ = self._phase1_build_dbs(all_queries, all_contexts)
+
+        # Extract all triplets from self._phase1_info (populated by _phase1_build_dbs)
+        all_triplets = []
+        for info in self._phase1_info:
+            all_triplets.extend(info['triplets'])
+
+        # Build ONE unified DatabaseManager from all triplets
+        unified_db = build_databases_from_triplets_batch(
+            [all_triplets],
+            top_k=self.top_k,
+            default_threshold=self.similarity_threshold,
+            adaptive=False,
+            use_inverses=self.use_inverses,
+        )[0]
+
+        # Store it for use in run()
+        self._unified_db = unified_db
+        self._unified_db_stats = {
+            "total_triplets": len(all_triplets),
+            "num_examples": len(all_queries),
+        }
 
     # ------------------------------------------------------------------
     # Internal phases
@@ -152,7 +204,7 @@ class TwoPhaseAgent(Agent):
         if self._phase1_prompt_type == "with_question":
             phase1_prompts = [
                 self._phase1_prompt_template.format(
-                    context="\n\n".join(ctx), question=q
+                    context="\n\n".join(ctx)
                 )
                 for ctx, q in zip(contexts, queries)
             ]
@@ -161,6 +213,7 @@ class TwoPhaseAgent(Agent):
                 self._phase1_prompt_template.format(context="\n\n".join(ctx))
                 for ctx in contexts
             ]
+        print("The first prompt is ; ", phase1_prompts[0])
 
         params = SamplingParams(
             n=1,
@@ -203,8 +256,14 @@ class TwoPhaseAgent(Agent):
         per_example_dbs: list[DatabaseManager],
         max_tokens: int,
         temperature: float,
+        unified_db: Optional[DatabaseManager] = None,
     ):
-        """Phase 2: answer questions with per-example DB lookups (multi-turn vLLM)."""
+        """Phase 2: answer questions with DB lookups (multi-turn vLLM).
+
+        Args:
+            per_example_dbs: List of DatabaseManager (one per query). Ignored if unified_db is set.
+            unified_db: Optional single DatabaseManager shared across all queries.
+        """
         B = len(queries)
         prompts = [f"Question:\n{q}\nAnswer:\n" for q in queries]
         active = [True] * B
@@ -270,7 +329,9 @@ class TwoPhaseAgent(Agent):
                     try:
                         db_query = prompts[i].rsplit(DB_START_TOKEN)[-1]
                         log["query"] = db_query
-                        values = per_example_dbs[i].retrieve_from_database(
+                        # Use unified DB if set, otherwise use per-example DB
+                        db_to_use = unified_db if unified_db is not None else per_example_dbs[i]
+                        values = db_to_use.retrieve_from_database(
                             DB_START_TOKEN + db_query,
                             threshold=self.similarity_threshold,
                             top_k=self.top_k,

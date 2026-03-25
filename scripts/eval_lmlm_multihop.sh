@@ -31,6 +31,7 @@ DATASET=hotpotqa
 SPLIT=train_val1k
 USE_INVERSES="true" # or "--use-inverses"
 USE_TRAIN_PARAMS=""   # set to "--use-train-params" to use grpo_train.sh sampling params instead of greedy
+CONCAT_ALL_DB=""      # set to "--concat-all-db" to build unified database from all examples
 NUM_SAMPLES=1000
 SAVE_VERSION="put-anything-here" #use this to add info to save path
 TOP_K=4
@@ -73,6 +74,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --use-train-params)
             USE_TRAIN_PARAMS="--use-train-params"
+            shift
+            ;;
+        --concat-all-db)
+            CONCAT_ALL_DB="--concat-all-db"
             shift
             ;;
         --save_version)
@@ -154,7 +159,7 @@ BATCH_SIZE_DIRECT=32
 BATCH_SIZE_ICL=1
 BATCH_SIZE_RAG=1
 BATCH_SIZE_LMLM=64
-OUTPUT_DIR=./output
+OUTPUT_DIR=./output-1k-concat-vs-not-march-25-238am
 SETTING=distractor
 SAVE_EVERY=64
 SEED=42
@@ -178,8 +183,6 @@ if [[ "${MODEL_PATH}" == *"-th-3"* ]]; then
 else
     RETURN_TRIPLETS=""
 fi
-
-DATABASE_PATH="none"
 
 
 for METHOD in "${METHODS[@]}"; do
@@ -227,6 +230,7 @@ for METHOD in "${METHODS[@]}"; do
             --top-k ${TOP_K} \
             --similarity-threshold ${SIMILARITY_THRESHOLD} \
             ${USE_TRAIN_PARAMS} \
+            ${CONCAT_ALL_DB} \
             --eval
     else
         if [ "${METHOD}" = "icl" ]; then
