@@ -10,6 +10,10 @@ export VLLM_BATCH_INVARIANT=0
 export CUDA_HOME=/usr/local/cuda
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}
 
+# Redirect Ray temp/spill dir away from /tmp (only 15G) to home dir
+export RAY_TMPDIR=/home/lz586/ray_tmp
+mkdir -p /home/lz586/ray_tmp
+
 export WANDB_ENTITY=ryan-noonan-cornell-university
 export WANDB_PROJECT=LMLM-Multihop
 
@@ -55,7 +59,7 @@ TOP_K=4
 # ── Logging / checkpointing ───────────────────────────────────────────────────
 LOGGING_STEPS=5
 SAVE_STEPS=100
-EVAL_STEPS=50
+EVAL_STEPS=500
 
 # ── Retrieval & reward ────────────────────────────────────────────────────────
 RETRIEVAL_THRESHOLD=0.6
@@ -65,8 +69,9 @@ USE_INVERSES=False
 
 # ── Two-phase settings ────────────────────────────────────────────────────────
 PHASE1_REWARD_TYPE="binary"
-PHASE1_PROMPT_TYPE="context_only"
+PHASE1_PROMPT_TYPE="sft"
 PHASE1_DB_WEIGHT_MODE="count"  # none | fixed[_<w>] | dynamic | count | count_dynamic
+USE_CHAT_TEMPLATE=False
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -91,6 +96,7 @@ while [[ $# -gt 0 ]]; do
         --phase1_reward_type)    PHASE1_REWARD_TYPE="$2";     shift 2 ;;
         --phase1_prompt_type)    PHASE1_PROMPT_TYPE="$2";     shift 2 ;;
         --phase1_db_weight_mode) PHASE1_DB_WEIGHT_MODE="$2";  shift 2 ;;
+        --use_chat_template)     USE_CHAT_TEMPLATE=True;      shift 1 ;;
         --two_phase)             TWO_PHASE=1;                 shift 1 ;;
         --debug)                 DEBUG=1;                     shift 1 ;;
         *)
@@ -105,11 +111,17 @@ if [ "$GPU_TYPE" == "B200" ]; then
     if [[ "${MODEL_PATH}" == *"1.7B"* ]]; then
         NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
         PER_DEVICE_TRAIN_BATCH_SIZE=16
+        LEARNING_RATE=5e-6
         VLLM_GPU_MEMORY_UTILIZATION=0.4
     elif [[ "${MODEL_PATH}" == *"4B"* ]]; then
         NUM_GPUS=2
+        LEARNING_RATE=5e-6
         PER_DEVICE_TRAIN_BATCH_SIZE=16
-        VLLM_GPU_MEMORY_UTILIZATION=0.15
+        VLLM_GPU_MEMORY_UTILIZATION=0.4
+    elif [[ "${MODEL_PATH}" == *"8B"* ]]; then
+        NUM_GPUS=2
+        PER_DEVICE_TRAIN_BATCH_SIZE=2
+        VLLM_GPU_MEMORY_UTILIZATION=0.25
     elif [[ "${MODEL_PATH}" == *"382M"* ]]; then
         NUM_GPUS=1
         PER_DEVICE_TRAIN_BATCH_SIZE=256
@@ -157,7 +169,7 @@ fi
 # Format: {model}-{loss}-tbs{total_batch}-N{num_gen}-K{db_rollouts}-B{questions/batch}-M{qa_per_db}-b{beta}-step{max_steps}-n{train_size}-{reward}[-2ph[-rw{reward_type}]-pr{prompt_type}-w{weight_mode}]-th{threshold}-topk{top_k}[-nak][-debug]
 B=$((TOTAL_BATCH_SIZE / NUM_GENERATIONS))                       # unique questions per global batch
 M=$(((NUM_GENERATIONS - NUM_DB_ROLLOUTS) / NUM_DB_ROLLOUTS))    # phase 2 QA rollouts per (question, DB) pair
-OUTPUT_DIR="${SAVE_DIR}/${MODEL_PATH##*/}-${LOSS_TYPE}-tbs${TOTAL_BATCH_SIZE}-N${NUM_GENERATIONS}-K${NUM_DB_ROLLOUTS}-B${B}-M${M}-b${BETA}-step${MAX_STEPS}-n${TRAIN_SIZE}-${REWARD_FUNC}-v2"
+OUTPUT_DIR="${SAVE_DIR}/${MODEL_PATH##*/}-${LOSS_TYPE}-tbs${TOTAL_BATCH_SIZE}-N${NUM_GENERATIONS}-K${NUM_DB_ROLLOUTS}-B${B}-M${M}-b${BETA}-lr${LEARNING_RATE}-step${MAX_STEPS}-n${TRAIN_SIZE}-${REWARD_FUNC}"
 if [ -n "${TWO_PHASE}" ]; then
     OUTPUT_DIR="${OUTPUT_DIR}-2ph"
     [ "${PHASE1_REWARD_TYPE}" != "binary" ] && OUTPUT_DIR="${OUTPUT_DIR}-rw${PHASE1_REWARD_TYPE}"
@@ -217,7 +229,6 @@ accelerate launch \
   --tools \
   --gradient_checkpointing \
   --do_eval \
-  --eval_on_start \
   --log_completions \
   --beta=${BETA} \
   --learning_rate=${LEARNING_RATE} \
@@ -248,6 +259,9 @@ accelerate launch \
   --phase1_reward_type=${PHASE1_REWARD_TYPE} \
   --phase1_prompt_type=${PHASE1_PROMPT_TYPE} \
   --num_db_rollouts=${NUM_DB_ROLLOUTS} \
-  --phase1_db_weight_mode=${PHASE1_DB_WEIGHT_MODE}
+  --phase1_db_weight_mode=${PHASE1_DB_WEIGHT_MODE} \
+  $([ "${USE_CHAT_TEMPLATE}" = "True" ] && echo "--use_chat_template")
 
 echo "Training completed!"
+
+#   --eval_on_start \

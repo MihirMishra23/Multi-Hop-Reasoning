@@ -83,9 +83,8 @@ class TwoPhaseAgent(Agent):
 
         # Phase 1 prompt template
         prompt_path = os.path.join(REPO_ROOT, "data", "prompts", "database_creation.json")
-        prompt_key = "sft_with_question" if phase1_prompt_type == "with_question" else "sft"
         with open(prompt_path) as f:
-            self._phase1_prompt_template: str = json.load(f)[prompt_key]["prompt"]
+            self._phase1_prompt_template: str = json.load(f)[phase1_prompt_type]["prompt"]
         self._phase1_prompt_type = phase1_prompt_type
 
         # Tokenizer + special token IDs
@@ -149,7 +148,7 @@ class TwoPhaseAgent(Agent):
         contexts: list[list[str]],
     ) -> list[DatabaseManager]:
         """Phase 1: generate triplets from contexts and build per-example DBs."""
-        if self._phase1_prompt_type == "with_question":
+        if "{question}" in self._phase1_prompt_template:
             phase1_prompts = [
                 self._phase1_prompt_template.format(
                     context="\n\n".join(ctx), question=q

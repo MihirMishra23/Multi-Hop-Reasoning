@@ -30,14 +30,15 @@
 # Compatibility with eval:
 # - Uses get_dataset with seed; subset defined by start-index + total-count
 #
-MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48-grpo-g8-bs16-s8-b0.0-ep5-n8000/checkpoint-1250/
-DATASET=2wiki
-SPLIT=dev
-NUM_SAMPLES=100
+MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k
+DATASET=hotpotqa
+# train_all: full 7k GRPO training set (seed=42 shuffled, indices 83347..90347)
+SPLIT=train_all
+NUM_SAMPLES=7000
 SAVE_VERSION="v1"
 NUM_ROLLOUTS=8
 ANSWER_THRESHOLD=0.6
-PLOT_PATH=./output/tiers/2wiki_score_dist.png
+PLOT_PATH=./output/tiers/hotpotqa_train_score_dist.png
 
 
 # Parse command line arguments
@@ -109,6 +110,16 @@ if [ "${DATASET}" = "hotpotqa" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=89347
+        SPLIT="train"
+    elif [ "${SPLIT}" = "train_all" ]; then
+        # Full 7k GRPO training set.
+        # grpo_train.py loads sub_split="train", limit=7000, seed=42 which selects
+        # range(n - eval_size - train_size, n - eval_size) = range(83347, 90347)
+        # of the seed=42-shuffled hotpotqa train split (n=90447).
+        echo "Using full 7k GRPO training set (seed=42 indices 83347..90347)"
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+        DEFAULT_NUM_SAMPLES=7000
+        START_IDX=83347
         SPLIT="train"
     else
         echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"

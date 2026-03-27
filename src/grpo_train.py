@@ -7,6 +7,7 @@ from transformers import AutoTokenizer, HfArgumentParser
 from eval.metrics import exact_match_score
 from trl.trainer.grpo_config import GRPOConfig
 from reward_func import em_accuracy, f1_reward, db_coverage_reward, db_size_threshold
+import json
 import wandb
 import os
 from data import get_dataset
@@ -29,6 +30,20 @@ class ScriptArguments:
     )
     train_size: int = field(default=8000, metadata={"help": "Number of training examples"})
     eval_size: int = field(default=100, metadata={"help": "Number of evaluation examples"})
+
+    # Curriculum / tier filtering
+    tier_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to tier JSON produced by generate_tier.py. When set, training examples are filtered to those whose rollout score falls in [tier_min_score, tier_max_score]."}
+    )
+    tier_min_score: int = field(
+        default=1,
+        metadata={"help": "Minimum rollout success count (inclusive) to keep an example."}
+    )
+    tier_max_score: int = field(
+        default=7,
+        metadata={"help": "Maximum rollout success count (inclusive) to keep an example."}
+    )
 
 
 @dataclass
@@ -67,8 +82,8 @@ class LMLMArguments:
         metadata={"help": "Phase 1 reward type in two_phase mode: 'binary' (db_size_threshold/db_coverage_reward) or 'utilization' (used_triplets/total_triplets ratio)"}
     )
     phase1_prompt_type: str = field(
-        default="context_only",
-        metadata={"help": "Phase 1 prompt type: 'context_only' (context only) or 'with_question' (context + question)"}
+        default="sft",
+        metadata={"help": "Prompt type key into database_creation.json / lmlm_agent.json (e.g. 'sft', 'sft_with_question', 'zero_rl', 'formatted_zero_rl')"}
     )
     num_db_rollouts: int = field(
         default=1,
@@ -81,6 +96,10 @@ class LMLMArguments:
     retrieval_top_k: int = field(
         default=1,
         metadata={"help": "Nb of examples retrieved from db"}
+    )
+    use_chat_template: bool = field(
+        default=False,
+        metadata={"help": "Wrap prompts in the model's chat template before generation (needed for instruct/base models in zero-RL)"}
     )
 
 
@@ -113,15 +132,24 @@ def main():
 
     train_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "train", limit = script_args.train_size, seed = 42)
     test_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "eval", limit = script_args.eval_size, seed = 42)
-    
+
+    if script_args.tier_path is not None:
+        print(f"Applying tier filter from {script_args.tier_path} (score {script_args.tier_min_score}..{script_args.tier_max_score})")
+        with open(script_args.tier_path, "r", encoding="utf-8") as f:
+            tier_data = json.load(f)
+        valid_ids = {
+            qid for qid, item in tier_data["results"].items()
+            if script_args.tier_min_score <= int(item["score"]) <= script_args.tier_max_score
+        }
+        before = len(train_dataset)
+        train_dataset = train_dataset.filter(lambda ex: ex["id"] in valid_ids)
+        print(f"Tier filter: {before} -> {len(train_dataset)} examples")
+
     train_set = train_dataset.map(process_example)
     eval_set = test_dataset.map(process_example)
     
     print(f"Train set size: {len(train_set)}")
     print(f"Eval set size: {len(eval_set)}")
-    print(f"Train example: {train_set[0]}")
-    print(f"Eval example: {eval_set[0]}")
-    
     # Load tokenizer
     print(f"Loading tokenizer from: {script_args.model_path}")
     tokenizer = AutoTokenizer.from_pretrained(script_args.model_path)
@@ -177,6 +205,7 @@ def main():
         num_db_rollouts=lmlm_args.num_db_rollouts,
         phase1_db_weight_mode=lmlm_args.phase1_db_weight_mode,
         retrieval_top_k = lmlm_args.retrieval_top_k,
+        use_chat_template=lmlm_args.use_chat_template,
     )
     
     # Start training

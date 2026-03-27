@@ -127,14 +127,20 @@ def parse_triplets(text: str) -> list[tuple[str, str, str]]:
         if not line:
             continue
 
-        # # Try parenthesized format first
-        # match = paren_pattern.search(line)
-        # if match:
-        #     triplets.append((match.group(1).strip(), match.group(2).strip(), match.group(3).strip()))
-        #     continue
+        # Try parenthesized format first: (entity, relationship, value)
+        match = paren_pattern.search(line)
+        if match:
+            triplets.append((match.group(1).strip(), match.group(2).strip(), match.group(3).strip()))
+            continue
 
-        # Fall back to tab-separated format
+        # Try tab-separated format: entity\trelationship\tvalue
         parts = line.split("\t")
+        if len(parts) == 3:
+            triplets.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
+            continue
+
+        # Try comma-separated format (no parens): entity, relationship, value
+        parts = line.split(", ", 2)
         if len(parts) == 3:
             triplets.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
 
@@ -314,11 +320,13 @@ class LMLMGRPOTrainer(BaseTrainer):
         two_phase: bool = False,
         retrieval_top_k: int = 1,
         phase1_reward_type: str = "binary",
-        phase1_prompt_type: str = "context_only",
+        phase1_prompt_type: str = "sft",
         num_db_rollouts: int = 1,
         phase1_db_weight_mode: str = "fixed_1.0",
+        use_chat_template: bool = False,
     ):
         self.retrieval_top_k = retrieval_top_k
+        self.use_chat_template = use_chat_template
         #LMLM db initialization
         self.retrieval_threshold = retrieval_threshold
         self.use_inverses = use_inverses
@@ -326,7 +334,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         self.return_triples = return_triples
         self.adaptive_k = adaptive_k
         self.phase1_reward_type = phase1_reward_type  # "binary" or "utilization"
-        self.phase1_prompt_type = phase1_prompt_type  # "context_only" or "with_question"
+        self.phase1_prompt_type = phase1_prompt_type  # "sft" or "with_question"
         self.phase1_db_weight_mode = phase1_db_weight_mode  # "none" | "fixed[_<w>]" | "dynamic" | "count" | "count_dynamic"
 
         # Two-phase mode: Phase 1 generates triplets from contexts, Phase 2 does QA with per-example DB
@@ -337,10 +345,23 @@ class LMLMGRPOTrainer(BaseTrainer):
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                 "data", "prompts", "database_creation.json"
             )
-            prompt_key = "sft_with_question" if phase1_prompt_type == "with_question" else "sft"
             with open(prompt_path) as f:
-                self._phase1_prompt_template = json.load(f)[prompt_key]["prompt"]
-            logger.info("Two-phase mode enabled: loaded Phase 1 prompt template '%s' from %s", prompt_key, prompt_path)
+                self._phase1_prompt_template = json.load(f)[phase1_prompt_type]["prompt"]
+            logger.info("Two-phase mode enabled: loaded Phase 1 prompt template '%s' from %s", phase1_prompt_type, prompt_path)
+
+            # Phase 2 QA prompt template: zero_rl variants include system instructions; default is bare question
+            self._phase2_prompt_template = None
+            phase2_prompt_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "data", "prompts", "lmlm_agent.json"
+            )
+            with open(phase2_prompt_path) as f:
+                phase2_prompts = json.load(f)
+            if phase1_prompt_type in phase2_prompts and phase1_prompt_type is not "sft":
+                self._phase2_prompt_template = phase2_prompts[phase1_prompt_type]["prompt"]
+                logger.info("Loaded Phase 2 prompt template '%s' from %s", phase1_prompt_type, phase2_prompt_path)
+            else:
+                logger.info("No Phase 2 prompt template for '%s'; using bare QA prompt", phase1_prompt_type)
         else:
             self.db = DatabaseManager()
             self.db.load_database(lmlm_database_path, adaptive= adaptive_k, use_inverses = use_inverses)
@@ -393,11 +414,30 @@ class LMLMGRPOTrainer(BaseTrainer):
         self.pad_token_id = tokenizer.pad_token_id
         self.eos_token_id = tokenizer.eos_token_id
 
-        self.stop_token_ids = [tokenizer.eos_token_id, tokenizer.encode(DB_RETRIEVE_TOKEN, add_special_tokens = False)[0]]
+        # Resolve DB special-token IDs.  SFT models have these as single vocab
+        # entries; base models tokenize them into multiple subwords.  Guard
+        # against the multi-token case so we don't accidentally use the ID of
+        # '<' (first subword) as a stop token.
+        db_retrieve_ids = tokenizer.encode(DB_RETRIEVE_TOKEN, add_special_tokens=False)
+        db_end_ids = tokenizer.encode(DB_END_TOKEN, add_special_tokens=False)
 
-        # fix BUG
-        self.db_retrieve_token_id = tokenizer.encode(DB_RETRIEVE_TOKEN)[0]
-        self.db_end_token_id = tokenizer.encode(DB_END_TOKEN)[0]
+        if len(db_retrieve_ids) == 1:
+            self.db_retrieve_token_id = db_retrieve_ids[0]
+            self.stop_token_ids = [tokenizer.eos_token_id, db_retrieve_ids[0]]
+            self.stop_strings = None  # not needed; token-level stop is active
+            logger.info("DB_RETRIEVE_TOKEN %r is a single token (id=%d) — using token-level stop",
+                        DB_RETRIEVE_TOKEN, db_retrieve_ids[0])
+        else:
+            self.db_retrieve_token_id = None
+            self.stop_token_ids = [tokenizer.eos_token_id]
+            self.stop_strings = [DB_RETRIEVE_TOKEN]  # vLLM string-level stop
+            logger.warning(
+                "DB_RETRIEVE_TOKEN %r is NOT a single token in this tokenizer "
+                "(got %d tokens: %s). Using string-level stop instead of stop_token_ids.",
+                DB_RETRIEVE_TOKEN, len(db_retrieve_ids), db_retrieve_ids,
+            )
+
+        self.db_end_token_id = db_end_ids[0] if len(db_end_ids) == 1 else None
         set_tokenizer(tokenizer)
 
         # Non-quantized models do not have the `is_loaded_in_{8,4}bit` attributes, whereas quantized models do
@@ -1218,6 +1258,27 @@ class LMLMGRPOTrainer(BaseTrainer):
         device = self.accelerator.device
         mode = "train" if self.model.training else "eval"
 
+        # Optionally wrap raw-string prompts in the model's chat template
+        if self.use_chat_template and prompts and isinstance(prompts[0], str):
+            chat_template_kwargs = {"tokenize": False, "add_generation_prompt": True, "enable_thinking": False}
+            prompts = [
+                self.processing_class.apply_chat_template(
+                    [{"role": "user", "content": p}],
+                    **chat_template_kwargs,
+                )
+                for p in prompts
+            ]
+            # Debug: show first prompt after chat template (once only)
+            if not getattr(self, '_debug_chat_template_printed', False):
+                self._debug_chat_template_printed = True
+                print("\n" + "="*80)
+                print("[DEBUG] Prompt AFTER chat template (first example):")
+                print("-"*80)
+                print(prompts[0][:3000])
+                print("-"*80)
+                print(f"[DEBUG] Prompt length after chat template (chars): {len(prompts[0])}")
+                print("="*80 + "\n")
+
         # Generate completions using either vLLM or regular generation
         if self.use_vllm:
             if self.vllm_mode == "colocate" and self.args.vllm_enable_sleep_mode:
@@ -1352,8 +1413,14 @@ class LMLMGRPOTrainer(BaseTrainer):
                         "min_p": 0.0 if self.min_p is None else self.min_p,
                         "max_tokens": self.max_completion_length,
                         "logprobs": 0,  # enable returning log probabilities; 0 means for the sampled tokens only
-                        "stop_token_ids" : self.stop_token_ids
+                        "stop_token_ids" : self.stop_token_ids,
                     }
+                    if self.stop_strings:
+                        generation_kwargs["stop"] = self.stop_strings
+                        # Match stop_token_ids behavior: include the stop
+                        # string in the output so extract_db_lookup_last()
+                        # can find DB_RETRIEVE_TOKEN in the completion text.
+                        generation_kwargs["include_stop_str_in_output"] = True
                     if self.args.generation_kwargs is not None:
                         generation_kwargs.update(self.args.generation_kwargs)
                     sampling_params = SamplingParams(**generation_kwargs)
@@ -1737,6 +1804,10 @@ class LMLMGRPOTrainer(BaseTrainer):
             Tuple of (prompt_ids, completion_ids, tool_mask, completions,
             logprobs, tool_call_count, tool_failure_count, extra_fields). For both phases.
         """
+        # Zero-RL: override bare QA prompts with full system-instruction template
+        if self._phase2_prompt_template is not None and questions is not None:
+            qa_prompts = [self._phase2_prompt_template.replace("{question}", q) for q in questions]
+
         mode = "train" if self.model.training else "eval"
         num_generations = self.num_generations if mode == "train" else self.num_generations_eval
         K = self.num_db_rollouts  # DB rollouts per question
@@ -1746,7 +1817,7 @@ class LMLMGRPOTrainer(BaseTrainer):
 
 
         # ===== Phase 1: Generate K triplet DBs per question =====
-        if self.phase1_prompt_type == "with_question" and questions is not None:
+        if "{question}" in self._phase1_prompt_template and questions is not None:
             phase1_prompts = [
                 self._phase1_prompt_template.format(context="\n\n".join(ctx_list), question=q)
                 for ctx_list, q in zip(contexts, questions)
@@ -1756,6 +1827,23 @@ class LMLMGRPOTrainer(BaseTrainer):
                 self._phase1_prompt_template.format(context="\n\n".join(ctx_list))
                 for ctx_list in contexts
             ]
+
+        # ── Debug: show first Phase 1 and Phase 2 prompt (before chat template) ──
+        if not getattr(self, '_debug_two_phase_prompts_printed', False):
+            self._debug_two_phase_prompts_printed = True
+            print("\n" + "="*80)
+            print("[DEBUG] Phase 1 prompt (first example, before chat template):")
+            print("-"*80)
+            print(phase1_prompts[0][:3000])
+            print("-"*80)
+            print(f"[DEBUG] Phase 1 prompt length (chars): {len(phase1_prompts[0])}")
+            print(f"[DEBUG] Phase 2 prompt (first example, before chat template):")
+            print("-"*80)
+            print(qa_prompts[0][:3000])
+            print("-"*80)
+            print(f"[DEBUG] Phase 2 prompt length (chars): {len(qa_prompts[0])}")
+            print(f"[DEBUG] use_chat_template={self.use_chat_template}")
+            print("="*80 + "\n")
 
         (
             phase1_prompt_ids,
@@ -1772,6 +1860,17 @@ class LMLMGRPOTrainer(BaseTrainer):
         phase1_completions_for_db = self.processing_class.batch_decode(
             phase1_completion_ids, skip_special_tokens=True
         )
+
+        # ── Debug: show first Phase 1 completion ──
+        if not getattr(self, '_debug_phase1_completion_printed', False) and phase1_completions:
+            self._debug_phase1_completion_printed = True
+            print("\n" + "="*80)
+            print("[DEBUG] Phase 1 COMPLETION (first example, with special tokens):")
+            print("-"*80)
+            print(phase1_completions[0][:3000])
+            print("-"*80)
+            print(f"[DEBUG] Phase 1 completion length (tokens): {len(phase1_completion_ids[0])}")
+            print("="*80 + "\n")
 
         B = len(qa_prompts)
         # [TRR++] Phase 1 must produce exactly B*K completions (K per question)
@@ -1864,6 +1963,17 @@ class LMLMGRPOTrainer(BaseTrainer):
             completion_ids, skip_special_tokens=False
         )
 
+        # ── Debug: show first Phase 2 completion ──
+        if not getattr(self, '_debug_phase2_completion_printed', False) and completions:
+            self._debug_phase2_completion_printed = True
+            print("\n" + "="*80)
+            print("[DEBUG] Phase 2 COMPLETION (first example, with special tokens):")
+            print("-"*80)
+            print(completions[0][:3000])
+            print("-"*80)
+            print(f"[DEBUG] Phase 2 completion length (tokens): {len(completion_ids[0])}")
+            print("="*80 + "\n")
+
         # [TRR++] Phase 2 must produce exactly B*N completions
         assert len(completion_ids) == B * N, (
             f"[TRR++] Phase 2: expected {B * N} completions (B={B} * N={N}), got {len(completion_ids)}"
@@ -1899,6 +2009,18 @@ class LMLMGRPOTrainer(BaseTrainer):
             tool_mask = None
             tool_call_count = 0
             tool_failure_count = 0
+
+        # ── Debug: show first Phase 2 completion AFTER tool loop ──
+        if not getattr(self, '_debug_phase2_post_tool_printed', False) and completions:
+            self._debug_phase2_post_tool_printed = True
+            post_tool_text = self.processing_class.decode(completion_ids[0], skip_special_tokens=False) if completion_ids else ""
+            print("\n" + "="*80)
+            print(f"[DEBUG] Phase 2 FINAL completion (after tool loop, tools={self.tools}, calls={tool_call_count}):")
+            print("-"*80)
+            print(post_tool_text[:3000])
+            print("-"*80)
+            print(f"[DEBUG] Phase 2 final completion length (tokens): {len(completion_ids[0])}")
+            print("="*80 + "\n")
 
         # Compute per-rollout triplet utilization ratio (used/total) for logging (and as reward if phase1_reward_type == "utilization")
         # Each QA rollout has its own DB copy, so _queried_pairs reflects only that rollout's queries.
@@ -2103,7 +2225,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         if self.two_phase:
             def modify_input(x):
                 y = copy.deepcopy(x)
-                if self.phase1_prompt_type == "with_question":
+                if "{question}" in self._phase1_prompt_template:
                     y["prompt"] = self._phase1_prompt_template.format(
                         context="\n\n".join(y.get("contexts", [])),
                         question=y.get("question", ""),
@@ -2475,6 +2597,10 @@ class LMLMGRPOTrainer(BaseTrainer):
             all_prompts = gather_object(prompts_text)
             all_completions = gather_object(completions_text)
             all_advantages = all_process_advantages.tolist()
+            # Gather answers and contexts across all GPUs so their counts match B_global*K
+            _N_local = len(answers) // len(contexts)  # num_generations per question
+            all_answers_unique = gather_object([answers[i * _N_local] for i in range(len(contexts))])  # B_global unique
+            all_contexts_unique = gather_object(contexts)  # B_global unique contexts
             em_accuracy_rewards_list = rewards_per_func[BK:, 0].tolist()  # Phase 2 EM scores
             if self.phase1_reward_type == "utilization" and getattr(self, '_phase1_utilization_gathered', None) is not None:
                 ## TODO: this part is misleading as utilization is different from db_threshold
@@ -2504,9 +2630,10 @@ class LMLMGRPOTrainer(BaseTrainer):
             self._logs["phase1_advantages"].extend(phase1_advantages)
             self._logs["rewards"]["db_size_threshold"].extend(db_threshold_rewards_list)
             # Repeat context and answer K times so all phase1 log columns have B*K entries
-            self._logs["phase1_context"].extend(["\n\n".join(ctx_list) for ctx_list in contexts for _ in range(K)])
+            # Use gathered versions (all_contexts_unique, all_answers_unique) so counts match B_global*K
+            self._logs["phase1_context"].extend(["\n\n".join(ctx_list) for ctx_list in all_contexts_unique for _ in range(K)])
             self._logs["generated_db"].extend(self._generated_db_triplet_list)
-            self._logs["answer"].extend([ans for ans in answers[::N] for _ in range(K)])
+            self._logs["answer"].extend([ans for ans in all_answers_unique for _ in range(K)])
 
             for i in range(N):
                 phase2_prompts_i = [phase2_prompts[b*N + i] for b in range(B)]
@@ -2731,8 +2858,13 @@ class LMLMGRPOTrainer(BaseTrainer):
 
         mask = completion_mask if not self.tools else completion_mask * inputs["tool_mask"]
 
-        # Detect which completions contain special tokens (for separate loss logging)
-        has_special_token = (completion_ids == self.stop_token_ids[-1]).any(dim=1)  # (B,)
+        # Detect which completions contain the DB_RETRIEVE special token (for separate loss logging).
+        # For base models where DB_RETRIEVE_TOKEN is multi-token, db_retrieve_token_id is None —
+        # fall back to assuming all completions are triplets (Phase 1 only).
+        if self.db_retrieve_token_id is not None:
+            has_special_token = (completion_ids == self.db_retrieve_token_id).any(dim=1)  # (B,)
+        else:
+            has_special_token = torch.zeros(completion_ids.shape[0], dtype=torch.bool, device=completion_ids.device)
         has_triplets = ~has_special_token
 
 

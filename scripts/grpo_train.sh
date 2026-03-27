@@ -24,7 +24,7 @@ GPU_TYPE="None"
 MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop//Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
 #DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
 DATABASE_PATH="" # -> Not used for two phase
-SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
+SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/ablation
 DATASET_NAME="hotpotqa"
 NUM_GPUS=1
 
@@ -43,6 +43,9 @@ NUM_DB_ROLLOUTS=4    # K  (set >1 to compare multiple DBs per question; N must b
 NUM_TRAIN_EPOCHS=5 # default 3
 TRAIN_SIZE=7000
 EVAL_SIZE=100
+TIER_PATH=""
+TIER_MIN_SCORE=1
+TIER_MAX_SCORE=7
 MAX_COMPLETION_LENGTH=1024
 # EVAL_STEPS=1
 EVAL_STEPS=5000 # disable it for now
@@ -54,7 +57,7 @@ IS_ADAPTIVE_K=False
 RETRIEVAL_THRESHOLD=0.6
 REWARD_FUNC="em_size"
 PHASE1_REWARD_TYPE="binary"
-PHASE1_PROMPT_TYPE="context_only"
+PHASE1_PROMPT_TYPE="sft"
 PHASE1_DB_WEIGHT_MODE="count_dynamic"  # none | fixed[_<w>] | dynamic | count | count_dynamic
 
 # Parse command line arguments
@@ -98,6 +101,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --train_size)
             TRAIN_SIZE="$2"
+            shift 2
+            ;;
+        --tier_path)
+            TIER_PATH="$2"
+            shift 2
+            ;;
+        --tier_min_score)
+            TIER_MIN_SCORE="$2"
+            shift 2
+            ;;
+        --tier_max_score)
+            TIER_MAX_SCORE="$2"
             shift 2
             ;;
         --debug)
@@ -327,6 +342,9 @@ accelerate launch \
   --phase1_reward_type=${PHASE1_REWARD_TYPE} \
   --phase1_prompt_type=${PHASE1_PROMPT_TYPE} \
   --num_db_rollouts=${NUM_DB_ROLLOUTS} \
-  --phase1_db_weight_mode=${PHASE1_DB_WEIGHT_MODE}
+  --phase1_db_weight_mode=${PHASE1_DB_WEIGHT_MODE} \
+  --tier_min_score=${TIER_MIN_SCORE} \
+  --tier_max_score=${TIER_MAX_SCORE} \
+  ${TIER_PATH:+--tier_path=${TIER_PATH}}
 
 echo "Training completed!"
