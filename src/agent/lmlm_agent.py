@@ -2,11 +2,13 @@ import json
 from agent.agent_class import Agent, AgentStep
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from multi_lmlm.database.database_manager import DatabaseManager
+from multi_lmlm.database.database_manager import DatabaseManager, build_databases_from_triplets_batch
 from transformers import LogitsProcessor
 from multi_lmlm.constants import DB_END_TOKEN, ANSWER_START_TOKEN, DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, ANSWER_END_TOKEN
 import os
 from vllm import LLM, SamplingParams
+from trainer.lmlm_basetrainer import LMLMGRPOTrainer
+from trl.trainer import GRPOConfig
 
 
 def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
@@ -32,24 +34,63 @@ class LogitBiasProcessor(LogitsProcessor):
         return scores
 
 class LMLMAgent(Agent):
-    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6, adaptive : bool = False, top_k : int = 4, return_triplets : bool = False, use_inverses : bool = False, **kwargs ):
+    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = None, similarity_threshold = 0.6, adaptive : bool = False, top_k : int = 4, return_triplets : bool = False, use_inverses : bool = False, phase_1: bool = False, batch_size: int = 32, **kwargs ):
         self.model_path = model_path
         self.database_path = database_path
         self.top_k = top_k
-        metadata_file = os.path.join(os.path.dirname(database_path), "metadata.json")
-        if os.path.exists(metadata_file):
-            with open(metadata_file, 'r') as f:
-                self.metadata = json.load(f)
+        self.phase_1 = phase_1
+        self.return_triplets = return_triplets
+        self.use_inverses = use_inverses
+        self.adaptive = adaptive
+        self.batch_size = batch_size
+
+        # Validate inputs
+        if not self.phase_1 and self.database_path is None:
+            raise ValueError("database_path must be provided when phase_1=False")
+
+        # Initialize trainer for phase_1 mode
+        self.trainer = None
+        if self.phase_1:
+            print(f"Initializing trainer for phase_1 mode with batch_size={batch_size}...")
+            tok = AutoTokenizer.from_pretrained(model_path)
+            grpo_config = GRPOConfig(
+                vllm_mode='colocate',
+                vllm_gpu_memory_utilization=0.8,
+                temperature=1.3,  # Match GRPO training (was 1.0)
+                top_p=0.95,       # Match GRPO training (was 1.0)
+                top_k=4,          # Match GRPO training (was 0) - forces diversity
+                num_generations=batch_size,
+                steps_per_generation=1,
+                per_device_train_batch_size=batch_size,
+            )
+            self.trainer = LMLMGRPOTrainer(
+                model=model_path,
+                processing_class=tok,
+                reward_funcs=[],
+                two_phase=True,
+                lmlm_database_path=None,
+                args=grpo_config,
+            )
+            print("Trainer initialized for phase_1 mode")
+
+        # Load database (skip if phase_1 since we'll build dynamically)
+        if not self.phase_1:
+            metadata_file = os.path.join(os.path.dirname(database_path), "metadata.json")
+            if os.path.exists(metadata_file):
+                with open(metadata_file, 'r') as f:
+                    self.metadata = json.load(f)
+            else:
+                self.metadata = None
         else:
             self.metadata = None
 
         if use_inverses:
             print("USING INVERSES WOOHOO")
 
-        self.return_triplets = return_triplets
-
         self.db = DatabaseManager()
-        self.db.load_database(database_path, adaptive= adaptive, use_inverses = use_inverses, top_k = self.top_k)
+        if not self.phase_1:
+            self.db.load_database(database_path, adaptive=adaptive, use_inverses=use_inverses, top_k=self.top_k)
+
         self.device ="cuda" if torch.cuda.is_available() else "cpu"
         self.tok = AutoTokenizer.from_pretrained(model_path)
 
@@ -96,7 +137,7 @@ class LMLMAgent(Agent):
         return [self.create_prompt_from_query(query) for query in queries]
 
 
-    def run(self, queries: list[str], indices: list[int] | None = None, max_tokens=256, temperature=0.0):
+    def run(self, queries: list[str], indices: list[int] | None = None, max_tokens=256, temperature=0.0, golden_contexts: list[list[str]] | None = None):
         """
         Run batch inference using vLLM with database lookups.
 
@@ -105,10 +146,42 @@ class LMLMAgent(Agent):
             indices: List of indices corresponding to each query (for metadata lookup)
             max_tokens: Maximum tokens to generate per turn before hitting a stop token
             temperature: Sampling temperature (0.0 = greedy)
+            golden_contexts: List of golden contexts per query (for phase_1 mode)
 
         Returns:
             List of (answer, trace) tuples, one per query
         """
+        # Build per-question databases from golden contexts if phase_1 mode is enabled
+        per_question_dbs = None
+        print("golden contexts is None: ", golden_contexts is None)
+        if self.phase_1 and golden_contexts is not None:
+            # print(f"Building {len(golden_contexts)} per-question databases from golden contexts...")
+            # print("\n\n\n\ngolden contexts is : ", golden_contexts)
+            # print("queries is : ", queries , "\n\n\n")
+
+            # Generate triplets for the entire batch (returns list of lists, one per question)
+            triplets_per_question = self.trainer._generate_two_phase(
+                qa_prompts=queries,
+                contexts=golden_contexts,
+                fast_build_db=True,
+                return_per_question_dbs=True
+            )
+            print("Triplets per questions is :", triplets_per_question)
+            total_triplets = sum(len(t) for t in triplets_per_question)
+            print(f"Generated {total_triplets} total triplets across {len(triplets_per_question)} questions")
+            if len(triplets_per_question) > 0:
+                print(f"  First question: {len(triplets_per_question[0])} triplets")
+
+            # Build databases using batch utility (efficient embedding computation)
+            per_question_dbs = build_databases_from_triplets_batch(
+                triplets_per_question,
+                top_k=self.top_k,
+                default_threshold=self.similarity_threshold,
+                adaptive=self.adaptive,
+                use_inverses=self.use_inverses,
+            )
+            print(f"Built {len(per_question_dbs)} per-question databases")
+
         # Create initial prompts for all queries
         prompts = self.create_prompt_from_query_batch(queries)
 
@@ -202,12 +275,20 @@ class LMLMAgent(Agent):
                         split = prompts[i].rsplit(DB_START_TOKEN)
                         db_query = split[-1]
                         lookup_log["query"] = db_query
-                        return_values = self.db.retrieve_from_database(
+
+                        # Use per-question database if in phase_1 mode, otherwise use shared db
+                        db_to_use = per_question_dbs[i] if per_question_dbs else self.db
+
+                        # print("\n\nquery is ", DB_START_TOKEN + db_query)
+                        # print("db triplets is :", db_to_use.database["triplets"])
+
+                        return_values = db_to_use.retrieve_from_database(
                             DB_START_TOKEN + db_query,
                             self.similarity_threshold,
                             return_triplets=self.return_triplets,
                             top_k=self.top_k
                         )
+                        # print("returneed values is :", return_values)
                         lookup_log["returned_count"] = len(return_values)
                         lookup_log["success"] = len(return_values) > 0
                         return_value = ", ".join(return_values)
@@ -228,11 +309,142 @@ class LMLMAgent(Agent):
         return answers, traces
 
 if __name__ == '__main__':
-    #testing script
-    agent = LMLMAgent(model_path = "/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48_th0.8-grpo-g8-bs16-s8-b0.0-ep5-n8000/checkpoint-1000", database_path="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json", use_inverses = True, return_triplets = True)
-    for i in range(5):
-        results = agent.run(["Walter Piston studied composition with"], 0)
-        print("results :\n\n" , results)
+    import argparse
+    from datetime import datetime
+    from eval.metrics import exact_match_score, f1_score
+
+    parser = argparse.ArgumentParser(description='Run two-phase evaluation from JSON file')
+    parser.add_argument('--input-file', type=str, required=True, help='Path to input JSON file')
+    parser.add_argument('--output-file', type=str, default=None, help='Path to output JSON file')
+    parser.add_argument('--model-path', type=str, required=True, help='Path to model checkpoint')
+    parser.add_argument('--batch-size', type=int, default=16, help='Batch size for inference')
+    parser.add_argument('--top-k', type=int, default=4, help='Top-k for database retrieval')
+    parser.add_argument('--threshold', type=float, default=0.6, help='Similarity threshold for retrieval')
+    parser.add_argument('--use-inverses', action='store_true', help='Use inverse relationships in database')
+    args = parser.parse_args()
+
+    # Load input data
+    print(f"Loading data from {args.input_file}...")
+    with open(args.input_file, 'r') as f:
+        data = json.load(f)
+
+    print(f"Loaded {len(data)} examples")
+
+    # Extract phase1 and phase2 prompts
+    phase1_prompts = [item['phase1_prompt'] for item in data]
+    phase2_prompts = [item['phase2_prompt'] for item in data]
+    gold_answers = [item['answer'] for item in data]
+
+    # Phase 1: Extract triplets
+    print(f"\n{'='*80}")
+    print(f"Phase 1: Extracting triplets")
+    print(f"{'='*80}\n")
+
+    agent_phase1 = LMLMAgent(
+        model_path=args.model_path,
+        database_path=None,
+        phase_1=True,
+        batch_size=args.batch_size,
+        top_k=args.top_k,
+        return_triplets=False,
+        use_inverses=args.use_inverses
+    )
+
+    triplet_outputs, _ = agent_phase1.run(phase1_prompts)
+    print(f"Extracted triplets for {len(triplet_outputs)} examples")
+
+    # Build databases from triplets
+    print(f"\n{'='*80}")
+    print(f"Building databases from triplets")
+    print(f"{'='*80}\n")
+
+    databases = []
+    for i, triplet_output in enumerate(triplet_outputs):
+        db = DatabaseManager(use_inverses=args.use_inverses)
+        db.add_triplets_from_text(triplet_output)
+        databases.append(db)
+        if (i + 1) % 100 == 0:
+            print(f"Built {i + 1}/{len(triplet_outputs)} databases")
+
+    # Phase 2: Answer questions
+    print(f"\n{'='*80}")
+    print(f"Phase 2: Answering questions")
+    print(f"{'='*80}\n")
+
+    agent_phase2 = LMLMAgent(
+        model_path=args.model_path,
+        database_path=None,
+        phase_1=False,
+        batch_size=args.batch_size,
+        top_k=args.top_k,
+        similarity_threshold=args.threshold,
+        return_triplets=False,
+        use_inverses=args.use_inverses
+    )
+
+    predictions, traces = agent_phase2.run(phase2_prompts, per_question_dbs=databases)
+
+    # Calculate scores
+    print(f"\n{'='*80}")
+    print(f"Calculating scores")
+    print(f"{'='*80}\n")
+
+    exact_matches = []
+    f1_scores = []
+    results = []
+
+    for i, (pred, gold, trace) in enumerate(zip(predictions, gold_answers, traces)):
+        em = exact_match_score(pred, gold)
+        f1, precision, recall = f1_score(pred, gold)
+
+        exact_matches.append(em)
+        f1_scores.append(f1)
+
+        results.append({
+            'index': i,
+            'phase1_prompt': phase1_prompts[i],
+            'phase2_prompt': phase2_prompts[i],
+            'triplets_extracted': triplet_outputs[i],
+            'prediction': pred,
+            'gold_answer': gold,
+            'exact_match': em,
+            'f1': f1,
+            'precision': precision,
+            'recall': recall,
+            'trace': [{'prompt': step.prompt, 'answer': step.answer, 'action': step.action} for step in trace]
+        })
+
+    avg_em = sum(exact_matches) / len(exact_matches) * 100
+    avg_f1 = sum(f1_scores) / len(f1_scores) * 100
+
+    print(f"Exact Match: {avg_em:.2f}%")
+    print(f"F1 Score: {avg_f1:.2f}%")
+
+    # Save results
+    if args.output_file is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        args.output_file = f"two_phase_results_{timestamp}.json"
+
+    output_data = {
+        'metadata': {
+            'model_path': args.model_path,
+            'input_file': args.input_file,
+            'batch_size': args.batch_size,
+            'top_k': args.top_k,
+            'threshold': args.threshold,
+            'use_inverses': args.use_inverses,
+            'total_examples': len(data),
+            'exact_match': avg_em,
+            'f1_score': avg_f1
+        },
+        'results': results
+    }
+
+    print(f"\nSaving results to {args.output_file}...")
+    with open(args.output_file, 'w') as f:
+        json.dump(output_data, f, indent=2)
+
+    print(f"Done!")
     
 
 

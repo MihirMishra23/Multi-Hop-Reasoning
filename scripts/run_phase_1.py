@@ -5,6 +5,7 @@ from data import get_dataset
 from trainer.lmlm_basetrainer import LMLMGRPOTrainer
 from trl.trainer import GRPOConfig
 import json
+import os
 from datetime import datetime
 
 @dataclass
@@ -35,6 +36,15 @@ class ScriptArguments:
         default="",
         metadata={"help": "Output file path (default: auto-generated with timestamp)"}
     )
+    limit : int = field(
+        default=1000,
+        metadata={"help": "how many examples to run over"}
+    )
+    sub_split : str = field(default = None, metadata={"help": "Which (custom) subsplit from trainset to load from. Ask Ryan or Linxi for details, or read code in hoptotqa.py"})
+    questions_file: str = field(
+        default=None,
+        metadata={"help": "Path to JSON file containing questions (bypasses normal dataset loading)"}
+    )
 
 def main():
     # Parse arguments
@@ -44,18 +54,31 @@ def main():
     # Initialize accelerate state for logging
     PartialState()
 
-    print(f"Loading dataset: {script_args.dataset}")
-    print(f"  Split: {script_args.split}")
-    print(f"  Limit: {script_args.nb_examples}")
-    print(f"  Seed: {script_args.seed}")
+    if script_args.questions_file:
+        print(f"Loading questions from file: {script_args.questions_file}")
+        from datasets import Dataset as HFDataset
+        with open(script_args.questions_file, 'r', encoding='utf-8') as f:
+            questions_data = json.load(f)
+        ds = HFDataset.from_list(questions_data)
+        print(f"Loaded {len(ds)} questions from {script_args.questions_file}")
+    else:
+        print(f"Loading dataset: {script_args.dataset}")
+        print(f"  Split: {script_args.split}")
+        print(f"  Limit: {script_args.nb_examples}")
+        print(f"  Seed: {script_args.seed}")
+        print(f" sub split :", script_args.sub_split)
 
-    ds = get_dataset(
-        name=script_args.dataset,
-        setting="distractor",
-        split=script_args.split,
-        seed=script_args.seed,
-        limit=script_args.nb_examples
-    )
+        ds = get_dataset(
+            name=script_args.dataset,
+            setting="distractor",
+            split=script_args.split,
+            seed=script_args.seed,
+            limit=script_args.limit,
+            sub_split=script_args.sub_split,
+        )
+
+    print("First element is : ", ds[0])
+    print("elemnt at last index is is :", ds[-1])
 
     print(f"Loading model from: {script_args.model_path}")
     tok = AutoTokenizer.from_pretrained(script_args.model_path)
@@ -65,6 +88,10 @@ def main():
         temperature=1.0,  # Neutral temperature for consistent generation
         top_p=1.0,        # No nucleus filtering
         top_k=0,          # No top-k filtering
+        num_generations=script_args.batch_size,
+        steps_per_generation=1,
+        per_device_train_batch_size = script_args.batch_size,
+        
     )
 
     print("Initializing trainer...")
@@ -74,7 +101,8 @@ def main():
         reward_funcs=[],
         two_phase=True,
         lmlm_database_path=None,
-        args=args,
+        args=args
+,
     )
 
     # Collect all results
@@ -140,6 +168,7 @@ def main():
 
     # Save combined results
     print(f"Saving {len(all_triplets)} results to {script_args.output_file}")
+    os.makedirs(os.path.dirname(script_args.output_file), exist_ok=True)
     with open(script_args.output_file, 'w') as f:
         json.dump(lmlm_database, f, indent=2)
 

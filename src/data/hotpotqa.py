@@ -412,8 +412,6 @@ def load_hotpotqa(
         if sub_split == "eval":
             assert limit  <= MAGIC_VAL_MAX_SIZE
             ds = ds.select(range(n - limit, n))
-
-        ds = ds.select(range(min(limit, len(ds))))
         
     if limit is not None:
         ds = ds.select(range(min(limit, len(ds))))

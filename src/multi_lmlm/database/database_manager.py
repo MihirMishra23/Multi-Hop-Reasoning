@@ -77,6 +77,12 @@ def build_databases_from_triplets_batch(triplets_batch: list[list[tuple[str, str
     device = "cuda" if torch.cuda.is_available() else "cpu"
     embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device=device)
 
+    for i in range(len(triplets_batch)):
+        if use_inverses:
+            triplets_batch[i].extend([(t[2], t[1], t[0]) for t in triplets_batch[i]])
+        triplets_batch[i] = list(set(triplets_batch[i]))
+
+
     # Flatten all triplets and compute embeddings at once
     combined_triplets = [t for triplet_list in triplets_batch for t in triplet_list]
 
@@ -118,6 +124,7 @@ def build_databases_from_triplets_batch(triplets_batch: list[list[tuple[str, str
         start_idx = end_idx
 
     logger.info(f"Built {len(database_managers)} databases from batch")
+    print("The first 10 triplets of the first one is :", database_managers[0].database["triplets"][:10])
     return database_managers
 
 
@@ -245,9 +252,9 @@ class DatabaseManager:
         triplets = [triplets[i] for i in unique_indices]
         embeddings = embeddings[unique_indices]
 
-        self.database["entities"] = [t[0] for t in triplets]
-        self.database["relationships"] = [t[1] for t in triplets]
-        self.database["return_values"] = [t[2] for t in triplets]
+        self.database["entities"] = set([t[0] for t in triplets])
+        self.database["relationships"] = set([t[1] for t in triplets])
+        self.database["return_values"] = set([t[2] for t in triplets])
         self.database["triplets"] = triplets
 
         # Initialize TopkRetriever with precomputed embeddings

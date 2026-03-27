@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --mail-user=ryan.noonan@outlook.com
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --job-name=eval-lz-script
+#SBATCH --job-name=concat-sft
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=256G
-#SBATCH -p jjs533
+#SBATCH --constraint='gpu-mid|gpu-high'
 #SBATCH --time=10:00:00
 #SBATCH --output=logs/%j.out
 #SBATCH --error=logs/%j.err
@@ -19,7 +19,8 @@ mkdir -p logs
 
 # Activate conda env from /scratch (faster than shared conda)
 eval "$(conda shell.bash hook)"
-conda activate /scratch/rtn27/multi-hop-reasoning
+#conda activate /scratch/rtn27/multi-hop-reasoning
+conda activate multi-hop-reasoning
 
 echo "Starting Eval..."
 
@@ -46,7 +47,7 @@ MODEL_PATH_LST=(
     # Debug
     # Qwen3-1.7B-SFT_mquake-cf-debug_ep5_bsz48_th1.0
     # Qwen3-1.7B-SFT_mquake-real-debug_ep5_bsz48_th1.0
-    
+
     # Ablation: base model version
     # Qwen2.5-3B-SFT_ep5_bsz48_th-1
 
@@ -81,7 +82,7 @@ MODEL_PATH_LST=(
     # SFT
     Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k
     # Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
-    
+
     # full run
     # Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed-grpo-B1-K4-M4-bs16-s8-b0.0-ep5-n7000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
 
@@ -101,10 +102,10 @@ MODEL_PATH_LST=(
     # # new full run
     # huge performance drop
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N8-K4-B64-M2-b0.0-step500-n7000-f1-2ph-prcontext_only-wcount_dynamic-th0.6-topk4-nak
-    
+
     # the best one
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-2ph-prcontext_only-wcount-th0.6-topk4-nak
-    
+#    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-2ph-prcontext_only-wcount-th0.6-topk4-nak
+
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-em-2ph-prcontext_only-wcount-th0.6-topk4-nak
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs1024-N32-K4-B32-M7-b0.0-step500-n7000-em-2ph-prcontext_only-wcount-th0.6-topk4-nak
 
@@ -117,20 +118,22 @@ MODEL_PATH_LST=(
 TWO_PHASE_METHOD="two_phase"
 
 DATASET_LST=(
-    hotpotqa
-    # musique
-    # 2wiki
+    #hotpotqa
+    #musique
+    2wiki
     # mquake
 )
 SPLIT_lst=(
-    train_val1k
+    # train_val1k
     dev
-    train_train1k
+    #train_train1k
 )
-SAVE_VERSION="march-24"
-NUM_SAMPLES=1000
+SAVE_VERSION="in-car-to-sf"
+NUM_SAMPLES=64
 # USE_TRAIN_PARAMS=""
 USE_TRAIN_PARAMS="--use-train-params"
+CONCAT_ALL_DB=""
+CONCAT_ALL_DB="--concat-all-db"  # Build unified DB from all examples (comment out for per-example DBs)
 
 
 # -----------------------
@@ -165,7 +168,7 @@ for SPLIT in "${SPLIT_lst[@]}"; do
         MODEL_PATH="${MODEL_ROOT}/${MODEL_DIR}/${CKPT}"
 
         for DATASET in "${DATASET_LST[@]}"; do
-            echo "========== Evaluating ${MODEL_PATH} on ${DATASET} =========="
+            echo "========== Evaluating ${MODEL_PATH} on ${DATASET} ==========="
             bash /home/rtn27/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
                 --model_path "${MODEL_PATH}" \
                 --dataset "${DATASET}" \
@@ -173,7 +176,8 @@ for SPLIT in "${SPLIT_lst[@]}"; do
                 --num_samples ${NUM_SAMPLES} \
                 --save_version "${SAVE_VERSION}" \
                 --method "${TWO_PHASE_METHOD}" \
-                ${USE_TRAIN_PARAMS}
+                ${USE_TRAIN_PARAMS} \
+                ${CONCAT_ALL_DB}
             done
         done
     done

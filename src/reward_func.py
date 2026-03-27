@@ -13,11 +13,13 @@ def extract_answer_from_tags(text: str):
 
 def em_accuracy(completions, solution, **kwargs):
     """Calculate exact match accuracy for completions."""
+    print(f"[em_accuracy] len(completions)={len(completions)}, len(solution)={len(solution)}")
     results = []
     for c, s in zip(completions, solution):
         extracted = extract_answer_from_tags(c)
         # Return None if answer extraction failed (empty string)
         if extracted == "" and THINKING_START_TOKEN not in c:
+            print("Completion getting nothing: ", c)
             results.append(None)
         else:
             results.append(1 if exact_match_score(extracted, s) else 0)
@@ -28,6 +30,7 @@ def db_size_threshold(completions, **kwargs):
     """Reward function that checks if triplet to context character ratio is above 0.017."""
     rewards = []
     contexts = kwargs.get("contexts", [])
+    print(f"[db_size_threshold] len(completions)={len(completions)}, len(contexts)={len(contexts)}")
     for i, comp in enumerate(completions):
         try:
             triplets = comp.split("\n")
@@ -83,6 +86,7 @@ def db_coverage_reward(completions, solution, **kwargs):
     """Phase-1 reward: 1 if the gold answer is graph-reachable from the question
     via the parsed triplets (reverse BFS), 0 if not, None for Phase-2 completions."""
     questions = kwargs.get("question", [])
+    print(f"[db_coverage_reward] len(completions)={len(completions)}, len(solution)={len(solution)}, len(questions)={len(questions)}")
     results = []
     for i, comp in enumerate(completions):
         try:

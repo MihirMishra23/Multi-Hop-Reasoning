@@ -16,6 +16,7 @@ The JSON format uses deduplicated metadata at the top level:
 }
 """
 
+from datasets import Dataset as HFDataset
 import argparse
 import json
 import os
@@ -170,6 +171,7 @@ def process_single_batch(
     # Collect queries and info for batch
     queries = []
     examples_metadata = []
+    golden_contexts_batch = []
 
     for ex in ds:
         qid = ex.get("id") or ex.get("_id")
@@ -331,7 +333,11 @@ def save_results_to_file(
             "phase1_prompt_type": args.phase1_prompt_type,
             "top_k": args.top_k,
             "similarity_threshold": args.similarity_threshold,
+            "concat_all_db": args.concat_all_db,
         }
+        # Add unified DB stats if available
+        if args.concat_all_db and hasattr(args, '_unified_db_stats'):
+            output["metadata"]["two_phase_params"]["unified_db_stats"] = args._unified_db_stats
     # Add retrieval metadata for RAG
     if args.method == "rag":
         output["metadata"]["retrieval"] = {
@@ -362,6 +368,12 @@ def main() -> None:
         default="dev",
         choices=["train", "dev", "validation", "test"],
         help="Dataset split",
+    )
+    parser.add_argument(
+        "--sub-split",
+        default=None,
+        type=str,
+        help="Optional subsplit of the split (e.g., 'train' or 'eval' for train_val1k). See hotpotqa.py for details.",
     )
     parser.add_argument(
         "--method",
@@ -460,6 +472,12 @@ def main() -> None:
         action="store_true"
     )
     parser.add_argument(
+        "--phase-1",
+        default=False,
+        help="Build database dynamically from golden contexts before each batch",
+        action="store_true"
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Resume from existing results file, skipping already processed examples.",
@@ -482,6 +500,15 @@ def main() -> None:
             "For two_phase: read temperature, top_p, top_k, repetition_penalty, "
             "max_completion_length, and vllm_max_model_length from the checkpoint's "
             "training_args.json instead of CLI defaults."
+        ),
+    )
+    parser.add_argument(
+        "--concat-all-db",
+        action="store_true",
+        help=(
+            "For two_phase: build ONE unified database from ALL examples' golden contexts "
+            "and use it for all queries (instead of per-example databases). "
+            "Default: False (each question gets its own database)."
         ),
     )
     args = parser.parse_args()
@@ -605,23 +632,42 @@ def main() -> None:
 
     print("split is :", args.split)
 
-    # Load full dataset once (with seed for deterministic shuffling)
-    full_dataset = get_dataset(name = args.dataset, setting = args.setting, split =  args.split, seed=args.seed)
-    total_dataset_size = len(full_dataset)
+    if args.sub_split is not None:
+        # Sub_split mode: let hotpotqa.py handle indexing via sub_split + limit
+        full_dataset = get_dataset(
+            name=args.dataset,
+            setting=args.setting,
+            split=args.split,
+            seed=args.seed,
+            sub_split=args.sub_split,
+            limit=args.total_count  # Required when sub_split is set
+        )
+        total_dataset_size = len(full_dataset)
+        args.start_index = 0  # Sub_split already selected the right subset
+        examples_to_process = total_dataset_size
+        end_index = total_dataset_size
+        logger.info(f"Using sub_split={args.sub_split}, loaded {total_dataset_size} examples")
+    else:
+        # Standard mode: load full dataset, then slice using start_index
+        full_dataset = get_dataset(
+            name=args.dataset,
+            setting=args.setting,
+            split=args.split,
+            seed=args.seed
+        )
+        total_dataset_size = len(full_dataset)
 
-    # Validate start_index
-    if args.start_index >= total_dataset_size:
-        logger.warning(f"Start index {args.start_index} is at or beyond dataset size {total_dataset_size}")
-        return
+        # Validate start_index
+        if args.start_index >= total_dataset_size:
+            logger.warning(f"Start index {args.start_index} is at or beyond dataset size {total_dataset_size}")
+            return
 
-    # Calculate how many examples to process (total_count is NUMBER of examples from start_index)
-    examples_to_process = min(args.total_count, total_dataset_size - args.start_index)
+        # Calculate how many examples to process (total_count is NUMBER of examples from start_index)
+        examples_to_process = min(args.total_count, total_dataset_size - args.start_index)
 
-    # TODO: how to make the training and eval use the same split function (e.g. create_train_val_splits)?
-    # Calculate the exclusive end index
-    end_index = args.start_index + examples_to_process
-
-    logger.info(f"Dataset size: {total_dataset_size}, Processing {examples_to_process} examples from index {args.start_index} to {end_index}")
+        # Calculate the exclusive end index
+        end_index = args.start_index + examples_to_process
+        logger.info(f"Dataset size: {total_dataset_size}, Processing {examples_to_process} examples from index {args.start_index} to {end_index}")
 
     # Prepare output location
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
@@ -629,7 +675,8 @@ def main() -> None:
         model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
         output_dir = os.path.join(base_output_dir, args.method, args.dataset, model_name)
         use_inv_str = "_inv" if args.use_inverses else ""
-        save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}.json"
+        concat_db_str = "_concat" if args.concat_all_db else ""
+        save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}{concat_db_str}.json"
         save_path = os.path.join(output_dir, f"generations{args.save_version}", f"eval_{save_postfix}")
         save_results_path = os.path.join(output_dir, f"results{args.save_version}", f"results_{save_postfix}")
     else:
@@ -714,11 +761,57 @@ def main() -> None:
         "top_k": args.top_k,
         "similarity_threshold": args.similarity_threshold,
         "phase1_prompt_type": args.phase1_prompt_type,
+        "concat_all_db": args.concat_all_db,
     }
     agent_kwargs.update(_extra_agent_kwargs)
 
     # Get agent instance using factory function
     agent: Agent = get_agent(method=args.method, agent_kwargs=agent_kwargs)
+
+    # Pre-build unified database if concat_all_db is enabled
+    if args.method == "two_phase" and args.concat_all_db:
+        # Only use the subset of examples we're actually processing
+        subset_dataset = full_dataset.select(range(args.start_index, end_index))
+        logger.info("Building unified database from %d examples (indices %d-%d)...",
+                   len(subset_dataset), args.start_index, end_index)
+        all_dataset_queries = [ex["question"] for ex in subset_dataset]
+        all_dataset_contexts = [
+            ex.get("golden_contexts") or ex.get("contexts") or []
+            for ex in subset_dataset
+        ]
+        agent.build_unified_db_from_dataset(all_dataset_queries, all_dataset_contexts)
+        logger.info(
+            "Unified database built: %d total triplets from %d examples",
+            agent._unified_db_stats["total_triplets"],
+            agent._unified_db_stats["num_examples"],
+        )
+        # Store stats in args for metadata saving
+        args._unified_db_stats = agent._unified_db_stats
+
+        # Save unified database to JSON
+        unified_db_path = os.path.join(output_dir, f"unified_db{args.save_version}", f"unified_db_{args.dataset}_{args.split}_n{examples_to_process}_i{args.start_index}.json")
+        os.makedirs(os.path.dirname(unified_db_path), exist_ok=True)
+
+        # Extract all triplets for saving
+        all_triplets_for_save = []
+        for info in agent._phase1_info:
+            all_triplets_for_save.extend(info['triplets'])
+
+        unified_db_data = {
+            "metadata": {
+                "num_examples": agent._unified_db_stats["num_examples"],
+                "total_triplets": agent._unified_db_stats["total_triplets"],
+                "start_index": args.start_index,
+                "end_index": end_index,
+                "dataset": args.dataset,
+                "split": args.split,
+            },
+            "triplets": [{"head": t[0], "relation": t[1], "tail": t[2]} for t in all_triplets_for_save],
+        }
+
+        with open(unified_db_path, 'w') as f:
+            json.dump(unified_db_data, f, indent=2)
+        logger.info(f"Unified database saved to: {unified_db_path}")
 
     # Process batches with progress tracking
     # Start with existing results if resuming
