@@ -58,8 +58,8 @@ MODEL_SIZE=8B
 export CUDA_VISIBLE_DEVICES=0
 NUM_GPUS=1
 
-NUM_TRAIN_EPOCHS=3 #change to 5
 NUM_TRAIN_EPOCHS=5 #change to 5
+NUM_TRAIN_EPOCHS=3 #change to 5
 
 if [ "${MODEL_SIZE}" = "1.7B" ]; then
     MODEL_NAME_OR_PATH="Qwen/Qwen3-1.7B"
@@ -70,14 +70,14 @@ if [ "${MODEL_SIZE}" = "1.7B" ]; then
 
 elif [ "${MODEL_SIZE}" = "4B" ]; then
     MODEL_NAME_OR_PATH="Qwen/Qwen3-4B"
-    PER_DEVICE_TRAIN_BATCH_SIZE=4
-    GRADIENT_ACCUMULATION_STEPS=12   # change to 4
+    PER_DEVICE_TRAIN_BATCH_SIZE=2
+    GRADIENT_ACCUMULATION_STEPS=24   # change to 4
     MAX_SEQ_LENGTH=8096
 
 elif [ "${MODEL_SIZE}" = "8B" ]; then
     MODEL_NAME_OR_PATH="Qwen/Qwen3-8B"
-    PER_DEVICE_TRAIN_BATCH_SIZE=4
-    GRADIENT_ACCUMULATION_STEPS=12   # change to 4
+    PER_DEVICE_TRAIN_BATCH_SIZE=1
+    GRADIENT_ACCUMULATION_STEPS=48   # change to 4
     MAX_SEQ_LENGTH=8096
 
 elif [ "${MODEL_SIZE}" = "3B" ]; then
@@ -158,7 +158,7 @@ if [ "${TWO_PHASE}" = "true" ]; then
     fi
 fi
 
-epxport WANDB_NAME=$WANDB_NAME
+export WANDB_NAME=$WANDB_NAME
 
 
 
@@ -166,6 +166,7 @@ OUTPUT_DIR="${OUTPUT_ROOT}${WANDB_NAME}"
 
 echo "Running for $DATASET_PATH"
 echo "Output directory: $OUTPUT_DIR"
+echo "Per device train batch size $PER_DEVICE_TRAIN_BATCH_SIZE"
 
 
 accelerate launch \

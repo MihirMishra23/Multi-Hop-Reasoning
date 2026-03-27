@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --mail-user=ryan.noonan@outlook.com
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --job-name=concat-eval
+#SBATCH --job-name=concat-sft
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
@@ -80,7 +80,7 @@ MODEL_PATH_LST=(
 
     # New 2 phase models
     # SFT
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k
     # Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
 
     # full run
@@ -104,7 +104,7 @@ MODEL_PATH_LST=(
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N8-K4-B64-M2-b0.0-step500-n7000-f1-2ph-prcontext_only-wcount_dynamic-th0.6-topk4-nak
 
     # the best one
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-2ph-prcontext_only-wcount-th0.6-topk4-nak
+#    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-2ph-prcontext_only-wcount-th0.6-topk4-nak
 
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-em-2ph-prcontext_only-wcount-th0.6-topk4-nak
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs1024-N32-K4-B32-M7-b0.0-step500-n7000-em-2ph-prcontext_only-wcount-th0.6-topk4-nak
@@ -128,7 +128,7 @@ SPLIT_lst=(
     dev
     #train_train1k
 )
-SAVE_VERSION="march-25-small-batch-test"
+SAVE_VERSION="in-car-to-sf"
 NUM_SAMPLES=64
 # USE_TRAIN_PARAMS=""
 USE_TRAIN_PARAMS="--use-train-params"

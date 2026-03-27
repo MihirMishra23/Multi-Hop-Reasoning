@@ -184,6 +184,7 @@ else
     RETURN_TRIPLETS=""
 fi
 
+DATABASE_PATH="none"
 
 for METHOD in "${METHODS[@]}"; do
     echo "Running method: ${METHOD}"

@@ -204,7 +204,7 @@ class TwoPhaseAgent(Agent):
         if self._phase1_prompt_type == "with_question":
             phase1_prompts = [
                 self._phase1_prompt_template.format(
-                    context="\n\n".join(ctx)
+                    context="\n\n".join(ctx), question=q
                 )
                 for ctx, q in zip(contexts, queries)
             ]

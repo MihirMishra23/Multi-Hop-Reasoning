@@ -1,26 +1,25 @@
 #!/bin/bash
+#SBATCH --mail-user=ryan.noonan@outlook.com
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --job-name=eval-lz-script
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --gres=gpu:1
+#SBATCH --mem=256G
+#SBATCH -p jjs533
+#SBATCH --time=10:00:00
+#SBATCH --output=logs/%j.out
+#SBATCH --error=logs/%j.err
 
+set -euo pipefail
 
-# SLURM Directives
-#SBATCH -J lmlm_eval                            # Job name
-#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multi_hop/lmlm_eval_%j.out   # Standard output file
-#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multi_hop/lmlm_eval_%j.err   # Standard error file
-#SBATCH -N 1                                    # Number of nodes
-#SBATCH -n 1                                    # Number of tasks (or cores)
-#SBATCH --get-user-env                          # Retrieve the user's login environment
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=64G                              # Memory requested (2GB per node)
-#SBATCH -t infinite                              # Time limit (2 hours)
-#SBATCH --partition=aimi,kilian,jjs533,default_partition          # Request partition
-#SBATCH --gres=gpu:nvidia_rtx_a6000:1                 # Request 1 NVIDIA A6000 GPU nvidia_rtx_a6000
+cd "${SLURM_SUBMIT_DIR}"
+mkdir -p logs
 
-
-# Load the required environmentt
-source activate mem
-
-# Navigate to the working directory
-cd /home/lz586/icl/Multi-Hop-Reasoning/
-
+# Activate conda env from /scratch (faster than shared conda)
+eval "$(conda shell.bash hook)"
+conda activate /scratch/rtn27/multi-hop-reasoning
 
 echo "Starting Eval..."
 
@@ -119,15 +118,16 @@ TWO_PHASE_METHOD="two_phase"
 
 DATASET_LST=(
     hotpotqa
-    musique
-    2wiki
+    # musique
+    # 2wiki
     # mquake
 )
 SPLIT_lst=(
     train_val1k
     dev
+    train_train1k
 )
-SAVE_VERSION="_0325"
+SAVE_VERSION="march-24"
 NUM_SAMPLES=1000
 # USE_TRAIN_PARAMS=""
 USE_TRAIN_PARAMS="--use-train-params"
@@ -166,7 +166,7 @@ for SPLIT in "${SPLIT_lst[@]}"; do
 
         for DATASET in "${DATASET_LST[@]}"; do
             echo "========== Evaluating ${MODEL_PATH} on ${DATASET} =========="
-            bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
+            bash /home/rtn27/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
                 --model_path "${MODEL_PATH}" \
                 --dataset "${DATASET}" \
                 --split "${SPLIT}" \
