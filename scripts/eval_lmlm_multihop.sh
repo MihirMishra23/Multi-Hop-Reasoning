@@ -1,7 +1,7 @@
 #
 # Setup instructions — eval_lmlm_multihop.sh
 #
-# Methods supported: direct, icl, rag, lmlm
+# Methods supported: direct, icl, cot, rag, lmlm
 #
 # Prereqs:
 # - Activate your environment and install repo deps:
@@ -35,7 +35,7 @@ NUM_SAMPLES=1000
 SAVE_VERSION="put-anything-here" #use this to add info to save path
 TOP_K=4
 METHODS=("lmlm")
-# METHODS=("direct" "icl" "rag" "lmlm")
+# METHODS=("direct" "icl" "cot" "rag" "lmlm")
 # uncomment above to eval on all methods
 SIMILARITY_THRESHOLD=0.6
 
@@ -150,8 +150,9 @@ if [ "${NUM_SAMPLES}" -gt "${DEFAULT_NUM_SAMPLES}" ]; then
 fi
 
 MAX_TOKENS=1024
-BATCH_SIZE_DIRECT=32
-BATCH_SIZE_ICL=1
+BATCH_SIZE_DIRECT=64
+BATCH_SIZE_ICL=64
+BATCH_SIZE_COT=64
 BATCH_SIZE_RAG=1
 BATCH_SIZE_LMLM=64
 OUTPUT_DIR=./output

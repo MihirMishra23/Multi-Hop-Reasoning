@@ -191,10 +191,10 @@ def process_single_batch(
 
     logger.info(f"Processing batch of {len(queries)} queries")
 
-    if args.method in ("rag", "icl"):
+    if args.method in ("rag", "icl", "cot"):
         agent.reset(contexts)  # type: ignore
 
-    if args.method == "direct":
+    if args.method in ("direct", "cot"):
         answers = []
         traces = []
         for query in queries:
@@ -366,7 +366,7 @@ def main() -> None:
     parser.add_argument(
         "--method",
         default="icl",
-        choices=["db", "rag", "icl", "lmlm", "direct", "two_phase"],
+        choices=["db", "rag", "icl", "cot", "lmlm", "direct", "two_phase"],
         help="Agent method label (for output path)",
     )
     parser.add_argument(

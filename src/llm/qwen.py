@@ -12,6 +12,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # Model name mapping to HuggingFace model IDs
 MODEL_MAP = {
     "qwen3-1.7b": "Qwen/Qwen3-1.7B",
+    "qwen3-4b": "Qwen/Qwen3-4B",
 }
 
 

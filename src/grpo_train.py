@@ -3,10 +3,10 @@ from typing import List, Optional
 from datasets import load_dataset
 from trainer.lmlm_basetrainer import LMLMGRPOTrainer, parse_triplets
 # from trainer.lmlm_grpotrainer import LMLMGRPOTrainer
-from transformers import AutoTokenizer, HfArgumentParser
+from transformers import AutoTokenizer, AutoModelForCausalLM, HfArgumentParser
 from eval.metrics import exact_match_score
 from trl.trainer.grpo_config import GRPOConfig
-from reward_func import em_accuracy, f1_reward, db_coverage_reward, db_size_threshold
+from reward_func import em_accuracy, f1_reward, db_coverage_reward, db_size_threshold, format_reward_zero_rl
 import json
 import wandb
 import os
@@ -101,6 +101,12 @@ class LMLMArguments:
         default=False,
         metadata={"help": "Wrap prompts in the model's chat template before generation (needed for instruct/base models in zero-RL)"}
     )
+    vanilla_grpo: bool = field(
+        default=False,
+        metadata={"help": "Vanilla GRPO: treat (db_g, qa_g) as one trajectory with r_db=r_qa. "
+                  "Requires two_phase=True. Auto-sets num_db_rollouts=num_generations (K=G, M=1). "
+                  "All tokens in trajectory g share a single advantage A_g normalized within the question group."}
+    )
 
 
 def process_example(example):
@@ -153,6 +159,32 @@ def main():
     # Load tokenizer
     print(f"Loading tokenizer from: {script_args.model_path}")
     tokenizer = AutoTokenizer.from_pretrained(script_args.model_path)
+
+    # formatted_zero_rl_v6 uses DB special tokens as single vocabulary entries.
+    # Starting from a base model these tokens are absent, so we must register them,
+    # resize the embedding table, and save the result to disk BEFORE the trainer
+    # initialises colocated vLLM.  vLLM fixes org_vocab_size from the on-disk
+    # config at startup; if the training model has a larger embedding the
+    # _move_model_to_vllm weight-sync will fail with an assertion error.
+    if lmlm_args.phase1_prompt_type == "formatted_zero_rl_v6":
+        from multi_lmlm.constants import DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, DB_END_TOKEN
+        _db_tokens = [DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, DB_END_TOKEN]
+        _to_add = [t for t in _db_tokens if t not in tokenizer.get_vocab()]
+        if _to_add:
+            print(f"formatted_zero_rl_v6: registering {len(_to_add)} DB special tokens "
+                  f"and pre-saving resized model so vLLM sees the correct vocab size...")
+            tokenizer.add_special_tokens({"additional_special_tokens": _to_add})
+            _presave_path = os.path.join(grpo_config.output_dir, "init_with_db_tokens")
+            os.makedirs(_presave_path, exist_ok=True)
+            _tmp_model = AutoModelForCausalLM.from_pretrained(
+                script_args.model_path, torch_dtype="auto"
+            )
+            _tmp_model.resize_token_embeddings(len(tokenizer))
+            _tmp_model.save_pretrained(_presave_path)
+            tokenizer.save_pretrained(_presave_path)
+            del _tmp_model
+            script_args.model_path = _presave_path
+            print(f"  Saved to {_presave_path} (new vocab size: {len(tokenizer)})")
     
     
     print(f"GRPO Config:")
@@ -181,6 +213,8 @@ def main():
             reward_funcs.append(db_coverage_reward)
         if "size" in lmlm_args.reward_func:
             reward_funcs.append(db_size_threshold)
+        if "format" in lmlm_args.reward_func:
+            reward_funcs.append(format_reward_zero_rl)
     else:
         reward_funcs = [em_accuracy]
 
@@ -206,6 +240,7 @@ def main():
         phase1_db_weight_mode=lmlm_args.phase1_db_weight_mode,
         retrieval_top_k = lmlm_args.retrieval_top_k,
         use_chat_template=lmlm_args.use_chat_template,
+        vanilla_grpo=lmlm_args.vanilla_grpo,
     )
     
     # Start training

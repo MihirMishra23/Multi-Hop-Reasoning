@@ -158,7 +158,7 @@ fi
 METHOD=lmlm
 MAX_TOKENS=1024
 BATCH_SIZE=32
-OUTPUT_DIR=./output
+OUTPUT_DIR=/share/j_sun/lmlm_multihop/output_tier
 SETTING=distractor
 SEED="${SEED:-42}"
 

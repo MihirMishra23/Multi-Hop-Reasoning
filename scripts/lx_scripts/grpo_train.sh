@@ -72,6 +72,7 @@ PHASE1_REWARD_TYPE="binary"
 PHASE1_PROMPT_TYPE="sft"
 PHASE1_DB_WEIGHT_MODE="count"  # none | fixed[_<w>] | dynamic | count | count_dynamic
 USE_CHAT_TEMPLATE=False
+VANILLA_GRPO=""               # set to 1 via --vanilla_grpo to enable vanilla GRPO mode
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -98,6 +99,7 @@ while [[ $# -gt 0 ]]; do
         --phase1_db_weight_mode) PHASE1_DB_WEIGHT_MODE="$2";  shift 2 ;;
         --use_chat_template)     USE_CHAT_TEMPLATE=True;      shift 1 ;;
         --two_phase)             TWO_PHASE=1;                 shift 1 ;;
+        --vanilla_grpo)          VANILLA_GRPO=1;              shift 1 ;;
         --debug)                 DEBUG=1;                     shift 1 ;;
         *)
             echo "Unknown argument: $1"
@@ -107,23 +109,24 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── GPU-type presets ──────────────────────────────────────────────────────────
+NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
 if [ "$GPU_TYPE" == "B200" ]; then
     if [[ "${MODEL_PATH}" == *"1.7B"* ]]; then
-        NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
+        # NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
         PER_DEVICE_TRAIN_BATCH_SIZE=16
         LEARNING_RATE=5e-6
         VLLM_GPU_MEMORY_UTILIZATION=0.4
     elif [[ "${MODEL_PATH}" == *"4B"* ]]; then
-        NUM_GPUS=2
+        # NUM_GPUS=2
         LEARNING_RATE=5e-6
-        PER_DEVICE_TRAIN_BATCH_SIZE=16
-        VLLM_GPU_MEMORY_UTILIZATION=0.4
+        PER_DEVICE_TRAIN_BATCH_SIZE=8
+        VLLM_GPU_MEMORY_UTILIZATION=0.15
     elif [[ "${MODEL_PATH}" == *"8B"* ]]; then
-        NUM_GPUS=2
+        # NUM_GPUS=2
         PER_DEVICE_TRAIN_BATCH_SIZE=2
-        VLLM_GPU_MEMORY_UTILIZATION=0.25
+        VLLM_GPU_MEMORY_UTILIZATION=0.2
     elif [[ "${MODEL_PATH}" == *"382M"* ]]; then
-        NUM_GPUS=1
+        # NUM_GPUS=1
         PER_DEVICE_TRAIN_BATCH_SIZE=256
         VLLM_GPU_MEMORY_UTILIZATION=0.15
     else
@@ -131,7 +134,8 @@ if [ "$GPU_TYPE" == "B200" ]; then
         exit 1
     fi
 elif [ "$GPU_TYPE" == "H100" ]; then
-    NUM_GPUS=2
+    # NUM_GPUS=2
+    NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
     PER_DEVICE_TRAIN_BATCH_SIZE=8
     VLLM_GPU_MEMORY_UTILIZATION=0.15
 fi
@@ -155,15 +159,8 @@ if [ "$((GRADIENT_ACCUMULATION_STEPS * PER_DEVICE_TRAIN_BATCH_SIZE * NUM_GPUS))"
 fi
 echo "  GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS} (= ${TOTAL_BATCH_SIZE} / (${PER_DEVICE_TRAIN_BATCH_SIZE} * ${NUM_GPUS}))"
 
-# TODO (multi-GPU): In two_phase mode, gather(rewards_per_func) produces ordering
-# [GPU0_phase1+phase2, GPU1_phase1+phase2, ...] but advantage computation in
-# lmlm_basetrainer.py assumes [all_phase1 (B*K), all_phase2 (B*N)], causing wrong
-# Phase-1/Phase-2 grouping when NUM_GPUS > 1.
-# Fix: reorder gathered tensor before the advantage split, or gather phases separately.
-if [ -n "${TWO_PHASE}" ] && [ "${NUM_GPUS}" -gt 1 ]; then
-    echo "WARNING: two_phase mode with NUM_GPUS=${NUM_GPUS} > 1 is not yet supported." >&2
-    echo "         Advantage computation will be incorrect. See TODO in grpo_train.sh and lmlm_basetrainer.py." >&2
-fi
+# Multi-GPU two_phase mode: gather() ordering is fixed in lmlm_basetrainer.py
+# (rewards are reordered from [GPU0_p1+p2, GPU1_p1+p2, ...] to [all_p1, all_p2]).
 
 # ── Output directory ──────────────────────────────────────────────────────────
 # Format: {model}-{loss}-tbs{total_batch}-N{num_gen}-K{db_rollouts}-B{questions/batch}-M{qa_per_db}-b{beta}-step{max_steps}-n{train_size}-{reward}[-2ph[-rw{reward_type}]-pr{prompt_type}-w{weight_mode}]-th{threshold}-topk{top_k}[-nak][-debug]
@@ -174,16 +171,13 @@ if [ -n "${TWO_PHASE}" ]; then
     OUTPUT_DIR="${OUTPUT_DIR}-2ph"
     [ "${PHASE1_REWARD_TYPE}" != "binary" ] && OUTPUT_DIR="${OUTPUT_DIR}-rw${PHASE1_REWARD_TYPE}"
     OUTPUT_DIR="${OUTPUT_DIR}-pr${PHASE1_PROMPT_TYPE}-w${PHASE1_DB_WEIGHT_MODE}"
+    [ -n "${VANILLA_GRPO}" ] && OUTPUT_DIR="${OUTPUT_DIR}-vanilla"
     TWO_PHASE="--two_phase"
 else
     TWO_PHASE=""
 fi
 OUTPUT_DIR="${OUTPUT_DIR}-th${RETRIEVAL_THRESHOLD}-topk${TOP_K}"
 [ -n "${DEBUG}" ] && OUTPUT_DIR="${OUTPUT_DIR}-debug"
-
-# ── Resume from checkpoint ────────────────────────────────────────────────────
-LAST_CKPT=$(ls -d "${OUTPUT_DIR}"/checkpoint-* 2>/dev/null | sort -V | tail -n 1)
-RESUME_FROM_CHECKPOINT=${LAST_CKPT:+"--resume_from_checkpoint=${LAST_CKPT}"}
 
 # ── Flag resolution ───────────────────────────────────────────────────────────
 # Return triples: enabled when model path encodes threshold -3 (suffix _th-3)
@@ -198,6 +192,10 @@ else
 fi
 
 [ "${USE_INVERSES}" = "True" ] && INVERSES_FLAG="--use-inverses" || INVERSES_FLAG=""
+
+# ── Resume from checkpoint ────────────────────────────────────────────────────
+LAST_CKPT=$(ls -d "${OUTPUT_DIR}"/checkpoint-* 2>/dev/null | sort -V | tail -n 1)
+RESUME_FROM_CHECKPOINT=${LAST_CKPT:+"--resume_from_checkpoint=${LAST_CKPT}"}
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo "Starting GRPO training:"
@@ -260,7 +258,8 @@ accelerate launch \
   --phase1_prompt_type=${PHASE1_PROMPT_TYPE} \
   --num_db_rollouts=${NUM_DB_ROLLOUTS} \
   --phase1_db_weight_mode=${PHASE1_DB_WEIGHT_MODE} \
-  $([ "${USE_CHAT_TEMPLATE}" = "True" ] && echo "--use_chat_template")
+  $([ "${USE_CHAT_TEMPLATE}" = "True" ] && echo "--use_chat_template") \
+  $([ -n "${VANILLA_GRPO}" ] && echo "--vanilla_grpo")
 
 echo "Training completed!"
 
