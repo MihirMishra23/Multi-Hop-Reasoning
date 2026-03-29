@@ -633,6 +633,9 @@ class LMLMGRPOTrainer(BaseTrainer):
         self._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
         self._total_train_tokens = 0
         self._current_train_step_time = 0.0
+        # current_gradient_accumulation_steps is set by transformers.Trainer only inside the
+        # training loop; initialize here so eval (prediction_step → _compute_loss) can use it.
+        self.current_gradient_accumulation_steps = args.gradient_accumulation_steps
         self.log_completions = args.log_completions
         self.log_unique_prompts = args.log_unique_prompts
         self.num_completions_to_print = args.num_completions_to_print
@@ -1538,8 +1541,8 @@ class LMLMGRPOTrainer(BaseTrainer):
                 ## NOTE: p = prompt + query1 + value1, c = query1 + value1, cids = query1, logprobs = query1 + value1
                 prompt_completion_tools[idx] += result
                 completions[idx_with_tool] += result
-                value_ids = self.processing_class(result, add_special_tokens=False)["input_ids"]
-                completion_ids[idx_with_tool] += value_ids
+                value_ids = list(self.processing_class(result, add_special_tokens=False)["input_ids"])
+                completion_ids[idx_with_tool] = list(completion_ids[idx_with_tool]) + value_ids
                 tool_mask[idx_with_tool] += [0] * len(value_ids)  # DB-injected tokens: not trainable
                 if logprobs is not None:
                     logprobs[idx_with_tool] += [0.0] * len(value_ids)
@@ -2335,9 +2338,13 @@ class LMLMGRPOTrainer(BaseTrainer):
                 r_b_k_m_format = r_b_k_m # DEBUG
                 r_db_b_k = (r_b_k_m_format * rollout_util_b_k_m).view(B, K, M).mean(dim=2).view(B * K)  # (B*K,)
             else:
-                db_cov_b_k = rewards[:B*K, 1].nan_to_num(0.0)   # (B*K,) db quality scores from reward func
                 r_b_k_mean = r_b_k_m.view(B, K, M).mean(dim=2).view(B * K)  # (B*K,)
-                r_db_b_k = r_b_k_mean * weights[0] + db_cov_b_k * weights[1]  # (B*K,) additive
+                if rewards.shape[1] > 1:
+                    db_cov_b_k = rewards[:B*K, 1].nan_to_num(0.0)   # (B*K,) db quality scores from reward func
+                    r_db_b_k = r_b_k_mean * weights[0] + db_cov_b_k * weights[1]  # (B*K,) additive
+                else:
+                    # Only 1 reward function — no separate db coverage score; use QA mean directly
+                    r_db_b_k = r_b_k_mean
 
             if K == 1:
                 # K=1: batch-level normalization across B questions (original behavior)
@@ -2480,7 +2487,10 @@ class LMLMGRPOTrainer(BaseTrainer):
                     .view(B, K, M).mean(dim=2).view(B * K).tolist()
                 )  # (B*K,)
             else:
-                db_threshold_rewards_list = rewards_per_func[:BK, 1].tolist()  # (B*K,)
+                db_threshold_rewards_list = (
+                    rewards_per_func[:BK, 1].tolist() if rewards_per_func.shape[1] > 1
+                    else [0.0] * BK
+                )  # (B*K,)
 
             phase1_prompts = all_prompts[:BK]
             phase2_prompts = all_prompts[BK:]

@@ -5,18 +5,19 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
 # DATABASE_PATH="/share/j_sun/lmlm_multihop/database/mquake-remastered/mquake_remastered_cf6334_database.json"
 DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_6k_start_golden_context.json"
+DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json"
 METADATA_PATH="/home/rtn27/Multi-Hop-Reasoning/src/database_creation/gemini/output_train_42_6000_date_12-10/metadata.json"
 MODEL="gemini-2.5-flash"
-MAX_GENERATIONS=6                  # max bn db lookups
+MAX_GENERATIONS=20                  # max bn db lookups
 START_IDX=0                        # Starting index for dataset
-NB_EXAMPLES=6000 #Change back to 5334 ??
+NB_EXAMPLES=1000 #Change back to 5334 ??
 MAX_CONCURRENT=200      # Maximum concurrent requests
 HOTPOT_SETTING="distractor"        # distractor or fullwiki
-SPLIT="train"            # train, validation, test
+SPLIT="dev"            # train, validation, test
 SEED=42
 #PROMPT_NAME="default" # Prompt name from lmlm_agent.json
 
-DB_TOP_K=1                       # maximum number of results to retrieve
+DB_TOP_K=4                      # maximum number of results to retrieve
 DB_THRESHOLD=0.6                   # threshold for database retrieval
 ADAPTIVE_K=false                   # Only retrieve the first elements before the largest jump in cosine similarity in the first k+1 retrieved.
 RETURN_TRIPLETS=false
@@ -50,8 +51,8 @@ fi
 if [ "${DATASET}" = "mquake-remastered" ]; then
   PROMPT_NAME="triplets_in_prompt_with_plan"
 elif [ "${DATASET}" = "hotpotqa" ]; then
-  PROMPT_NAME="default"
   PROMPT_NAME="all_relationships" #propmts the agent to issue <|db_all_relationships|>
+  PROMPT_NAME="default"
 else
   echo "Dataset ${DATASET} not supported, please use 'mquake-remastered' or 'hotpotqa' "
   exit 1

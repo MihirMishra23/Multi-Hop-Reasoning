@@ -40,7 +40,50 @@ from data import get_dataset
 from data.hotpotqa import load_hotpotqa_rag_corpus
 from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
 
+def split_into_parts(items: list, num_parts: int) -> list[list]:
+    """Split a list into num_parts parts where max and min lengths differ by at most 1."""
+    if num_parts <= 0:
+        raise ValueError("num_parts must be positive")
+    if num_parts >= len(items):
+        # Return each item as its own part (or empty parts if num_parts > len)
+        return [[item] for item in items] + [[] for _ in range(num_parts - len(items))]
+
+    base_size = len(items) // num_parts
+    remainder = len(items) % num_parts
+
+    parts = []
+    start = 0
+    for i in range(num_parts):
+        part_size = base_size + (1 if i < remainder else 0)
+        parts.append(items[start:start + part_size])
+        start += part_size
+
+    return parts
+
 DEFAULT_FULLWIKI_CORPUS_PATH = "/share/j_sun/lmlm_multihop/datasets/hotpot_dev_fullwiki_v1.json"
+
+
+def _load_training_config(model_path: str) -> dict:
+    cfg = {}
+    for fname in ("training_args.json", "trainer_state.json"):
+        p = os.path.join(model_path, fname)
+        if os.path.exists(p):
+            with open(p) as f:
+                cfg.update(json.load(f))
+    return cfg
+
+
+# Sampling params used during GRPO training (grpo_train.sh).
+# Applied to TwoPhaseAgent when --use-train-params is set.
+# max_model_len is set higher than training (4096) to handle multi-turn context growth in eval.
+TRAINING_SAMPLING_PARAMS: dict = {
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "vllm_top_k": 4,
+    "repetition_penalty": 1.0,
+    "max_completion_length": 1024,
+    "max_model_len": 8192,
+}
 
 
 
@@ -153,6 +196,21 @@ def process_single_batch(
         question = ex["question"]
         contexts = ex.get("contexts") or []
 
+        # Handle context selection for two_phase method
+        if args.method == "two_phase":
+            if args.use_contexts == "golden":
+                # two_phase was trained on golden_contexts (2 supporting paragraphs), not all 10
+                # distractor paragraphs; use golden_contexts to match training conditions.
+                print("using golden context!!")
+                contexts = ex.get("golden_contexts")
+            elif args.use_contexts == "all":
+                # Use all contexts and split into parts
+                # TODO: Check if 5 parts is appropriate for musique, hotpot, and 2wiki dataset sizes
+                original_len = len(contexts)
+                contexts = split_into_parts(contexts, num_parts=5)
+                if len(queries) == 0:  # Log only for first example
+                    logger.info(f"Split {original_len} contexts into {len(contexts)} parts for first example")
+
         queries.append(question)
         examples_metadata.append({
             "qid": qid,
@@ -180,6 +238,14 @@ def process_single_batch(
             )
             answers.append(answer_list[0] if answer_list else None)
             traces.append(trace_list[0] if trace_list else None)
+    elif args.method == "two_phase":
+        contexts_list = [meta["contexts"] for meta in examples_metadata]
+        answers, traces = agent.run(
+            queries,
+            contexts=contexts_list,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+        )
     else:
         answers, traces = agent.run(
             queries,
@@ -231,6 +297,13 @@ def process_single_batch(
             lookup_logs = getattr(agent, "_lookup_logs", [])
             if idx < len(lookup_logs):
                 results[str(metadata["qid"])]["lookup_logs"] = lookup_logs[idx]
+        if args.method == "two_phase":
+            lookup_logs = getattr(agent, "_lookup_logs", [])
+            if idx < len(lookup_logs):
+                results[str(metadata["qid"])]["lookup_logs"] = lookup_logs[idx]
+            phase1_info = getattr(agent, "_phase1_info", [])
+            if idx < len(phase1_info):
+                results[str(metadata["qid"])]["phase1"] = phase1_info[idx]
         if args.method == "rag":
             results[str(qid)]["retrieval"] = _compute_retrieval_stats(
                 evidence_docs=evidence_docs,
@@ -261,10 +334,13 @@ def save_results_to_file(
     logger = logging.getLogger("run_agent")
 
     # Build final output with metadata
+    # Use unified_db_path if it was created, otherwise use args.database_path
+    database_path_value = getattr(args, 'unified_db_path', None) or args.database_path
+
     output = {
         "metadata": {
             "model-path": args.model_path,
-            "database-path": args.database_path,
+            "database-path": database_path_value,
             "model": args.model,
             "dataset": args.dataset,
             "setting": args.setting,
@@ -276,11 +352,22 @@ def save_results_to_file(
         },
         "inference_params": {
             "seed": args.seed,
-            "temperature": args.temperature,
-            "max_tokens": args.max_tokens,
+            **getattr(args, "_effective_sampling", {
+                "temperature": args.temperature,
+                "max_tokens": args.max_tokens,
+            }),
         },
         "results": all_results,
     }
+    # Add two_phase-specific params
+    if args.method == "two_phase":
+        output["metadata"]["two_phase_params"] = {
+            "phase1_prompt_type": args.phase1_prompt_type,
+            "top_k": args.top_k,
+            "similarity_threshold": args.similarity_threshold,
+            "concat_all_db": args.concat_all_db,
+            "use_contexts": args.use_contexts,
+        }
     # Add retrieval metadata for RAG
     if args.method == "rag":
         output["metadata"]["retrieval"] = {
@@ -315,8 +402,25 @@ def main() -> None:
     parser.add_argument(
         "--method",
         default="icl",
-        choices=["db", "rag", "icl", "lmlm", "direct"],
+        choices=["db", "rag", "icl", "lmlm", "direct", "two_phase"],
         help="Agent method label (for output path)",
+    )
+    parser.add_argument(
+        "--phase1-prompt-type",
+        default="sft",
+        choices=["sft", "with_question"],
+        help="Phase 1 prompt template for two_phase method",
+    )
+    parser.add_argument(
+        "--use-contexts",
+        default="golden",
+        choices=["golden", "all"],
+        help="Use golden contexts or all contexts (two_phase only). If 'all', contexts are split into parts.",
+    )
+    parser.add_argument(
+        "--concat-all-db",
+        action="store_true",
+        help="Build a single unified database from all examples (two_phase only)",
     )
     parser.add_argument("--model-path", default=None, help="Local model path")
     parser.add_argument(
@@ -367,9 +471,12 @@ def main() -> None:
         ),
     )
 
+    parser.add_argument("--max-model-len", type=int, default=8192,
+                        help="vLLM max model length for two_phase (default 8192 > training 4096 to handle multi-turn context growth)")
+
     parser.add_argument("--model", default=None, help="LLM model name")
-    parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
-    parser.add_argument("--max-tokens", type=int, default=256, help="Max output tokens")
+    parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature (two_phase greedy default; overridden by --use-train-params)")
+    parser.add_argument("--max-tokens", type=int, default=1024, help="Max completion tokens (two_phase greedy default; overridden by --use-train-params)")
     parser.add_argument(
         "--max-steps", type=int, default=5, help="Max reasoning steps for the Agent"
     )
@@ -415,7 +522,23 @@ def main() -> None:
         action="store_true",
         help="Evaluate the predictions",
     )
+    parser.add_argument(
+        "--use-train-params",
+        action="store_true",
+        help=(
+            "For two_phase: read temperature, top_p, top_k, repetition_penalty, "
+            "max_completion_length, and vllm_max_model_length from the checkpoint's "
+            "training_args.json instead of CLI defaults."
+        ),
+    )
     args = parser.parse_args()
+
+    # Validate use-contexts flag
+    if args.use_contexts == "all" and args.method != "two_phase":
+        raise ValueError("--use-contexts=all is only supported for --method=two_phase")
+
+    if args.concat_all_db and args.method != "two_phase":
+        raise ValueError("--concat-all-db is only supported for --method=two_phase")
 
     # Logging
     logging.basicConfig(
@@ -423,6 +546,47 @@ def main() -> None:
         format="%(asctime)s %(levelname)s [run_agent] %(message)s",
     )
     logger = logging.getLogger("run_agent")
+
+    # For two_phase: resolve sampling params.
+    # --use-train-params → use TRAINING_SAMPLING_PARAMS (grpo_train.sh values).
+    # default           → greedy eval (T=0, top_p=1, top_k=-1).
+    _extra_agent_kwargs: dict = {}
+    if args.method == "two_phase":
+        if args.use_train_params:
+            _extra_agent_kwargs = dict(TRAINING_SAMPLING_PARAMS)
+            logger.info(
+                "[two_phase] using training sampling params: T=%.3f  top_p=%.3f  vllm_top_k=%d  "
+                "rep_penalty=%.3f  max_tokens=%d  max_model_len=%d",
+                _extra_agent_kwargs["temperature"], _extra_agent_kwargs["top_p"],
+                _extra_agent_kwargs["vllm_top_k"], _extra_agent_kwargs["repetition_penalty"],
+                _extra_agent_kwargs["max_completion_length"], _extra_agent_kwargs["max_model_len"],
+            )
+        else:
+            _extra_agent_kwargs = {
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "vllm_top_k": -1,
+                "repetition_penalty": 1.0,
+                "max_completion_length": args.max_tokens,
+                "max_model_len": args.max_model_len,
+            }
+            logger.info(
+                "[two_phase] using greedy eval params: T=0.0  top_p=1.0  vllm_top_k=-1  "
+                "max_tokens=%d  max_model_len=%d",
+                _extra_agent_kwargs["max_completion_length"], _extra_agent_kwargs["max_model_len"],
+            )
+        # Sync args.temperature / args.max_tokens so agent.run() call also uses these values
+        args.temperature = _extra_agent_kwargs["temperature"]
+        args.max_tokens  = _extra_agent_kwargs["max_completion_length"]
+
+    # Store effective sampling params on args for metadata saving
+    args._effective_sampling = {
+        "temperature": args.temperature,
+        "max_tokens": args.max_tokens,
+        **({k: _extra_agent_kwargs[k] for k in ("top_p", "vllm_top_k", "repetition_penalty", "max_model_len")}
+           if args.method == "two_phase" else {}),
+        "use_train_params": getattr(args, "use_train_params", False),
+    }
 
     if (
         args.method == "rag"
@@ -515,7 +679,7 @@ def main() -> None:
 
     # Prepare output location
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
-    if args.method == 'lmlm':
+    if args.method in ('lmlm', 'two_phase'):
         model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
         output_dir = os.path.join(base_output_dir, args.method, args.dataset, model_name)
         use_inv_str = "_inv" if args.use_inverses else ""
@@ -584,7 +748,7 @@ def main() -> None:
     )
 
     llm = None
-    if args.method != "lmlm":
+    if args.method not in ("lmlm", "two_phase"):
         llm = get_llm(model_name=args.model)
 
 
@@ -603,10 +767,77 @@ def main() -> None:
         "use_inverses" : args.use_inverses,
         "top_k": args.top_k,
         "similarity_threshold": args.similarity_threshold,
+        "phase1_prompt_type": args.phase1_prompt_type,
+        "concat_all_db": args.concat_all_db if args.method == "two_phase" else False,
+        "contexts_are_split": args.use_contexts == "all" if args.method == "two_phase" else False,
     }
+    agent_kwargs.update(_extra_agent_kwargs)
 
     # Get agent instance using factory function
     agent: Agent = get_agent(method=args.method, agent_kwargs=agent_kwargs)
+
+    # Build unified database if concat_all_db is enabled (two_phase only)
+    unified_db_path = None
+    if args.concat_all_db and args.method == "two_phase":
+        logger.info("Building unified database from entire dataset...")
+        logger.info(f"use_contexts={args.use_contexts}, contexts_are_split={args.use_contexts == 'all'}")
+
+        # Prepare all queries and contexts from the full dataset
+        all_queries = []
+        all_contexts = []
+
+        for ex in full_dataset.select(range(args.start_index, end_index)):
+            all_queries.append(ex["question"])
+            contexts = ex["contexts"]
+
+            # Apply same context logic as in process_single_batch
+            if args.use_contexts == "golden":
+                contexts = ex["golden_contexts"]
+            elif args.use_contexts == "all":
+                # TODO: Check if 5 parts is appropriate for musique, hotpot, and 2wiki dataset sizes
+                contexts = split_into_parts(contexts, num_parts=5)
+
+            all_contexts.append(contexts)
+
+        logger.info(f"Prepared {len(all_queries)} queries for unified DB building")
+
+        # Build the unified database
+        agent.build_unified_db_from_dataset(all_queries, all_contexts)
+        logger.info("Unified database built successfully")
+
+        # Save the unified database to disk
+        unified_db_dir = os.path.join(output_dir, "unified_databases")
+        os.makedirs(unified_db_dir, exist_ok=True)
+
+        contexts_suffix = f"_{args.use_contexts}" if args.use_contexts != "golden" else ""
+        unified_db_filename = f"unified_db_{args.dataset}_{args.split}_n{examples_to_process}_i{args.start_index}{contexts_suffix}.json"
+        unified_db_path = os.path.join(unified_db_dir, unified_db_filename)
+
+        # Extract triplets from the unified database and save
+        phase1_info = getattr(agent, "_phase1_info", [])
+        all_triplets = []
+        for info in phase1_info:
+            all_triplets.extend(info.get('triplets', []))
+
+        unified_db_data = {
+            "metadata": {
+                "dataset": args.dataset,
+                "split": args.split,
+                "num_examples": len(all_queries),
+                "start_index": args.start_index,
+                "total_triplets": len(all_triplets),
+                "use_contexts": args.use_contexts,
+                "contexts_are_split": args.use_contexts == "all",
+            },
+            "triplets": [{"head": t[0], "relation": t[1], "tail": t[2]} for t in all_triplets]
+        }
+
+        with open(unified_db_path, "w", encoding="utf-8") as f:
+            json.dump(unified_db_data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Saved unified database to {unified_db_path}")
+        # Store the path for metadata
+        args.unified_db_path = unified_db_path
 
     # Process batches with progress tracking
     # Start with existing results if resuming

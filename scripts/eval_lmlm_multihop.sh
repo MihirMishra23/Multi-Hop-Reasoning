@@ -30,6 +30,9 @@ LLM_MODEL=gpt-4
 DATASET=hotpotqa
 SPLIT=dev
 USE_INVERSES="true" # or "--use-inverses"
+USE_TRAIN_PARAMS=""   # set to "--use-train-params" to use grpo_train.sh sampling params instead of greedy
+CONCAT_ALL_DB=""      # set to "--concat-all-db" to build unified database
+USE_CONTEXTS="golden" # options: "golden" | "all"
 NUM_SAMPLES=1000
 SAVE_VERSION="put-anything-here" #use this to add info to save path
 TOP_K=4
@@ -69,6 +72,18 @@ while [[ $# -gt 0 ]]; do
         --use-inverses)
             USE_INVERSES="--use-inverses"
             shift
+            ;;
+        --use-train-params)
+            USE_TRAIN_PARAMS="--use-train-params"
+            shift
+            ;;
+        --concat-all-db)
+            CONCAT_ALL_DB="--concat-all-db"
+            shift
+            ;;
+        --use-contexts)
+            USE_CONTEXTS="$2"
+            shift 2
             ;;
         --save_version)
             SAVE_VERSION="$2"
@@ -198,7 +213,31 @@ for METHOD in "${METHODS[@]}"; do
             ${USE_INVERSES} \
             --top-k ${TOP_K} \
             --similarity-threshold ${SIMILARITY_THRESHOLD} \
-            --eval 
+            --eval
+    elif [ "${METHOD}" = "two_phase" ]; then
+        echo "ignoring database path"
+        python src/eval_multihop.py \
+            --model-path ${MODEL_PATH} \
+            --method ${METHOD} \
+            --max-tokens ${MAX_TOKENS} \
+            --batch-size ${BATCH_SIZE_LMLM} \
+            --total-count ${NUM_SAMPLES} \
+            --output-dir ${OUTPUT_DIR}/ \
+            --save-version ${SAVE_VERSION} \
+            --split ${SPLIT} \
+            --setting ${SETTING} \
+            --dataset ${DATASET} \
+            --seed ${SEED} \
+            --save-every ${SAVE_EVERY} \
+            --start-index ${START_IDX} \
+            ${RETURN_TRIPLETS} \
+            ${USE_INVERSES} \
+            --top-k ${TOP_K} \
+            --similarity-threshold ${SIMILARITY_THRESHOLD} \
+            ${USE_TRAIN_PARAMS} \
+            ${CONCAT_ALL_DB} \
+            --use-contexts ${USE_CONTEXTS} \
+            --eval
     else
         if [ "${METHOD}" = "icl" ]; then
             BATCH_SIZE=${BATCH_SIZE_ICL}
