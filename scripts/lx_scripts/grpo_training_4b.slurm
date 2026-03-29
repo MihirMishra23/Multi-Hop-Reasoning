@@ -2,9 +2,9 @@
 
 
 # SLURM Directives
-#SBATCH -J grpo_4b                           # Job name
-#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_%j.out   # Standard output file
-#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_%j.err   # Standard error file
+#SBATCH -J grpo_4b_optimized                           # Job name
+#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_optimized_%j.out   # Standard output file
+#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_optimized_%j.err   # Standard error file
 #SBATCH -N 1                                    # Number of nodes
 #SBATCH -n 1                                    # Number of tasks (or cores)
 #SBATCH --get-user-env                          # Retrieve the user's login environment
@@ -14,6 +14,7 @@
 #SBATCH --partition=aimi,kilian,jjs533,default_partition          # Request partition
 #SBATCH --gres=gpu:nvidia_b200:2                # Request 1 NVIDIA A6000 GPU
 #SBATCH --requeue
+#SBATCH --nodelist=aimi-compute-01,aimi-compute-02,aimi-compute-03
 
 
 # Load the required environmentt
@@ -36,7 +37,7 @@ DATABASE_PATH=""  # TODO: set a valid database JSON path for single-phase mode
 THRESHOLD=-1
 
 # Defaults (overridden per dataset below)
-REWARD_FUNC="f1"
+REWARD_FUNC="em_size"
 TWO_PHASE=""
 DEBUG=""
 

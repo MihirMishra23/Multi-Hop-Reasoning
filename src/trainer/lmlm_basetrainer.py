@@ -713,7 +713,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         # In two-phase mode, Phase 1 generates K DBs per question and Phase 2 generates N QA rollouts.
         B = args.generation_batch_size
         N = args.num_generations
-        K = self.num_db_rollouts
+        K = N if self.vanilla_grpo else self.num_db_rollouts
         if self.two_phase:
             self._logs = {
                 "phase1_prompt": deque(maxlen=B * K),
@@ -2269,7 +2269,7 @@ class LMLMGRPOTrainer(BaseTrainer):
             contexts  = contexts[::N]   # B unique contexts
             questions = questions[::N]  # B unique questions
 
-            K = self.num_db_rollouts
+            K = N if self.vanilla_grpo else self.num_db_rollouts
             # Build inputs list matching B*K + B*N combined completions returned by _generate_two_phase:
             #   Phase 1: B*K inputs (K per question, same contexts — different DB rollouts)
             #   Phase 2: B*N inputs unchanged (one per rollout, for QA scoring)
@@ -3074,7 +3074,7 @@ class LMLMGRPOTrainer(BaseTrainer):
                 logging_backends.append(wandb)
 
             if self.two_phase:
-                K = self.num_db_rollouts
+                K = self.num_generations if self.vanilla_grpo else self.num_db_rollouts
                 N = self.num_generations
                 M = N // K
 
@@ -3114,21 +3114,30 @@ class LMLMGRPOTrainer(BaseTrainer):
                     if len(reward_vals) == num_phase1:
                         combined_table[reward_name] = reward_vals
 
-                for i in range(self.num_generations):
-                    col_len = len(self._logs[f"phase2_prompt_{i}"])
-                    if col_len == num_phase1:
-                        combined_table[f"phase2_prompt_{i}"] = list(self._logs[f"phase2_prompt_{i}"])
-                        combined_table[f"phase2_completion_{i}"] = list(self._logs[f"phase2_completion_{i}"])
-                        combined_table[f"phase2_advantage_{i}"] = list(self._logs[f"phase2_advantages_{i}"])
-                        if f"em_accuracy_{i}" in self._logs["rewards"]:
-                            combined_table[f"em_accuracy_{i}"] = list(self._logs["rewards"][f"em_accuracy_{i}"])
-
                 df_combined = pd.DataFrame(combined_table)
+
+                # Build phase2 table separately (phase2 has B*N rows vs phase1's B*K rows)
+                num_phase2 = len(self._logs["phase2_prompt_0"]) if "phase2_prompt_0" in self._logs else 0
+                phase2_table = None
+                if num_phase2 > 0:
+                    phase2_table = {"step": [str(self.state.global_step)] * num_phase2}
+                    for i in range(self.num_generations):
+                        key = f"phase2_prompt_{i}"
+                        if key in self._logs and len(self._logs[key]) == num_phase2:
+                            phase2_table[f"phase2_prompt_{i}"] = list(self._logs[f"phase2_prompt_{i}"])
+                            phase2_table[f"phase2_completion_{i}"] = list(self._logs[f"phase2_completion_{i}"])
+                            phase2_table[f"phase2_advantage_{i}"] = list(self._logs[f"phase2_advantages_{i}"])
+                            if f"em_accuracy_{i}" in self._logs["rewards"]:
+                                phase2_table[f"em_accuracy_{i}"] = list(self._logs["rewards"][f"em_accuracy_{i}"])
 
                 for logging_backend in logging_backends:
                     logging_backend.log({
                         "completions": logging_backend.Table(dataframe=df_combined),
                     })
+                    if phase2_table is not None:
+                        logging_backend.log({
+                            "completions_phase2": logging_backend.Table(dataframe=pd.DataFrame(phase2_table)),
+                        })
             else:
                 table = {
                     "step": [str(self.state.global_step)] * len(self._logs["prompt"]),

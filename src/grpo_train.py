@@ -216,7 +216,15 @@ def main():
         if "format" in lmlm_args.reward_func:
             reward_funcs.append(format_reward_zero_rl)
     else:
-        reward_funcs = [em_accuracy]
+        reward_funcs = []
+        if "em" in lmlm_args.reward_func:
+            reward_funcs.append(em_accuracy)
+        if "f1" in lmlm_args.reward_func:
+            reward_funcs.append(f1_reward)
+        if "format" in lmlm_args.reward_func:
+            reward_funcs.append(format_reward_zero_rl)
+        if not reward_funcs:
+            reward_funcs = [em_accuracy]
 
     # Initialize trainer
     print("Initializing LMLMGRPOTrainer...")

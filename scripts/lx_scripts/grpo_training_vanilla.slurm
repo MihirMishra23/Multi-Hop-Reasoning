@@ -89,6 +89,7 @@ bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/lx_scripts/grpo_train.sh \
 --phase1_prompt_type ${PHASE1_PROMPT_TYPE} \
 ${USE_CHAT_TEMPLATE} \
 ${TWO_PHASE} \
+${VANILLA_GRPO} \
 ${DEBUG}
 
 echo "GRPO Training complete!"

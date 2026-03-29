@@ -131,9 +131,6 @@ MODEL_PATH_LST=(
 
 # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-v2-2ph-prcontext_only-wcount-th0.6-topk4-nak
 
-    # full run Main
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
-    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
 
     # # Ablation: 
     # # early stopping
@@ -144,7 +141,41 @@ MODEL_PATH_LST=(
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
 
     # SFT
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k
     Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
+
+    # full run Main
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+
+
+    ##### Ablation: 
+    # 2phase em_size
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-em_size-2ph-prsft-wcount-th0.6-topk4-nak
+    
+    # 2phase lr=1e-6
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-2ph-prcontext_only-wcount-th0.6-topk4-nak
+
+    # 1 phase only other 2 variants
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-th0.6-topk4-nak
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-th0.6-topk4-nak
+    # 1 phase only final
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-th0.6-topk4-nak
+
+    # early sft
+    checkpoint-368-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+
+    # vanilla grpo
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-vanilla-th0.6-topk4-nak
+
+    # zero rl
+    Qwen3-4B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1_format-2ph-prformatted_zero_rl_v7-wcount-th0.6-topk4-nak
+    Qwen3-1.7B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1_format-2ph-prformatted_zero_rl_v5-wcount-th0.6-topk4-nak
+    Qwen3-1.7B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prformatted_zero_rl_v5-wcount-th0.6-topk4-nak
+
+
+
+
 )
 
 TWO_PHASE_METHOD="two_phase"

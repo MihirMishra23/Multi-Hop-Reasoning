@@ -10,7 +10,7 @@ import sys
 from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 
 from tqdm import tqdm
-from src.constants import REPO_ROOT
+from constants import REPO_ROOT
 
 SRC_ROOT = os.path.join(REPO_ROOT, "src")
 if SRC_ROOT not in sys.path:
