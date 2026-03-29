@@ -1,0 +1,27 @@
+=== Response metadata ===
+finish_reason: STOP
+token_count: cache_tokens_details=None cached_content_token_count=None candidates_token_count=317 candidates_tokens_details=None prompt_token_count=1749 prompt_tokens_details=[ModalityTokenCount(
+  modality=<MediaModality.TEXT: 'TEXT'>,
+  token_count=1749
+)] thoughts_token_count=3214 tool_use_prompt_token_count=None tool_use_prompt_tokens_details=None total_token_count=5280 traffic_type=None
+
+=== Raw text (1227 chars) ===
+{
+  "triplet_evaluations": [
+    {
+      "triplet_index": 0,
+      "triplet": "(Magik (film), is a type of, film)",
+      "reasoning": "The context clearly identifies 'Magik' as a film, making this triplet faithful but trivial.",
+      "faithfulness": "faithful",
+      "quality_issues": [
+        "trivial"
+      ]
+     pulsed light treatments reduce dark spots for men and women of all ages.",
+    "price": "$50 - $1500 (depending on the area being treated)",
+    "duration": "15-30 minutes per session",
+    "recovery": "No downtime, some redness or swelling may occur for a few hours",
+    "benefits": "Reduces dark spots, sun damage, hyperpigmentation, improves skin tone and texture",
+    "side_effects": "Temporary redness, swelling, bruising, crusting, or blistering",
+    "description": "Intense Pulsed Light (IPL) is a non-ablative treatment that uses broad-spectrum light to target and reduce the appearance of dark spots, sun damage, and hyperpigmentation. The light energy is absorbed by the melanin in the skin, causing the pigmented cells to break down and be naturally eliminated by the body. IPL treatments can be performed on various areas of the body, including the face, neck, chest, hands, and arms."
+  }
+]

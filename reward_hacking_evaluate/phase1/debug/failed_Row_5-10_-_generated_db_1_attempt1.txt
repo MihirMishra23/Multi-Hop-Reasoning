@@ -1,0 +1,60 @@
+=== Response metadata ===
+finish_reason: STOP
+token_count: cache_tokens_details=None cached_content_token_count=None candidates_token_count=538 candidates_tokens_details=None prompt_token_count=1130 prompt_tokens_details=[ModalityTokenCount(
+  modality=<MediaModality.TEXT: 'TEXT'>,
+  token_count=1130
+)] thoughts_token_count=1270 tool_use_prompt_token_count=None tool_use_prompt_tokens_details=None total_token_count=2938 traffic_type=None
+
+=== Raw text (1898 chars) ===
+{
+  "triplet_evaluations": [
+    {
+      "triplet_index": 0,
+      "triplet": "(Anacardium, type, genus of flowering plants)",
+      "reasoning": "The context states that Anacardium is a genus of flowering plants.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+     pulsed{
+      "triplet_index": 1,
+      "triplet": "(Anacardium, family, Anacardiaceae)",
+      "reasoning": "The context specifies that Anacardium belongs to the family Anacardiaceae.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 2,
+      "triplet": "(Anacardium, native to, tropical regions of the Americas)",
+      "reasoning": "The context explicitly states Anacardium is native to tropical regions of the Americas.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 3,
+      "triplet": "(Hypoestes, type, flowering plant genus)",
+      "reasoning": "The context states that Hypoestes is a flowering plant genus.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 4,
+      "triplet": "(Hypoestes, number of species, many dozens)",
+      "reasoning": "The context mentions that Hypoestes has many dozens of species.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 5,
+      "triplet": "(Hypoestes, distribution, tropical and subtropical lands around the Indian Ocean, and some adjacent regions)",
+      "reasoning": "The context directly states the distribution of Hypoestes.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 6,
+      "triplet": "(Hypoestes, distribution characteristic, widely distributed)",
+      "reasoning": "The context describes Hypoestes as being widely distributed.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    }
+  ]
+}

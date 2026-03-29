@@ -1,0 +1,117 @@
+=== Response metadata ===
+finish_reason: STOP
+token_count: cache_tokens_details=None cached_content_token_count=None candidates_token_count=1236 candidates_tokens_details=None prompt_token_count=1295 prompt_tokens_details=[ModalityTokenCount(
+  modality=<MediaModality.TEXT: 'TEXT'>,
+  token_count=1295
+)] thoughts_token_count=1882 tool_use_prompt_token_count=None tool_use_prompt_tokens_details=None total_token_count=4413 traffic_type=None
+
+=== Raw text (4430 chars) ===
+{
+  "triplet_evaluations": [
+    {
+      "triplet_index": 0,
+      "triplet": "(Adansi South District, contains, twenty-seven (27) districts)",
+      "reasoning": "The context states the Adansi South District is one of the twenty-seven districts, not that it contains twenty-seven districts.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    ,
+    {
+      "triplet_index": 1,
+      "triplet": "(Adansi South District, is located in, Ashanti Region)",
+      "reasoning": "The context explicitly states that the Adansi South District is in the Ashanti Region.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 2,
+      "triplet": "(Adansi South District, is located in country, Ghana)",
+      "reasoning": "The context states the district is in the Ashanti Region of Ghana, allowing direct inference of its location in Ghana.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 3,
+      "triplet": "(Adansi South District, geographical position within Ashanti Region, southernmost)",
+      "reasoning": "The context explicitly states the Adansi South District is the southernmost district in the Ashanti Region.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 4,
+      "triplet": "(Adansi South District, capital, New Edubiase)",
+      "reasoning": "The context explicitly states that New Edubiase is the capital of the Adansi South District.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 5,
+      "triplet": "(New Edubiase, is capital of, Adansi South District)",
+      "reasoning": "The context states New Edubiase is the capital of the Adansi South District.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 6,
+      "triplet": "(Rose Mensah-Kutin, birthplace, Brofoyedru)",
+      "reasoning": "The context explicitly states Rose Mensah-Kutin was born in Brofoyedru.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 7,
+      "triplet": "(Rose Mensah-Kutin, bred in, Brofoyedru)",
+      "reasoning": "The context explicitly states Rose Mensah-Kutin was bred in Brofoyedru.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 8,
+      "triplet": "(Brofoyedru, type, town)",
+      "reasoning": "The context explicitly describes Brofoyedru as a town.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 9,
+      "triplet": "(Brofoyedru, located in, Adansi South District)",
+      "reasoning": "The context explicitly states Brofoyedru is located in the Adansi South District.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 10,
+      "triplet": "(Adansi South District, located in, Ashanti Region)",
+      "reasoning": "The context explicitly states the Adansi South District is located in the Ashanti Region.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 11,
+      "triplet": "(Ashanti Region, located in country, Ghana)",
+      "reasoning": "The context explicitly states the Ashanti Region is located in Ghana.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 12,
+      "triplet": "(Rose Mensah-Kutin, father's occupation, cocoa and coffee farmer)",
+      "reasoning": "The context states Rose Mensah-Kutin was born to 'a cocoa and coffee farmer,' which implies her father's occupation.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 13,
+      "triplet": "(Rose Mensah-Kutin, mother's occupation, cocoa and coffee farmer)",
+      "reasoning": "The context refers to 'a cocoa and coffee farmer' in the singular, making it an unsupported inference that the mother specifically held this occupation.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 14,
+      "triplet": "(Rose Mensah-Kutin, family occupation, cocoa and coffee farmer)",
+      "reasoning": "The context states she was born to 'a cocoa and coffee farmer,' which reasonably implies this was a primary family occupation.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    }
+  ]
+}

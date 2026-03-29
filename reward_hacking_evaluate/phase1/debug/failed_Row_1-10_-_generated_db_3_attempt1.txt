@@ -1,0 +1,450 @@
+=== Response metadata ===
+finish_reason: STOP
+token_count: cache_tokens_details=None cached_content_token_count=None candidates_token_count=5427 candidates_tokens_details=None prompt_token_count=2133 prompt_tokens_details=[ModalityTokenCount(
+  modality=<MediaModality.TEXT: 'TEXT'>,
+  token_count=2133
+)] thoughts_token_count=1919 tool_use_prompt_token_count=None tool_use_prompt_tokens_details=None total_token_count=9479 traffic_type=None
+
+=== Raw text (18510 chars) ===
+{
+  "triplet_evaluations": [
+    {
+      "triplet_index": 0,
+      "triplet": "(Adansi South District, type, district)",
+      "reasoning": "The context explicitly states that Adansi South District is a district.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    ,
+    {
+      "triplet_index": 1,
+      "triplet": "(Adansi South District, count in Ashanti Region, twenty-seven (27))",
+      "reasoning": "The context states there are twenty-seven districts in the Ashanti Region, and Adansi South District is one of them, not that Adansi South District itself has a count of twenty-seven.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 2,
+      "triplet": "(Adansi South District, located in, Ashanti Region of Ghana)",
+      "reasoning": "The context states Adansi South District is 'in the Ashanti Region of Ghana'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 3,
+      "triplet": "(Adansi South District, geographical position within Ashanti Region, southernmost district)",
+      "reasoning": "The context explicitly states Adansi South District is 'the southernmost district in the Ashanti Region'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 4,
+      "triplet": "(Adansi South District, capital, New Edubiase)",
+      "reasoning": "The context states 'Its capital is New Edubiase', referring to Adansi South District.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 5,
+      "triplet": "(Rose Mensah-Kutin, born in, Brofoyedru)",
+      "reasoning": "The context states 'She was born and bred in Brofoyedru'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 6,
+      "triplet": "(Rose Mensah-Kutin, bred in, Brofoyedru)",
+      "reasoning": "The context states 'She was born and bred in Brofoyedru'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 7,
+      "triplet": "(Brofoyedru, type, town)",
+      "reasoning": "The context describes Brofoyedru as 'a town'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 8,
+      "triplet": "(Brofoyedru, located in, Adansi South District)",
+      "reasoning": "The context states Brofoyedru is 'a town in the Adansi South district'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 9,
+      "triplet": "(Rose Mensah-Kutin, mother's occupation, cocoa and coffee farmer)",
+      "reasoning": "The context states Rose was born 'to a cocoa and coffee farmer', but does not specify if it was her mother or father, only a parent.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 10,
+      "triplet": "(Ashanti Region, contains, Adansi South District)",
+      "reasoning": "The context states Adansi South District is 'in the Ashanti Region', implying the region contains the district.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 11,
+      "triplet": "(Ashanti Region, contains, Rose Mensah-Kutin)",
+      "reasoning": "Rose Mensah-Kutin was born in Brofoyedru, which is in Adansi South District, which is in the Ashanti Region, so Rose is in the Ashanti Region.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 12,
+      "triplet": "(Ghana, contains, Adansi South District)",
+      "reasoning": "Adansi South District is in the 'Ashanti Region of Ghana', implying it is in Ghana.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 13,
+      "triplet": "(Ghana, contains, Rose Mensah-Kutin)",
+      "reasoning": "Rose Mensah-Kutin was born in Brofoyedru, which is in Adansi South District, which is in the Ashanti Region of Ghana, so Rose is in Ghana.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 14,
+      "triplet": "(New Edubiase, is capital of, Adansi South District)",
+      "reasoning": "The context states 'Its capital is New Edubiase', referring to Adansi South District.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 15,
+      "triplet": "(Brofoyedru, is located in, Adansi South District)",
+      "reasoning": "The context states Brofoyedru is 'a town in the Adansi South district'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 16,
+      "triplet": "(Brofoyedru, located in country, Ghana)",
+      "reasoning": "Brofoyedru is in Adansi South District, which is in the 'Ashanti Region of Ghana', implying Brofoyedru is in Ghana.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 17,
+      "triplet": "(cocoa and coffee farmer, is parent of, Rose Mensah-Kutin)",
+      "reasoning": "The context states Rose was born 'to a cocoa and coffee farmer', which implies a parent.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 18,
+      "triplet": "(Ashanti Region of Ghana, contains, Adansi South District)",
+      "reasoning": "The context states Adansi South District is 'in the Ashanti Region of Ghana'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 19,
+      "triplet": "(Ashanti Region of Ghana, contains, Rose Mensah-Kutin)",
+      "reasoning": "Rose was born in Brofoyedru, which is in Adansi South District, which is in the 'Ashanti Region of Ghana'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 20,
+      "triplet": "(Ghana's Ashanti Region, contains, Adansi South District)",
+      "reasoning": "This is a rephrasing of 'Ashanti Region of Ghana' and the context states Adansi South District is in it.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 21,
+      "triplet": "(Ghana's Ashanti Region, contains, Rose Mensah-Kutin)",
+      "reasoning": "Rose was born in Brofoyedru, which is in Adansi South District, which is in 'Ghana's Ashanti Region'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 22,
+      "triplet": "(Ashanti Region of Ghana, contains district, Adansi South District)",
+      "reasoning": "The context states Adansi South District is one of the districts 'in the Ashanti Region of Ghana'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 23,
+      "triplet": "(Ashanti Region of Ghana, contains person, Rose Mensah-Kutin)",
+      "reasoning": "Rose was born in Brofoyedru, which is in Adansi South District, which is in the 'Ashanti Region of Ghana'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 24,
+      "triplet": "(Adansi Region of Ghana, number of districts, twenty-seven (27))",
+      "reasoning": "The context mentions 'Ashanti Region of Ghana', not 'Adansi Region of Ghana', as having twenty-seven districts.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 25,
+      "triplet": "(Adansi Region of Ghana, country, Ghana)",
+      "reasoning": "The entity 'Adansi Region of Ghana' is not mentioned in the context; it refers to 'Ashanti Region of Ghana'.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 26,
+      "triplet": "(Adansi Region of Ghana, contains town, Brofoyedru)",
+      "reasoning": "The entity 'Adansi Region of Ghana' is not mentioned in the context; Brofoyedru is in the 'Ashanti Region of Ghana'.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 27,
+      "triplet": "(Adansi Region of Ghana, contains person, Rose Mensah-Kutin)",
+      "reasoning": "The entity 'Adansi Region of Ghana' is not mentioned in the context; Rose is in the 'Ashanti Region of Ghana'.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 28,
+      "triplet": "(Brofoyedru, contains town, Rose Mensah-Kutin)",
+      "reasoning": "Brofoyedru is a town, and Rose Mensah-Kutin is a person; a town does not 'contain' a person as a 'town'.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 29,
+      "triplet": "(Brofoyedru, located in district, Adansi South District)",
+      "reasoning": "The context states Brofoyedru is 'a town in the Adansi South district'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 30,
+      "triplet": "(Brofoyedru, located in region, Ashanti Region of Ghana)",
+      "reasoning": "Brofoyedru is in Adansi South District, which is in the 'Ashanti Region of Ghana'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 31,
+      "triplet": "(Ashanti Region of Ghana, located in country, Ghana)",
+      "reasoning": "The name 'Ashanti Region of Ghana' directly implies it is located in Ghana.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 32,
+      "triplet": "(Ashanti Region of Ghana, type, region)",
+      "reasoning": "The name 'Ashanti Region of Ghana' directly implies it is a region.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 33,
+      "triplet": "(Ghana, type, country)",
+      "reasoning": "The context refers to 'Ashanti Region of Ghana', which implies Ghana is a country.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 34,
+      "triplet": "(New Edubiase, type, city)",
+      "reasoning": "The context states New Edubiase is the capital of Adansi South District, but does not specify its type as a city.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 35,
+      "triplet": "(New Edubiase, located in, Adansi South District)",
+      "reasoning": "New Edubiase is stated to be the capital of Adansi South District, implying it is located within it.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 36,
+      "triplet": "(New Edubiase, serves as capital for, Adansi South District)",
+      "reasoning": "The context states 'Its capital is New Edubiase', referring to Adansi South District.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 37,
+      "triplet": "(Adansi South District, located in country, Ghana)",
+      "reasoning": "Adansi South District is in the 'Ashanti Region of Ghana', implying it is located in Ghana.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 38,
+      "triplet": "(Adansi South District, located in region, Ashanti Region of Ghana)",
+      "reasoning": "The context explicitly states Adansi South District is 'in the Ashanti Region of Ghana'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 39,
+      "triplet": "(Adansi South District, located in city, New Edubiase)",
+      "reasoning": "New Edubiase is the capital of Adansi South District, meaning Adansi South District contains New Edubiase, not the other way around.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 40,
+      "triplet": "(Adansi South District, located in town, Brofoyedru)",
+      "reasoning": "Brofoyedru is a town in Adansi South District, meaning Adansi South District contains Brofoyedru, not the other way around.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 41,
+      "triplet": "(Adansi South District, contains town, Brofoyedru)",
+      "reasoning": "The context states Brofoyedru is 'a town in the Adansi South district'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 42,
+      "triplet": "(Adansi South District, contains city, New Edubiase)",
+      "reasoning": "The context states New Edubiase is the capital of Adansi South District, implying the district contains its capital.",
+      "faithfulness": "faithful",
+      "quality_issues": [
+        "non_specific_value"
+      ]
+    },
+    {
+      "triplet_index": 43,
+      "triplet": "(Adansi South District, located in Ghana, Ashanti Region)",
+      "reasoning": "The context states Adansi South District is in the 'Ashanti Region of Ghana', so it is located in Ghana, specifically in the Ashanti Region.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 44,
+      "triplet": "(Adansi South District, country, Ghana)",
+      "reasoning": "Adansi South District is in the 'Ashanti Region of Ghana', implying its country is Ghana.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 45,
+      "triplet": "(Ashanti Region, number of districts, twenty-seven (27))",
+      "reasoning": "The context states Adansi South District is 'one of the twenty-seven (27) districts in the Ashanti Region of Ghana', which means the Ashanti Region has 27 districts.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 46,
+      "triplet": "(Ashanti Region, contains district, Adansi South District)",
+      "reasoning": "The context states Adansi South District is one of the districts 'in the Ashanti Region of Ghana'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 47,
+      "triplet": "(Ashanti Region, country, Ghana)",
+      "reasoning": "The context refers to 'Ashanti Region of Ghana', explicitly linking it to Ghana.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 48,
+      "triplet": "(Ashanti Region, contains town, Brofoyedru)",
+      "reasoning": "Brofoyedru is a town in Adansi South District, which is in the Ashanti Region, implying the region contains the town.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 49,
+      "triplet": "(Ashanti Region, contains city, New Edubiase)",
+      "reasoning": "New Edubiase is the capital of Adansi South District, which is in the Ashanti Region, so the region contains New Edubiase.",
+      "faithfulness": "faithful",
+      "quality_issues": [
+        "non_specific_value"
+      ]
+    },
+    {
+      "triplet_index": 50,
+      "triplet": "(Ashanti Region, contains person, Rose Mensah-Kutin)",
+      "reasoning": "Rose Mensah-Kutin was born in Brofoyedru, which is in Adansi South District, which is in the Ashanti Region, so the region contains Rose.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 51,
+      "triplet": "(Brofoyedru, country, Ghana)",
+      "reasoning": "Brofoyedru is in Adansi South District, which is in the 'Ashanti Region of Ghana', implying its country is Ghana.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 52,
+      "triplet": "(Brofoyedru, contains city, New Edubiase)",
+      "reasoning": "Brofoyedru is a town in Adansi South District, and New Edubiase is the capital of that district; a town does not contain the capital of its district.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 53,
+      "triplet": "(Brofoyedru, contains person, Rose Mensah-Kutin)",
+      "reasoning": "Rose Mensah-Kutin was born and bred in Brofoyedru, implying Brofoyedru 'contains' her as a resident.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 54,
+      "triplet": "(New Edubiase, country, Ghana)",
+      "reasoning": "New Edubiase is the capital of Adansi South District, which is in the 'Ashanti Region of Ghana', implying its country is Ghana.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 55,
+      "triplet": "(New Edubiase, located in country, Ghana)",
+      "reasoning": "New Edubiase is the capital of Adansi South District, which is in the 'Ashanti Region of Ghana', implying it is located in Ghana.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 56,
+      "triplet": "(New Edubiase, contains town, Brofoyedru)",
+      "reasoning": "New Edubiase is the capital of Adansi South District, and Brofoyedru is a town in that district; the capital doesn't necessarily contain other towns in the district.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 57,
+      "triplet": "(New Edubiase, contains person, Rose Mensah-Kutin)",
+      "reasoning": "Rose Mensah-Kutin was born and bred in Brofoyedru, not New Edubiase.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 58,
+      "triplet": "(Rose Mensah-Kutin, birthplace, Brofoyedru)",
+      "reasoning": "The context states 'She was born and bred in Brofoyedru'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 59,
+      "triplet": "(Rose Mensah-Kutin, breeding place, Brofoyedru)",
+      "reasoning": "The context states 'She was born and bred in Brofoyedru'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 60,
+      "triplet": "(Rose Mensah-Kutin, occupation, cocoa and coffee farmer)",
+      "reasoning": "The context states Rose was born 'to a cocoa and coffee farmer', implying a parent's occupation, not Rose's own.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 61,
+      "triplet": "(Rose Mensah-Kutin, father's occupation, cocoa and coffee farmer)",
+      "reasoning": "The context states Rose was born 'to a cocoa and coffee farmer', but does not specify if it was her father or mother, only a parent.",
+      "faithfulness": "hallucinated",
+      "quality_issues": []
+    }
+  ]
+}

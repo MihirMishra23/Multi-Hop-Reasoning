@@ -1,0 +1,111 @@
+=== Response metadata ===
+finish_reason: STOP
+token_count: cache_tokens_details=None cached_content_token_count=None candidates_token_count=1064 candidates_tokens_details=None prompt_token_count=1237 prompt_tokens_details=[ModalityTokenCount(
+  modality=<MediaModality.TEXT: 'TEXT'>,
+  token_count=1237
+)] thoughts_token_count=1006 tool_use_prompt_token_count=None tool_use_prompt_tokens_details=None total_token_count=3307 traffic_type=None
+
+=== Raw text (3790 chars) ===
+{
+  "triplet_evaluations": [
+    {
+      "triplet_index": 0,
+      "triplet": "(Indianapolis Woman Magazine, type, monthly magazine)",
+      "reasoning": "The context states 'Indianapolis Woman Magazine was a monthly magazine'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+     dredging
+    },
+    {
+      "triplet_index": 1,
+      "triplet": "(Indianapolis Woman Magazine, publication location, Indianapolis)",
+      "reasoning": "The context states the magazine was 'published in Indianapolis'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 2,
+      "triplet": "(Indianapolis Woman Magazine, coverage, issues of interest to women)",
+      "reasoning": "The context states the magazine 'covered issues of interest to women'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 3,
+      "triplet": "(SUITCASE Magazine, type, multimedia travel magazine)",
+      "reasoning": "The context states 'SUITCASE Magazine is a multimedia travel magazine'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 4,
+      "triplet": "(SUITCASE Magazine, first publication year, 2012)",
+      "reasoning": "The context states the magazine was 'first published in 2012'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 5,
+      "triplet": "(SUITCASE Magazine, publisher, Serena Guen)",
+      "reasoning": "The context states it was 'published in 2012 by business woman and philanthropist Serena Guen'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 6,
+      "triplet": "(Serena Guen, occupation, business woman)",
+      "reasoning": "The context describes Serena Guen as a 'business woman'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 7,
+      "triplet": "(Serena Guen, characteristic, philanthropist)",
+      "reasoning": "The context describes Serena Guen as a 'philanthropist'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 8,
+      "triplet": "(SUITCASE Magazine, available as, print magazine)",
+      "reasoning": "The context states 'The magazine is available as a quarterly print magazine'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 9,
+      "triplet": "(SUITCASE Magazine, print magazine frequency, quarterly)",
+      "reasoning": "The context states 'available as a quarterly print magazine'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 10,
+      "triplet": "(SUITCASE Magazine, available as, iPad app)",
+      "reasoning": "The context states it is available as an 'iPad and iPhone app'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 11,
+      "triplet": "(SUITCASE Magazine, available as, iPhone app)",
+      "reasoning": "The context states it is available as an 'iPad and iPhone app'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 12,
+      "triplet": "(SUITCASE Magazine, available as, daily updated travel website)",
+      "reasoning": "The context states it is available as 'a daily updated travel website'.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    },
+    {
+      "triplet_index": 13,
+      "triplet": "(SUITCASE Magazine, daily updated travel website update frequency, daily)",
+      "reasoning": "The context mentions 'daily updated travel website', directly implying a daily update frequency.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+    }
+  ]
+}

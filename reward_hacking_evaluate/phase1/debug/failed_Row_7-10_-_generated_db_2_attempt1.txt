@@ -1,0 +1,22 @@
+=== Response metadata ===
+finish_reason: STOP
+token_count: cache_tokens_details=[ModalityTokenCount(
+  modality=<MediaModality.TEXT: 'TEXT'>,
+  token_count=963
+)] cached_content_token_count=963 candidates_token_count=105 candidates_tokens_details=None prompt_token_count=1650 prompt_tokens_details=[ModalityTokenCount(
+  modality=<MediaModality.TEXT: 'TEXT'>,
+  token_count=1650
+)] thoughts_token_count=2282 tool_use_prompt_token_count=None tool_use_prompt_tokens_details=None total_token_count=4037 traffic_type=None
+
+=== Raw text (365 chars) ===
+{
+  "triplet_evaluations": [
+    {
+      "triplet_index": 0,
+      "triplet": "(2-Methoxyethanol, also known as, methyl cellosolve)",
+      "reasoning": "The context states '2-Methoxyethanol, or methyl cellosolve', which directly supports this triplet.",
+      "faithfulness": "faithful",
+      "quality_issues": []
+     immunotherapy for autoimmune diseases.
+  ]
+}

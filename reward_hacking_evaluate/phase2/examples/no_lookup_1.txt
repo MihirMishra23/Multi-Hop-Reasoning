@@ -1,0 +1,13 @@
+Row: 17
+Column: phase2_completion_1_1
+Question: Question:
+Estcourt Station - Pohénégamook Border Crossing connects the villages of Estcourt Station, a village in Big Twenty Township, Aroostook County, Maine, in which country?
+Answer:
+
+Total lookups: 0
+
+============================================================
+FULL COMPLETION:
+============================================================
+
+<thinking> The question asks for the country where Estcourt Station - Pohénégamook Border Crossing connects. The provided text states that Estcourt Station is located in Big Twenty Township, Aroostook County, Maine. Maine is in the United States. Therefore, the country is the United States. </thinking> <answer> United States </answer><|im_end|>

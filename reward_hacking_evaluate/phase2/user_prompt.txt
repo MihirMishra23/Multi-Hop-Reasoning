@@ -1,0 +1,10 @@
+### Question:
+{question}
+
+### Knowledge Database:
+{database_triplets}
+
+### Model Completion:
+{completion}
+
+Evaluate this completion according to the rubric.
