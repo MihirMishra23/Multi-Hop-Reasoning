@@ -1,0 +1,274 @@
+#
+# Setup instructions — eval_lmlm_multihop.sh
+#
+# Methods supported: direct, icl, rag, lmlm
+#
+# Prereqs:
+# - Activate your environment and install repo deps:
+#   pip install -e .
+# - (RAG only) Install FlashRAG:
+#   cd src/tools
+#   git clone https://github.com/RUC-NLPIR/FlashRAG.git
+#   cd FlashRAG
+#   pip install -e .
+#
+# Run:
+#   bash scripts/eval_lmlm_multihop.sh --method direct
+#
+# Common overrides:
+#   bash scripts/eval_lmlm_multihop.sh \
+#     --method icl \
+#     --llm_model gpt-4 \
+#     --dataset 2wiki \
+#     --split dev \
+#     --num_samples 100
+#
+MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1
+# MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop//Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
+# uncomment above to use two_phase model
+LLM_MODEL=gpt-4
+DATASET=hotpotqa
+SPLIT=dev
+USE_INVERSES="true" # or "--use-inverses"
+USE_TRAIN_PARAMS=""   # set to "--use-train-params" to use grpo_train.sh sampling params instead of greedy
+CONCAT_ALL_DB=""      # set to "--concat-all-db" to build unified database
+USE_CONTEXTS="golden" # options: "golden" | "all"
+NUM_SAMPLES=1000
+SAVE_VERSION="put-anything-here" #use this to add info to save path
+TOP_K=4
+METHODS=("lmlm")
+# METHODS=("direct" "icl" "rag" "lmlm")
+# uncomment above to eval on all methods
+SIMILARITY_THRESHOLD=0.6
+SETTING=distractor
+
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --model_path)
+            MODEL_PATH="$2"
+            shift 2
+            ;;
+        --dataset)
+            DATASET="$2"
+            shift 2
+            ;;
+        --method)
+            METHODS=("$2")
+            shift 2
+            ;;
+        --llm_model)
+            LLM_MODEL="$2"
+            shift 2
+            ;;
+        --split)
+            SPLIT="$2"
+            shift 2
+            ;;
+        --num_samples)
+            NUM_SAMPLES="$2"
+            shift 2
+            ;;
+        --use-inverses)
+            USE_INVERSES="--use-inverses"
+            shift
+            ;;
+        --use-train-params)
+            USE_TRAIN_PARAMS="--use-train-params"
+            shift
+            ;;
+        --concat-all-db)
+            CONCAT_ALL_DB="--concat-all-db"
+            shift
+            ;;
+        --use-contexts)
+            USE_CONTEXTS="$2"
+            shift 2
+            ;;
+        --save_version)
+            SAVE_VERSION="$2"
+            shift 2
+            ;;
+        --output-dir)
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --setting)
+            SETTING="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            exit 1
+            ;;
+    esac
+done
+
+
+if [ "${DATASET}" = "hotpotqa" ]; then
+    if [ "${SPLIT}" = "dev" ]; then
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+    elif [ "${SPLIT}" = "debug_dev" ]; then
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/generated_database_validation_42_1000.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+        SPLIT="dev"
+    elif [ "${SPLIT}" = "train_val100" ]; then
+        echo "Using eval set from GRPO"
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+        DEFAULT_NUM_SAMPLES=100
+        START_IDX=90347
+        SPLIT="train"
+    elif [ "${SPLIT}" = "train_val1k" ]; then
+        echo "Using train set from GRPO"
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=82347
+        SPLIT="train"
+    elif [ "${SPLIT}" = "train_train1k" ]; then
+        echo "Using train set from GRPO"
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=89347
+        SPLIT="train"
+    else
+        echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
+        exit 1
+    fi
+elif [ "${DATASET}" = "musique" ]; then
+    if [ "${SPLIT}" = "dev" ]; then
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/musique_validation_42_1000_all_context_database.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+    elif [ "${SPLIT}" = "train" ]; then
+        echo "There is no train database made for musique"
+        exit 1
+    else
+        echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
+        exit 1
+    fi
+elif [ "${DATASET}" = "two_wiki" ] || [ "${DATASET}" = "2wiki" ]; then
+    if [ "${SPLIT}" = "dev" ]; then
+        DATABASE_PATH="/share/j_sun/as2637/database/2wiki_db.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+    else
+        echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
+        exit 1
+    fi
+else
+    echo "Using non-default dataset, with no default num samples set or anything:  '${DATASET}'"
+    START_IDX=0
+fi
+
+if [ "${NUM_SAMPLES}" -gt "${DEFAULT_NUM_SAMPLES}" ]; then
+    NUM_SAMPLES="${DEFAULT_NUM_SAMPLES}"
+fi
+
+MAX_TOKENS=1024
+BATCH_SIZE_DIRECT=32
+BATCH_SIZE_ICL=1
+BATCH_SIZE_RAG=1
+BATCH_SIZE_LMLM=64
+OUTPUT_DIR=./march-28-output
+SAVE_EVERY=64
+SEED=42
+
+
+if [[ "${MODEL_PATH}" == *"-nak"* ]]; then
+    ADAPTIVE_K=""
+else
+    ADAPTIVE_K="--adaptive-k"
+fi
+
+if [ -n "${USE_INVERSES}" ]; then
+    USE_INVERSES="--use-inverses"
+else
+    USE_INVERSES=""
+fi
+
+# th-3
+if [[ "${MODEL_PATH}" == *"-th-3"* ]]; then
+    RETURN_TRIPLETS="--return-triplets"
+else
+    RETURN_TRIPLETS=""
+fi
+
+
+for METHOD in "${METHODS[@]}"; do
+    echo "Running method: ${METHOD}"
+    if [ "${METHOD}" = "lmlm" ]; then
+        python src/eval_multihop.py \
+            --model-path ${MODEL_PATH} \
+            --database-path ${DATABASE_PATH} \
+            --method ${METHOD} \
+            --max-tokens ${MAX_TOKENS} \
+            --batch-size ${BATCH_SIZE_LMLM} \
+            --total-count ${NUM_SAMPLES} \
+            --output-dir ${OUTPUT_DIR}/ \
+            --save-version ${SAVE_VERSION} \
+            --split ${SPLIT} \
+            --setting ${SETTING} \
+            --dataset ${DATASET} \
+            --seed ${SEED} \
+            --save-every ${SAVE_EVERY} \
+            --start-index ${START_IDX} \
+            ${ADAPTIVE_K} \
+            ${RETURN_TRIPLETS} \
+            ${USE_INVERSES} \
+            --top-k ${TOP_K} \
+            --similarity-threshold ${SIMILARITY_THRESHOLD} \
+            --eval
+    elif [ "${METHOD}" = "two_phase" ]; then
+        echo "ignoring database path"
+        python src/eval_multihop.py \
+            --model-path ${MODEL_PATH} \
+            --method ${METHOD} \
+            --max-tokens ${MAX_TOKENS} \
+            --batch-size ${BATCH_SIZE_LMLM} \
+            --total-count ${NUM_SAMPLES} \
+            --output-dir ${OUTPUT_DIR}/ \
+            --save-version ${SAVE_VERSION} \
+            --split ${SPLIT} \
+            --setting ${SETTING} \
+            --dataset ${DATASET} \
+            --seed ${SEED} \
+            --save-every ${SAVE_EVERY} \
+            --start-index ${START_IDX} \
+            ${RETURN_TRIPLETS} \
+            ${USE_INVERSES} \
+            --top-k ${TOP_K} \
+            --similarity-threshold ${SIMILARITY_THRESHOLD} \
+            ${USE_TRAIN_PARAMS} \
+            ${CONCAT_ALL_DB} \
+            --use-contexts ${USE_CONTEXTS} \
+            --eval
+    else
+        if [ "${METHOD}" = "icl" ]; then
+            BATCH_SIZE=${BATCH_SIZE_ICL}
+        elif [ "${METHOD}" = "rag" ]; then
+            BATCH_SIZE=${BATCH_SIZE_RAG}
+        else
+            BATCH_SIZE=${BATCH_SIZE_DIRECT}
+        fi
+        echo "Method is ${METHOD}"
+        echo "Setting is ${SETTING}"
+        python src/eval_multihop.py \
+            --method ${METHOD} \
+            --model ${MODEL_PATH} \
+            --max-tokens ${MAX_TOKENS} \
+            --batch-size ${BATCH_SIZE} \
+            --total-count ${NUM_SAMPLES} \
+            --output-dir ${OUTPUT_DIR}/ \
+            --split ${SPLIT} \
+            --setting ${SETTING} \
+            --dataset ${DATASET} \
+            --seed ${SEED} \
+            --save-every ${SAVE_EVERY} \
+            --start-index ${START_IDX} \
+            --eval 
+    fi
+done

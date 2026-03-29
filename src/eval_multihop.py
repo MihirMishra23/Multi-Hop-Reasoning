@@ -386,11 +386,11 @@ def save_results_to_file(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run agent over a dataset and save predictions.")
-    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki"], help="Dataset name")
+    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki", "synthworlds"], help="Dataset name")
     parser.add_argument(
         "--setting",
         default="distractor",
-        choices=["distractor", "fullwiki"],
+        choices=["distractor", "fullwiki", "qa-sm", "qa-rm"],
         help="Dataset setting",
     )
     parser.add_argument(
@@ -536,6 +536,10 @@ def main() -> None:
     # Validate use-contexts flag
     if args.use_contexts == "all" and args.method != "two_phase":
         raise ValueError("--use-contexts=all is only supported for --method=two_phase")
+
+    # SynthWorlds does not have a 'contexts' field, only 'golden_contexts'
+    if args.dataset.lower() in {"synthworlds", "synth"} and args.use_contexts == "all":
+        raise ValueError("--use-contexts=all is not supported for SynthWorlds dataset (only 'golden' contexts are available)")
 
     if args.concat_all_db and args.method != "two_phase":
         raise ValueError("--concat-all-db is only supported for --method=two_phase")
@@ -771,6 +775,12 @@ def main() -> None:
         "concat_all_db": args.concat_all_db if args.method == "two_phase" else False,
         "contexts_are_split": args.use_contexts == "all" if args.method == "two_phase" else False,
     }
+
+    # Add RAG corpus if available (for fullwiki setting)
+    if args.method == "rag" and rag_corpus:
+        agent_kwargs["corpus"] = rag_corpus
+        logger.info(f"Added RAG corpus to agent_kwargs: {len(rag_corpus)} documents")
+
     agent_kwargs.update(_extra_agent_kwargs)
 
     # Get agent instance using factory function
