@@ -40,6 +40,26 @@ from data import get_dataset
 from data.hotpotqa import load_hotpotqa_rag_corpus
 from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
 
+def split_into_parts(items: list, num_parts: int) -> list[list]:
+    """Split a list into num_parts parts where max and min lengths differ by at most 1."""
+    if num_parts <= 0:
+        raise ValueError("num_parts must be positive")
+    if num_parts >= len(items):
+        # Return each item as its own part (or empty parts if num_parts > len)
+        return [[item] for item in items] + [[] for _ in range(num_parts - len(items))]
+
+    base_size = len(items) // num_parts
+    remainder = len(items) % num_parts
+
+    parts = []
+    start = 0
+    for i in range(num_parts):
+        part_size = base_size + (1 if i < remainder else 0)
+        parts.append(items[start:start + part_size])
+        start += part_size
+
+    return parts
+
 DEFAULT_FULLWIKI_CORPUS_PATH = "/share/j_sun/lmlm_multihop/datasets/hotpot_dev_fullwiki_v1.json"
 
 
@@ -175,10 +195,21 @@ def process_single_batch(
         qid = ex.get("id") or ex.get("_id") or ex.get("case_id")
         question = ex["question"]
         contexts = ex.get("contexts") or []
-        # two_phase was trained on golden_contexts (2 supporting paragraphs), not all 10
-        # distractor paragraphs; use golden_contexts to match training conditions.
+
+        # Handle context selection for two_phase method
         if args.method == "two_phase":
-            contexts = ex.get("golden_contexts") or contexts
+            if args.use_contexts == "golden":
+                # two_phase was trained on golden_contexts (2 supporting paragraphs), not all 10
+                # distractor paragraphs; use golden_contexts to match training conditions.
+                print("using golden context!!")
+                contexts = ex.get("golden_contexts")
+            elif args.use_contexts == "all":
+                # Use all contexts and split into parts
+                # TODO: Check if 5 parts is appropriate for musique, hotpot, and 2wiki dataset sizes
+                original_len = len(contexts)
+                contexts = split_into_parts(contexts, num_parts=5)
+                if len(queries) == 0:  # Log only for first example
+                    logger.info(f"Split {original_len} contexts into {len(contexts)} parts for first example")
 
         queries.append(question)
         
@@ -311,10 +342,13 @@ def save_results_to_file(
     logger = logging.getLogger("run_agent")
 
     # Build final output with metadata
+    # Use unified_db_path if it was created, otherwise use args.database_path
+    database_path_value = getattr(args, 'unified_db_path', None) or args.database_path
+
     output = {
         "metadata": {
             "model-path": args.model_path,
-            "database-path": args.database_path,
+            "database-path": database_path_value,
             "model": args.model,
             "dataset": args.dataset,
             "setting": args.setting,
@@ -339,6 +373,8 @@ def save_results_to_file(
             "phase1_prompt_type": args.phase1_prompt_type,
             "top_k": args.top_k,
             "similarity_threshold": args.similarity_threshold,
+            "concat_all_db": args.concat_all_db,
+            "use_contexts": args.use_contexts,
         }
     # Add retrieval metadata for RAG
     if args.method == "rag":
@@ -382,6 +418,17 @@ def main() -> None:
         default="sft",
         choices=["sft", "with_question"],
         help="Phase 1 prompt template for two_phase method",
+    )
+    parser.add_argument(
+        "--use-contexts",
+        default="golden",
+        choices=["golden", "all"],
+        help="Use golden contexts or all contexts (two_phase only). If 'all', contexts are split into parts.",
+    )
+    parser.add_argument(
+        "--concat-all-db",
+        action="store_true",
+        help="Build a single unified database from all examples (two_phase only)",
     )
     parser.add_argument("--model-path", default=None, help="Local model path")
     parser.add_argument(
@@ -493,6 +540,13 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+
+    # Validate use-contexts flag
+    if args.use_contexts == "all" and args.method != "two_phase":
+        raise ValueError("--use-contexts=all is only supported for --method=two_phase")
+
+    if args.concat_all_db and args.method != "two_phase":
+        raise ValueError("--concat-all-db is only supported for --method=two_phase")
 
     # Logging
     logging.basicConfig(
@@ -733,11 +787,76 @@ def main() -> None:
         "top_k": args.top_k,
         "similarity_threshold": args.similarity_threshold,
         "phase1_prompt_type": args.phase1_prompt_type,
+        "concat_all_db": args.concat_all_db if args.method == "two_phase" else False,
+        "contexts_are_split": args.use_contexts == "all" if args.method == "two_phase" else False,
     }
     agent_kwargs.update(_extra_agent_kwargs)
 
     # Get agent instance using factory function
     agent: Agent = get_agent(method=args.method, agent_kwargs=agent_kwargs)
+
+    # Build unified database if concat_all_db is enabled (two_phase only)
+    unified_db_path = None
+    if args.concat_all_db and args.method == "two_phase":
+        logger.info("Building unified database from entire dataset...")
+        logger.info(f"use_contexts={args.use_contexts}, contexts_are_split={args.use_contexts == 'all'}")
+
+        # Prepare all queries and contexts from the full dataset
+        all_queries = []
+        all_contexts = []
+
+        for ex in full_dataset.select(range(args.start_index, end_index)):
+            all_queries.append(ex["question"])
+            contexts = ex["contexts"]
+
+            # Apply same context logic as in process_single_batch
+            if args.use_contexts == "golden":
+                contexts = ex["golden_contexts"]
+            elif args.use_contexts == "all":
+                # TODO: Check if 5 parts is appropriate for musique, hotpot, and 2wiki dataset sizes
+                contexts = split_into_parts(contexts, num_parts=5)
+
+            all_contexts.append(contexts)
+
+        logger.info(f"Prepared {len(all_queries)} queries for unified DB building")
+
+        # Build the unified database
+        agent.build_unified_db_from_dataset(all_queries, all_contexts)
+        logger.info("Unified database built successfully")
+
+        # Save the unified database to disk
+        unified_db_dir = os.path.join(output_dir, "unified_databases")
+        os.makedirs(unified_db_dir, exist_ok=True)
+
+        contexts_suffix = f"_{args.use_contexts}" if args.use_contexts != "golden" else ""
+        unified_db_filename = f"unified_db_{args.dataset}_{args.split}_n{examples_to_process}_i{args.start_index}{contexts_suffix}.json"
+        unified_db_path = os.path.join(unified_db_dir, unified_db_filename)
+
+        # Extract triplets from the unified database and save
+        phase1_info = getattr(agent, "_phase1_info", [])
+        all_triplets = []
+        for info in phase1_info:
+            all_triplets.extend(info.get('triplets', []))
+
+        unified_db_data = {
+            "metadata": {
+                "dataset": args.dataset,
+                "split": args.split,
+                "num_examples": len(all_queries),
+                "start_index": args.start_index,
+                "total_triplets": len(all_triplets),
+                "use_contexts": args.use_contexts,
+                "contexts_are_split": args.use_contexts == "all",
+            },
+            "triplets": [{"head": t[0], "relation": t[1], "tail": t[2]} for t in all_triplets]
+        }
+
+        with open(unified_db_path, "w", encoding="utf-8") as f:
+            json.dump(unified_db_data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Saved unified database to {unified_db_path}")
+        # Store the path for metadata
+        args.unified_db_path = unified_db_path
 
     # Process batches with progress tracking
     # Start with existing results if resuming

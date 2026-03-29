@@ -60,6 +60,8 @@ class TwoPhaseAgent(Agent):
         similarity_threshold: float = 0.6,
         use_inverses: bool = False,
         return_triplets: bool = False,
+        concat_all_db: bool = False,
+        contexts_are_split: bool = False,
         # vLLM sampling (should match training)
         temperature: float = 1.0,
         top_p: float = 0.95,
@@ -74,6 +76,8 @@ class TwoPhaseAgent(Agent):
         self.similarity_threshold = similarity_threshold
         self.use_inverses = use_inverses
         self.return_triplets = return_triplets
+        self.concat_all_db = concat_all_db
+        self.contexts_are_split = contexts_are_split
         # sampling params
         self.temperature = temperature
         self.top_p = top_p
@@ -135,8 +139,67 @@ class TwoPhaseAgent(Agent):
         _temperature = temperature if temperature is not None else self.temperature
         _max_tokens  = max_tokens  if max_tokens  is not None else self.max_completion_length
 
-        per_example_dbs = self._phase1_build_dbs(queries, contexts)
-        return self._phase2_qa(queries, per_example_dbs, _max_tokens, _temperature)
+        if self.concat_all_db:
+            # Use pre-built unified database
+            if not hasattr(self, '_unified_db') or self._unified_db is None:
+                raise RuntimeError(
+                    "concat_all_db is True but unified database has not been built. "
+                    "Call build_unified_db_from_dataset() before run()."
+                )
+            # Pass empty list for per_example_dbs, use unified_db parameter
+            return self._phase2_qa(queries, [], _max_tokens, _temperature, unified_db=self._unified_db)
+        else:
+            # Original behavior: build per-example DBs from this batch's contexts
+            per_example_dbs = self._phase1_build_dbs(queries, contexts)
+            return self._phase2_qa(queries, per_example_dbs, _max_tokens, _temperature)
+
+    def build_unified_db_from_dataset(
+        self,
+        all_queries: list[str],
+        all_contexts: list[list[str]] | list[list[list[str]]],
+    ) -> None:
+        """Pre-build ONE unified database from entire dataset (called once before batching).
+
+        This method should be called BEFORE running batch inference when concat_all_db=True.
+        It generates triplets from all examples' contexts and builds a single unified database.
+
+        Args:
+            all_queries: All questions in the dataset.
+            all_contexts: All contexts in the dataset. Either list[list[str]] (questions → paragraphs)
+                         when not split, or list[list[list[str]]] (questions → parts → paragraphs) when split.
+                         When split, generates prompts for all parts of all questions, then combines all triplets
+                         into one unified database.
+        """
+        # Use _phase1_build_dbs to generate triplets for all examples
+        # (we don't actually need the per-example DBs, just the triplets)
+        # _phase1_build_dbs will handle split contexts based on self.contexts_are_split
+        print(f"[Unified DB] Building from {len(all_queries)} queries (contexts_are_split={self.contexts_are_split})")
+        _ = self._phase1_build_dbs(all_queries, all_contexts)
+
+        # Extract all triplets from self._phase1_info (populated by _phase1_build_dbs)
+        # When contexts_are_split=True, this will contain triplets from all parts of all questions
+        all_triplets = []
+        for info in self._phase1_info:
+            all_triplets.extend(info['triplets'])
+
+        print(f"[Unified DB] Collected {len(all_triplets)} triplets from {len(self._phase1_info)} examples")
+
+        # Build ONE unified DatabaseManager from all triplets
+        unified_db = build_databases_from_triplets_batch(
+            [all_triplets],
+            top_k=self.top_k,
+            default_threshold=self.similarity_threshold,
+            adaptive=False,
+            use_inverses=self.use_inverses,
+        )[0]
+
+        # Store it for use in run()
+        self._unified_db = unified_db
+        self._unified_db_stats = {
+            "total_triplets": len(all_triplets),
+            "num_examples": len(all_queries),
+        }
+        print(f"[Unified DB] Built successfully with {len(all_triplets)} triplets")
 
     # ------------------------------------------------------------------
     # Internal phases
@@ -145,56 +208,144 @@ class TwoPhaseAgent(Agent):
     def _phase1_build_dbs(
         self,
         queries: list[str],
-        contexts: list[list[str]],
+        contexts: list[list[str]] | list[list[list[str]]],
     ) -> list[DatabaseManager]:
-        """Phase 1: generate triplets from contexts and build per-example DBs."""
-        if "{question}" in self._phase1_prompt_template:
-            phase1_prompts = [
-                self._phase1_prompt_template.format(
-                    context="\n\n".join(ctx), question=q
-                )
-                for ctx, q in zip(contexts, queries)
+        """Phase 1: generate triplets from contexts and build per-example DBs.
+
+        Args:
+            queries: List of questions.
+            contexts: Either list[list[str]] (questions → paragraphs) when not split,
+                     or list[list[list[str]]] (questions → parts → paragraphs) when split.
+        """
+        if not self.contexts_are_split:
+            # Original behavior: one prompt per question
+            if "{question}" in self._phase1_prompt_template:
+                phase1_prompts = [
+                    self._phase1_prompt_template.format(
+                        context="\n\n".join(ctx), question=q
+                    )
+                    for ctx, q in zip(contexts, queries)
+                ]
+            else:
+                phase1_prompts = [
+                    self._phase1_prompt_template.format(context="\n\n".join(ctx))
+                    for ctx in contexts
+                ]
+            print("The first prompt is ; ", phase1_prompts[0])
+
+            params = SamplingParams(
+                n=1,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                top_k=self.vllm_top_k,
+                repetition_penalty=self.repetition_penalty,
+                max_tokens=self.max_completion_length,
+                stop_token_ids=self._stop_token_ids,
+            )
+            outputs = self.llm.generate(phase1_prompts, params, use_tqdm=False)
+
+            raw_texts = [out.outputs[0].text if out.outputs else "" for out in outputs]
+            all_triplets = [_parse_triplets(t) for t in raw_texts]
+
+            # Store for inspection / saving in eval
+            self._phase1_info = [
+                {
+                    "raw_text": raw,
+                    "triplets": triplets,
+                    "num_triplets": len(triplets),
+                    "num_context_paragraphs": len(ctx),
+                }
+                for raw, triplets, ctx in zip(raw_texts, all_triplets, contexts)
             ]
+
+            dbs = build_databases_from_triplets_batch(
+                all_triplets,
+                top_k=self.top_k,
+                default_threshold=self.similarity_threshold,
+                adaptive=False,
+                use_inverses=self.use_inverses,
+            )
+            self._phase1_dbs = dbs
+            return dbs
+
         else:
-            phase1_prompts = [
-                self._phase1_prompt_template.format(context="\n\n".join(ctx))
-                for ctx in contexts
-            ]
+            # Contexts are split: generate multiple prompts per question, combine into one DB per question
+            # contexts has structure: list[list[list[str]]] (questions → parts → paragraphs)
+            phase1_prompts = []
+            num_parts_per_question = []
 
-        params = SamplingParams(
-            n=1,
-            temperature=self.temperature,
-            top_p=self.top_p,
-            top_k=self.vllm_top_k,
-            repetition_penalty=self.repetition_penalty,
-            max_tokens=self.max_completion_length,
-            stop_token_ids=self._stop_token_ids,   # same as trainer: [EOS, DB_RETRIEVE_TOKEN]
-        )
-        outputs = self.llm.generate(phase1_prompts, params, use_tqdm=False)
+            for ctx_parts, q in zip(contexts, queries):
+                num_parts = len(ctx_parts)
+                num_parts_per_question.append(num_parts)
 
-        raw_texts = [out.outputs[0].text if out.outputs else "" for out in outputs]
-        all_triplets = [_parse_triplets(t) for t in raw_texts]
+                for part in ctx_parts:
+                    if self._phase1_prompt_type == "with_question":
+                        prompt = self._phase1_prompt_template.format(
+                            context="\n\n".join(part), question=q
+                        )
+                    else:
+                        prompt = self._phase1_prompt_template.format(context="\n\n".join(part))
+                    phase1_prompts.append(prompt)
 
-        # Store for inspection / saving in eval
-        self._phase1_info = [
-            {
-                "raw_text": raw,
-                "triplets": triplets,
-                "num_triplets": len(triplets),
-                "num_context_paragraphs": len(ctx),
-            }
-            for raw, triplets, ctx in zip(raw_texts, all_triplets, contexts)
-        ]
+            print(f"[Phase 1 - Split Mode] Generating {len(phase1_prompts)} prompts for {len(queries)} questions")
+            print(f"[Phase 1 - Split Mode] Average parts per question: {len(phase1_prompts) / len(queries):.1f}")
+            print("The first prompt is ; ", phase1_prompts[0])
 
-        dbs = build_databases_from_triplets_batch(
-            all_triplets,
-            top_k=self.top_k,
-            default_threshold=self.similarity_threshold,
-            adaptive=False,
-            use_inverses=self.use_inverses,
-        )
-        self._phase1_dbs = dbs   # stored for external inspection (e.g. similarity scores)
-        return dbs
+            params = SamplingParams(
+                n=1,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                top_k=self.vllm_top_k,
+                repetition_penalty=self.repetition_penalty,
+                max_tokens=self.max_completion_length,
+                stop_token_ids=self._stop_token_ids,
+            )
+            outputs = self.llm.generate(phase1_prompts, params, use_tqdm=False)
+
+            raw_texts = [out.outputs[0].text if out.outputs else "" for out in outputs]
+            all_response_triplets = [_parse_triplets(t) for t in raw_texts]
+
+            # Group responses by question and combine triplets
+            combined_triplets_per_question = []
+            self._phase1_info = []
+            response_idx = 0
+
+            for q_idx, num_parts in enumerate(num_parts_per_question):
+                # Collect triplets from all parts of this question
+                question_triplets = []
+                question_raw_texts = []
+                total_paragraphs = 0
+
+                for part_idx in range(num_parts):
+                    part_triplets = all_response_triplets[response_idx]
+                    question_triplets.extend(part_triplets)
+                    question_raw_texts.append(raw_texts[response_idx])
+                    total_paragraphs += len(contexts[q_idx][part_idx])
+                    response_idx += 1
+
+                combined_triplets_per_question.append(question_triplets)
+
+                # Store aggregated info for this question
+                self._phase1_info.append({
+                    "raw_text": "\n---PART SEPARATOR---\n".join(question_raw_texts),
+                    "triplets": question_triplets,
+                    "num_triplets": len(question_triplets),
+                    "num_context_paragraphs": total_paragraphs,
+                    "num_parts": num_parts,
+                })
+
+            # Build one DB per question from combined triplets
+            dbs = build_databases_from_triplets_batch(
+                combined_triplets_per_question,
+                top_k=self.top_k,
+                default_threshold=self.similarity_threshold,
+                adaptive=False,
+                use_inverses=self.use_inverses,
+            )
+            total_triplets = sum(len(t) for t in combined_triplets_per_question)
+            print(f"[Phase 1 - Split Mode] Built {len(dbs)} DBs with {total_triplets} total triplets")
+            self._phase1_dbs = dbs
+            return dbs
 
     def _phase2_qa(
         self,
@@ -202,8 +353,14 @@ class TwoPhaseAgent(Agent):
         per_example_dbs: list[DatabaseManager],
         max_tokens: int,
         temperature: float,
+        unified_db: Optional[DatabaseManager] = None,
     ):
-        """Phase 2: answer questions with per-example DB lookups (multi-turn vLLM)."""
+        """Phase 2: answer questions with DB lookups (multi-turn vLLM).
+
+        Args:
+            per_example_dbs: List of DatabaseManager (one per query). Ignored if unified_db is set.
+            unified_db: Optional single DatabaseManager shared across all queries.
+        """
         B = len(queries)
         prompts = [f"Question:\n{q}\nAnswer:\n" for q in queries]
         active = [True] * B
@@ -269,7 +426,9 @@ class TwoPhaseAgent(Agent):
                     try:
                         db_query = prompts[i].rsplit(DB_START_TOKEN)[-1]
                         log["query"] = db_query
-                        values = per_example_dbs[i].retrieve_from_database(
+                        # Use unified DB if set, otherwise use per-example DB
+                        db_to_use = unified_db if unified_db is not None else per_example_dbs[i]
+                        values = db_to_use.retrieve_from_database(
                             DB_START_TOKEN + db_query,
                             threshold=self.similarity_threshold,
                             top_k=self.top_k,

@@ -11,8 +11,7 @@ from openai import AsyncOpenAI
 from datetime import datetime
 from constants import REPO_ROOT
 from data import get_dataset
-
-from eval.metrics import f1_score
+from eval.metrics import normalize_answer, f1_score
 import json
 
 
@@ -198,14 +197,14 @@ async def process_example(semaphore, example, idx, args: argparse.Namespace):
                 if result is None:
                     return None
                 
-                answers = example["answers"]
+                answers = [normalize_answer(a) for a in example["answers"]]
 
                 if not is_valid_rollout(result):
                     score = -1.0
                     print(f"completed example {idx + 1}, no answer was given.")
                     return RolloutMetadata(full_response = "", annotated_text = result, triplets = triplets_formatted_str, golden_answer = answers, f1_score = score, lmlm_answer = None, question = question)
 
-                lmlm_answer = result.split(ANSWER_START_TOKEN)[-1].split(ANSWER_END_TOKEN)[0]
+                lmlm_answer = normalize_answer(result.split(ANSWER_START_TOKEN)[-1].split(ANSWER_END_TOKEN)[0])
                 full_response = ""
                 annotated_text = result
                 if "<plan>" in result and "</plan>" in result:
