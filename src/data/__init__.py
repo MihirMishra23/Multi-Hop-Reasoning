@@ -6,6 +6,7 @@ from .hotpotqa import load_hotpotqa
 from .musique import load_musique
 from .mquake import load_mquake
 from .two_wiki import load_2wiki
+from .synthworlds import load_synthworlds
 
 
 def get_dataset(
@@ -28,7 +29,10 @@ def get_dataset(
         return load_mquake(split = split, limit = limit, seed = seed)
     if name_norm == "2wiki":
         return load_2wiki(setting=setting, split=split, limit=limit, seed=seed)
+    if name_norm in {"synthworlds", "synth"}:
+        # For SynthWorlds, 'setting' is used as the subset (qa-sm or qa-rm)
+        return load_synthworlds(subset=setting, split=split, source=source, limit=limit, seed=seed)
     raise ValueError(f"Unsupported dataset: {name}")
 
 
-__all__ = ["get_dataset", "load_hotpotqa", "load_musique"]
+__all__ = ["get_dataset", "load_hotpotqa", "load_musique", "load_synthworlds"]
