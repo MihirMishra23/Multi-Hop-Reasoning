@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple, Optional
 
-from .metrics import exact_match_score, f1_score
+from .metrics import exact_match_score, f1_score, normalize_answer, exact_match_relaxed, mquake_f1_score
 from data import get_dataset
 
 
@@ -152,8 +152,8 @@ def evaluate_file(
 ) -> Dict[str, Any]:
     """Evaluate a single preds JSON file and return metrics + metadata.
 
-    Args:
-        preds_path: Path to preds JSON saved by scripts/run_agent.py
+    For MQuAKE, answer_type is auto-inferred from the split name:
+    splits starting with 'eval-edit' use new_answer, all others use answer.
 
     Returns:
         dict with keys:
@@ -170,6 +170,10 @@ def evaluate_file(
     setting_name = setting or meta.setting
     split_name = split or meta.split
 
+    # Determine answer_type from split: eval-edit* → new_answer, else → answer
+    is_mquake = dataset_name and dataset_name.lower() in ("mquake", "mquake-remastered")
+    answer_type = "new_answer" if (is_mquake and split_name and split_name.startswith("eval-edit")) else "answer"
+
     # Lazily loaded mapping from qid -> joined gold answers
     gold_by_id: Dict[str, str] | None = None
 
@@ -185,44 +189,89 @@ def evaluate_file(
     # Extract results from new format (with fallback for potential edge cases)
     results = preds.get("results", preds)
     
+    use_new_answer = is_mquake and answer_type == "new_answer"
+
     for _qid, rec in results.items():
         pred_text = rec.get("pred", "")
 
         # gold key variations for robustness
-        gold_field = (
-            rec.get("gold_answer")
-            if "gold_answer" in rec
-            else rec.get("answers")
-            if "answers" in rec
-            else rec.get("true")
-        )
-        gold_text = _safe_join_gold(gold_field)
+        # For MQuAKE with new_answer, use new_gold_answer field
+        if use_new_answer:
+            gold_field = rec.get("new_gold_answer") or rec.get("gold_answer")
+        else:
+            gold_field = (
+                rec.get("gold_answer")
+                if "gold_answer" in rec
+                else rec.get("answers")
+                if "answers" in rec
+                else rec.get("true")
+            )
+
+        # For MQuAKE, keep gold as list for relaxed matching
+        if is_mquake:
+            if isinstance(gold_field, (list, tuple)):
+                gold_list = [str(x) for x in gold_field if x]
+            elif gold_field:
+                gold_list = [str(gold_field)]
+            else:
+                gold_list = []
+        else:
+            gold_text = _safe_join_gold(gold_field)
 
         # If gold missing, try to load from dataset once
-        if gold_text == "" and dataset_name not in (None, "unknown") and split_name is not None:
-            if gold_by_id is None:
-                # get_dataset requires a setting param; for datasets without setting, pass a placeholder
-                effective_setting = setting_name or "na"
-                try:
-                    ds = get_dataset(name = dataset_name, setting = effective_setting, split = split_name, source=source)
-                    tmp: Dict[str, str] = {}
-                    for row in ds:
-                        ans = row.get("answers") or []
-                        if isinstance(ans, list):
-                            tmp[row["id"]] = "\n".join(str(x) for x in ans)
-                        else:
-                            tmp[row["id"]] = str(ans)
-                    gold_by_id = tmp
-                except Exception:
-                    gold_by_id = {}
-            gold_text = gold_by_id.get(str(_qid), "")
+        if is_mquake:
+            if not gold_list and dataset_name not in (None, "unknown") and split_name is not None:
+                if gold_by_id is None:
+                    effective_setting = setting_name or "na"
+                    try:
+                        ds = get_dataset(name=dataset_name, setting=effective_setting, split=split_name, source=source)
+                        tmp: Dict[str, Any] = {}
+                        # Use new_answers if answer_type is new_answer, else use answers
+                        ans_key = "new_answers" if use_new_answer else "answers"
+                        for row in ds:
+                            ans = row.get(ans_key) or row.get("answers") or []
+                            if isinstance(ans, list):
+                                tmp[str(row.get("case_id") or row.get("id"))] = ans
+                            else:
+                                tmp[str(row.get("case_id") or row.get("id"))] = [str(ans)]
+                        gold_by_id = tmp
+                    except Exception:
+                        gold_by_id = {}
+                gold_list = gold_by_id.get(str(_qid), [])
+        else:
+            if gold_text == "" and dataset_name not in (None, "unknown") and split_name is not None:
+                if gold_by_id is None:
+                    # get_dataset requires a setting param; for datasets without setting, pass a placeholder
+                    effective_setting = setting_name or "na"
+                    try:
+                        ds = get_dataset(name=dataset_name, setting=effective_setting, split=split_name, source=source)
+                        tmp: Dict[str, str] = {}
+                        for row in ds:
+                            ans = row.get("answers") or []
+                            if isinstance(ans, list):
+                                tmp[row["id"]] = "\n".join(str(x) for x in ans)
+                            else:
+                                tmp[row["id"]] = str(ans)
+                        gold_by_id = tmp
+                    except Exception:
+                        gold_by_id = {}
+                gold_text = gold_by_id.get(str(_qid), "")
 
-        if gold_text == "":
-            # If no gold present, skip this record
-            continue
+        # Skip if no gold present
+        if is_mquake:
+            if not gold_list:
+                continue
+        else:
+            if gold_text == "":
+                continue
 
-        em = 1.0 if exact_match_score(pred_text, gold_text) else 0.0
-        f1, precision, recall = f1_score(pred_text, gold_text)
+        # Compute metrics (MQuAKE uses relaxed EM and max F1)
+        if is_mquake:
+            em = exact_match_relaxed(pred_text, gold_list)
+            f1, precision, recall = mquake_f1_score(pred_text, gold_list)
+        else:
+            em = 1.0 if exact_match_score(pred_text, gold_text) else 0.0
+            f1, precision, recall = f1_score(pred_text, gold_text)
 
         sum_em += em
         sum_f1 += f1

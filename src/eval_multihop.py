@@ -31,7 +31,7 @@ from datetime import datetime
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 from constants import REPO_ROOT
-
+import warnings
 import torch
 
 from agent import get_agent, Agent
@@ -172,7 +172,7 @@ def process_single_batch(
     examples_metadata = []
 
     for ex in ds:
-        qid = ex.get("id") or ex.get("_id")
+        qid = ex.get("id") or ex.get("_id") or ex.get("case_id")
         question = ex["question"]
         contexts = ex.get("contexts") or []
         # two_phase was trained on golden_contexts (2 supporting paragraphs), not all 10
@@ -181,20 +181,25 @@ def process_single_batch(
             contexts = ex.get("golden_contexts") or contexts
 
         queries.append(question)
-        examples_metadata.append({
+        
+        metadata_entry = {
             "qid": qid,
             "question": question,
             "answers": ex["answers"],
-            "supporting_facts": ex["supporting_facts"],
+            "supporting_facts": ex.get("supporting_facts"),
             "contexts": contexts,
-        })
+        }
+        # For MQuAKE, also capture new_answers for knowledge editing evaluation
+        if "new_answers" in ex:
+            metadata_entry["new_answers"] = ex["new_answers"]
+        examples_metadata.append(metadata_entry)
 
     logger.info(f"Processing batch of {len(queries)} queries")
 
-    if args.method in ("rag", "icl", "cot"):
+    if args.method in ("rag", "icl"):
         agent.reset(contexts)  # type: ignore
 
-    if args.method in ("direct", "cot"):
+    if args.method == "direct":
         answers = []
         traces = []
         for query in queries:
@@ -262,6 +267,9 @@ def process_single_batch(
             "question": metadata["question"],
             "trace": serialized_trace,
         }
+        # For MQuAKE, also save new_gold_answer for knowledge editing evaluation
+        if "new_answers" in metadata:
+            results[str(metadata["qid"])]["new_gold_answer"] = metadata["new_answers"]
         if args.method == "lmlm":
             lookup_logs = getattr(agent, "_lookup_logs", [])
             if idx < len(lookup_logs):
@@ -350,7 +358,7 @@ def save_results_to_file(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run agent over a dataset and save predictions.")
-    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki"], help="Dataset name")
+    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki", "mquake", "mquake-remastered"], help="Dataset name")
     parser.add_argument(
         "--setting",
         default="distractor",
@@ -360,13 +368,13 @@ def main() -> None:
     parser.add_argument(
         "--split",
         default="dev",
-        choices=["train", "dev", "validation", "test"],
+        choices=["train", "dev", "validation", "test", "eval-edit", "eval-edit-new", "eval-original"],
         help="Dataset split",
     )
     parser.add_argument(
         "--method",
         default="icl",
-        choices=["db", "rag", "icl", "cot", "lmlm", "direct", "two_phase"],
+        choices=["db", "rag", "icl", "lmlm", "direct", "two_phase"],
         help="Agent method label (for output path)",
     )
     parser.add_argument(
@@ -390,7 +398,7 @@ def main() -> None:
     parser.add_argument(
         "--top-k",
         default=4,
-        type = int,
+        type=int,
         help="Maximum number of results to retrieve from database",
     )
     parser.add_argument(
@@ -606,8 +614,19 @@ def main() -> None:
     print("split is :", args.split)
 
     # Load full dataset once (with seed for deterministic shuffling)
+    # BUG: either use start_index or sub_split, not both
+    # if start_index is used, sub_split should be None
+    # if args.start_index is not None:
+    #     sub_split = None
+    #     if args.sub_split is not None:
+    #         warnings.warn("start_index is used, sub_split will be ignored during dataset loading")
+    # else:
+    #     sub_split = args.sub_split
+
     full_dataset = get_dataset(name = args.dataset, setting = args.setting, split =  args.split, seed=args.seed)
     total_dataset_size = len(full_dataset)
+
+    print(f"examples in dataset: {full_dataset[0]}")
 
     # Validate start_index
     if args.start_index >= total_dataset_size:

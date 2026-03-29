@@ -1,7 +1,7 @@
 #
 # Setup instructions — eval_lmlm_multihop.sh
 #
-# Methods supported: direct, icl, cot, rag, lmlm
+# Methods supported: direct, icl, rag, lmlm
 #
 # Prereqs:
 # - Activate your environment and install repo deps:
@@ -35,7 +35,7 @@ NUM_SAMPLES=1000
 SAVE_VERSION="put-anything-here" #use this to add info to save path
 TOP_K=4
 METHODS=("lmlm")
-# METHODS=("direct" "icl" "cot" "rag" "lmlm")
+# METHODS=("direct" "icl" "rag" "lmlm")
 # uncomment above to eval on all methods
 SIMILARITY_THRESHOLD=0.6
 
@@ -92,20 +92,27 @@ if [ "${DATASET}" = "hotpotqa" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
-    elif [ "${SPLIT}" = "debug_dev" ]; then
+        SPLIT="dev"
+    elif [ "${SPLIT}" = "dev-debug" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/generated_database_validation_42_1000.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
         SPLIT="dev"
-    elif [ "${SPLIT}" = "train_val100" ]; then
+    elif [ "${SPLIT}" = "train-val100" ]; then
         echo "Using eval set from GRPO"
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
         DEFAULT_NUM_SAMPLES=100
         START_IDX=90347
         SPLIT="train"
-    elif [ "${SPLIT}" = "train_val1k" ]; then
+    elif [ "${SPLIT}" = "train-val1k" ]; then
         echo "Using train set from GRPO"
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=82347
+        SPLIT="train"
+    elif [ "${SPLIT}" = "train-val1k-debug" ]; then
+        echo "Using train set from GRPO"
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_all_context_exp_prompt.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=82347
         SPLIT="train"
@@ -124,11 +131,36 @@ elif [ "${DATASET}" = "musique" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/musique_validation_42_1000_all_context_database.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
+        SPLIT="dev"
     elif [ "${SPLIT}" = "train" ]; then
         echo "There is no train database made for musique"
         exit 1
     else
         echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
+        exit 1
+    fi
+elif [ "${DATASET}" = "mquake" ] || [ "${DATASET}" = "mquake-remastered" ]; then
+    if [ "${SPLIT}" = "eval-edit" ]; then
+        # Evaluate with edited database against new_answer (auto-inferred in Python)
+        DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-edit-database-multi-hop.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+    elif [ "${SPLIT}" = "eval-edit-new" ]; then
+        # Evaluate with edited database against new_answer (auto-inferred in Python)
+        DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-new-database-multi-hop.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+    elif [ "${SPLIT}" = "eval-original" ]; then
+        # Evaluate with original database against original answer (auto-inferred in Python)
+        DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-org-database-multi-hop.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+    elif [ "${SPLIT}" = "train" ]; then
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/mquake-remastered/mquake_remastered_cf6334_database.json"
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+    else
+        echo "Error: SPLIT must be 'eval-edit', 'eval-edit-new', 'eval-original', or 'train' for mquake, got '${SPLIT}'"
         exit 1
     fi
 elif [ "${DATASET}" = "two_wiki" ] || [ "${DATASET}" = "2wiki" ]; then
@@ -150,9 +182,8 @@ if [ "${NUM_SAMPLES}" -gt "${DEFAULT_NUM_SAMPLES}" ]; then
 fi
 
 MAX_TOKENS=1024
-BATCH_SIZE_DIRECT=64
-BATCH_SIZE_ICL=64
-BATCH_SIZE_COT=64
+BATCH_SIZE_DIRECT=32
+BATCH_SIZE_ICL=1
 BATCH_SIZE_RAG=1
 BATCH_SIZE_LMLM=64
 OUTPUT_DIR=./output
@@ -160,11 +191,14 @@ SETTING=distractor
 SAVE_EVERY=64
 SEED=42
 
-
-if [[ "${MODEL_PATH}" == *"-nak"* ]]; then
+# BUG: SFT model does not support adaptive k
+if [[ "${MODEL_PATH}" == *"-nak"* || "${MODEL_PATH}" != *"grpo"* ]]; then
     ADAPTIVE_K=""
+    TOP_K=1
 else
+    # GRPO model. consistent with training
     ADAPTIVE_K="--adaptive-k"
+    TOP_K=4
 fi
 
 if [ -n "${USE_INVERSES}" ]; then
