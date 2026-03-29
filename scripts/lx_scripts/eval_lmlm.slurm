@@ -142,36 +142,36 @@ MODEL_PATH_LST=(
 
     # SFT
     Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k
-    Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
 
-    # full run Main
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
-    Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # # full run Main
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
 
 
     ##### Ablation: 
     # 2phase em_size
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-em_size-2ph-prsft-wcount-th0.6-topk4-nak
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-em_size-2ph-prsft-wcount-th0.6-topk4-nak
     
     # 2phase lr=1e-6
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-2ph-prcontext_only-wcount-th0.6-topk4-nak
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-2ph-prcontext_only-wcount-th0.6-topk4-nak
 
-    # 1 phase only other 2 variants
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-th0.6-topk4-nak
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-th0.6-topk4-nak
-    # 1 phase only final
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-th0.6-topk4-nak
+    # # 1 phase only other 2 variants
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-th0.6-topk4-nak
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-th0.6-topk4-nak
+    # # 1 phase only final
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-th0.6-topk4-nak
 
-    # early sft
-    checkpoint-368-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # # early sft
+    # checkpoint-368-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
 
-    # vanilla grpo
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-vanilla-th0.6-topk4-nak
+    # # vanilla grpo
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-vanilla-th0.6-topk4-nak
 
-    # zero rl
-    Qwen3-4B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1_format-2ph-prformatted_zero_rl_v7-wcount-th0.6-topk4-nak
-    Qwen3-1.7B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1_format-2ph-prformatted_zero_rl_v5-wcount-th0.6-topk4-nak
-    Qwen3-1.7B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prformatted_zero_rl_v5-wcount-th0.6-topk4-nak
+    # # zero rl
+    # Qwen3-4B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1_format-2ph-prformatted_zero_rl_v7-wcount-th0.6-topk4-nak
+    # Qwen3-1.7B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1_format-2ph-prformatted_zero_rl_v5-wcount-th0.6-topk4-nak
+    # Qwen3-1.7B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prformatted_zero_rl_v5-wcount-th0.6-topk4-nak
 
 
 
@@ -181,19 +181,25 @@ MODEL_PATH_LST=(
 TWO_PHASE_METHOD="two_phase"
 
 DATASET_LST=(
-    # hotpotqa
-    # musique
-    # 2wiki
-    mquake
+    hotpotqa
+    musique
+    2wiki
+    # mquake
 )
 SPLIT_lst=(
-    # train_val1k
+    train_val1k
     dev
+    # eval-original
+    # eval-edit
 )
-SAVE_VERSION="_0325"
+SAVE_VERSION="_0329_debug"
 NUM_SAMPLES=1000
 # USE_TRAIN_PARAMS=""
 USE_TRAIN_PARAMS="--use-train-params"
+
+CONCAT_ALL_DB="--concat-all-db"              # set to "--concat-all-db" to build unified database
+USE_CONTEXTS="gold"
+
 
 
 # -----------------------
@@ -206,7 +212,7 @@ for SPLIT in "${SPLIT_lst[@]}"; do
     if [[ "${MODEL_DIR}" != *"grpo"* ]]; then
     # 1.7b SFT_MODEL_ROOT
     # others SFT_MODEL_ROOT2
-        if [[ "${MODEL_DIR}" == *"1.7b"* ]]; then
+        if [[ "${MODEL_DIR}" == *"1.7B"* ]]; then
             MODEL_ROOT="${SFT_MODEL_ROOT}"
         else
             MODEL_ROOT="${SFT_MODEL_ROOT2}"
@@ -235,13 +241,18 @@ for SPLIT in "${SPLIT_lst[@]}"; do
 
         for DATASET in "${DATASET_LST[@]}"; do
             echo "========== Evaluating ${MODEL_PATH} on ${DATASET} =========="
+            if [[ "${DATASET}" == "mquake"* ]]; then
+                METHOD="lmlm"
+            else
+                METHOD="${TWO_PHASE_METHOD}"
+            fi
             bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
                 --model_path "${MODEL_PATH}" \
                 --dataset "${DATASET}" \
                 --split "${SPLIT}" \
                 --num_samples ${NUM_SAMPLES} \
                 --save_version "${SAVE_VERSION}" \
-                --method "${TWO_PHASE_METHOD}" \
+                --method "${METHOD}" \
                 ${USE_TRAIN_PARAMS}
             done
         done

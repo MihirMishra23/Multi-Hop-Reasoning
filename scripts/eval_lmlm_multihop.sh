@@ -103,26 +103,9 @@ if [ "${DATASET}" = "hotpotqa" ]; then
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
         SPLIT="dev"
-    elif [ "${SPLIT}" = "dev-debug" ]; then
-        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/generated_database_validation_42_1000.json"
-        DEFAULT_NUM_SAMPLES=1000
-        START_IDX=0
-        SPLIT="dev"
-    elif [ "${SPLIT}" = "train-val100" ]; then
-        echo "Using eval set from GRPO"
-        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
-        DEFAULT_NUM_SAMPLES=100
-        START_IDX=90347
-        SPLIT="train"
-    elif [ "${SPLIT}" = "train-val1k" ]; then
+    elif [ "${SPLIT}" = "train_val1k" ]; then
         echo "Using train set from GRPO"
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
-        DEFAULT_NUM_SAMPLES=1000
-        START_IDX=82347
-        SPLIT="train"
-    elif [ "${SPLIT}" = "train-val1k-debug" ]; then
-        echo "Using train set from GRPO"
-        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_all_context_exp_prompt.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=82347
         SPLIT="train"
