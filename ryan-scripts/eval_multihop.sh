@@ -162,9 +162,10 @@ elif [ "${DATASET}" = "two_wiki" ] || [ "${DATASET}" = "2wiki" ]; then
 else
     echo "Using non-default dataset, with no default num samples set or anything:  '${DATASET}'"
     START_IDX=0
+    DEFAULT_NUM_SAMPLES=""
 fi
 
-if [ "${NUM_SAMPLES}" -gt "${DEFAULT_NUM_SAMPLES}" ]; then
+if [ -n "${DEFAULT_NUM_SAMPLES}" ] && [ "${NUM_SAMPLES}" -gt "${DEFAULT_NUM_SAMPLES}" ]; then
     NUM_SAMPLES="${DEFAULT_NUM_SAMPLES}"
 fi
 

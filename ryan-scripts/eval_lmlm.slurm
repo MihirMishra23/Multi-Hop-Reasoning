@@ -223,11 +223,14 @@ for SPLIT in "${SPLIT_lst[@]}"; do
             # Automatically set setting to 'qa-sm' for synthworlds dataset
             if [[ "${DATASET}" == "synthworlds" ]]; then
                 DATASET_SETTING="qa-sm"
+                DATASET_USE_CONTEXTS="golden"
+                echo "NOTE: Automatically setting --use-contexts=golden for synthworlds dataset (only golden contexts are available)"
             else
                 DATASET_SETTING="${SETTING}"
+                DATASET_USE_CONTEXTS="${USE_CONTEXTS}"
             fi
 
-            echo "========== Evaluating ${MODEL_PATH} on ${DATASET} (setting=${DATASET_SETTING}) =========="
+            echo "========== Evaluating ${MODEL_PATH} on ${DATASET} (setting=${DATASET_SETTING}, use-contexts=${DATASET_USE_CONTEXTS}) =========="
             bash /home/rtn27/Multi-Hop-Reasoning/ryan-scripts/eval_multihop.sh \
                 --model_path "${MODEL_PATH}" \
                 --dataset "${DATASET}" \
@@ -238,7 +241,7 @@ for SPLIT in "${SPLIT_lst[@]}"; do
                 --output-dir "${OUTPUT_DIR}" \
                 ${USE_TRAIN_PARAMS} \
                 ${CONCAT_ALL_DB} \
-                --use-contexts "${USE_CONTEXTS}" \
+                --use-contexts "${DATASET_USE_CONTEXTS}" \
                 --setting "${DATASET_SETTING}"
             done
         done

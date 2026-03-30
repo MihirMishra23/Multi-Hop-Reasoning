@@ -7,9 +7,10 @@ that returns a Hugging Face Dataset with a unified schema:
   - question: str
   - answers: List[str]
   - golden_contexts: List[str]
+  - contexts: List[str] (same as golden_contexts)
   - supporting_facts: List[Dict[str, Any]] (empty - not used for SynthWorlds)
 
-Note: SynthWorlds does NOT have a 'contexts' field, only 'golden_contexts'.
+Note: SynthWorlds 'contexts' field is set to the same value as 'golden_contexts'.
 
 Dataset info:
   - HuggingFace: kenqgu/SynthWorlds
@@ -54,7 +55,7 @@ def _normalize_hf_dataset(hf_dataset: Any) -> HFDataset:
       - instance_id → id
       - query → question
       - gold_answers → answers
-      - gold_docs → golden_contexts
+      - gold_docs → golden_contexts (also copied to contexts)
     """
     rows: List[Dict[str, Any]] = []
 
@@ -75,6 +76,7 @@ def _normalize_hf_dataset(hf_dataset: Any) -> HFDataset:
             "question": str(question),
             "answers": answers,
             "golden_contexts": golden_contexts,
+            "contexts": golden_contexts,  # Same as golden_contexts for SynthWorlds
             # Supporting facts not used for SynthWorlds (no title/sentence granularity)
             "supporting_facts": [],
         })
@@ -99,7 +101,7 @@ def load_synthworlds(
         seed: optional random seed for shuffling
 
     Returns:
-        HFDataset with unified schema (no 'contexts' field, only 'golden_contexts')
+        HFDataset with unified schema ('contexts' is set to same value as 'golden_contexts')
     """
     subset_norm = _normalize_subset(subset)
     split_norm = _normalize_split(split)
