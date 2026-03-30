@@ -170,8 +170,8 @@ def evaluate_file(
     setting_name = setting or meta.setting
     split_name = split or meta.split
 
-    # Lazily loaded mapping from qid -> joined gold answers
-    gold_by_id: Dict[str, str] | None = None
+    # Lazily loaded mapping from qid -> list of gold answers
+    gold_by_id: Dict[str, list] | None = None
 
     total = 0
     sum_em = 0.0
@@ -196,33 +196,55 @@ def evaluate_file(
             if "answers" in rec
             else rec.get("true")
         )
-        gold_text = _safe_join_gold(gold_field)
+
+        # Ensure gold_field is a list of possible answers
+        if gold_field is None:
+            gold_answers = []
+        elif isinstance(gold_field, (list, tuple)):
+            gold_answers = [str(x) for x in gold_field]
+        else:
+            gold_answers = [str(gold_field)]
 
         # If gold missing, try to load from dataset once
-        if gold_text == "" and dataset_name not in (None, "unknown") and split_name is not None:
+        if not gold_answers and dataset_name not in (None, "unknown") and split_name is not None:
             if gold_by_id is None:
                 # get_dataset requires a setting param; for datasets without setting, pass a placeholder
                 effective_setting = setting_name or "na"
                 try:
                     ds = get_dataset(name = dataset_name, setting = effective_setting, split = split_name, source=source)
-                    tmp: Dict[str, str] = {}
+                    tmp: Dict[str, list] = {}
                     for row in ds:
                         ans = row.get("answers") or []
                         if isinstance(ans, list):
-                            tmp[row["id"]] = "\n".join(str(x) for x in ans)
+                            tmp[row["id"]] = [str(x) for x in ans]
                         else:
-                            tmp[row["id"]] = str(ans)
+                            tmp[row["id"]] = [str(ans)]
                     gold_by_id = tmp
                 except Exception:
                     gold_by_id = {}
-            gold_text = gold_by_id.get(str(_qid), "")
+            gold_answers = gold_by_id.get(str(_qid), [])
 
-        if gold_text == "":
+        if not gold_answers:
             # If no gold present, skip this record
             continue
 
-        em = 1.0 if exact_match_score(pred_text, gold_text) else 0.0
-        f1, precision, recall = f1_score(pred_text, gold_text)
+        # For multiple gold answers, check if pred matches ANY (for EM) and take MAX (for F1)
+        em = 0.0
+        best_f1 = 0.0
+        best_precision = 0.0
+        best_recall = 0.0
+
+        for gold_answer in gold_answers:
+            if exact_match_score(pred_text, gold_answer):
+                em = 1.0
+
+            f1, precision, recall = f1_score(pred_text, gold_answer)
+            if f1 > best_f1:
+                best_f1 = f1
+                best_precision = precision
+                best_recall = recall
+
+        f1, precision, recall = best_f1, best_precision, best_recall
 
         sum_em += em
         sum_f1 += f1
