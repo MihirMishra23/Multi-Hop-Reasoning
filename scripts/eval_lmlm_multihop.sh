@@ -1,94 +1,47 @@
 #
-# Setup instructions — eval_lmlm_multihop.sh
+# eval_lmlm_multihop.sh — Evaluate lmlm / two_phase / direct / icl / rag methods
 #
-# Methods supported: direct, icl, rag, lmlm
+# Usage:
+#   bash scripts/eval_lmlm_multihop.sh --method lmlm --dataset hotpotqa --split dev
 #
-# Prereqs:
-# - Activate your environment and install repo deps:
-#   pip install -e .
-# - (RAG only) Install FlashRAG:
-#   cd src/tools
-#   git clone https://github.com/RUC-NLPIR/FlashRAG.git
-#   cd FlashRAG
-#   pip install -e .
+# All parameters can be overridden via CLI flags.
 #
-# Run:
-#   bash scripts/eval_lmlm_multihop.sh --method direct
-#
-# Common overrides:
-#   bash scripts/eval_lmlm_multihop.sh \
-#     --method icl \
-#     --llm_model gpt-4 \
-#     --dataset 2wiki \
-#     --split dev \
-#     --num_samples 100
-#
+
+# ── Defaults ─────────────────────────────────────────────────────────────────
 MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1
-# MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop//Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
-# uncomment above to use two_phase model
 LLM_MODEL=gpt-4
 DATASET=hotpotqa
 SPLIT=dev
-USE_INVERSES="true" # or "--use-inverses"
-USE_TRAIN_PARAMS=""   # set to "--use-train-params" to use grpo_train.sh sampling params instead of greedy
-CONCAT_ALL_DB=""      # set to "--concat-all-db" to build unified database
-USE_CONTEXTS="golden" # options: "golden" | "all"
 NUM_SAMPLES=1000
-SAVE_VERSION="put-anything-here" #use this to add info to save path
+SAVE_VERSION="default"
 TOP_K=4
-METHODS=("lmlm")
-# METHODS=("direct" "icl" "rag" "lmlm")
-# uncomment above to eval on all methods
+ADAPTIVE_K=""           # set to "--adaptive-k" to enable adaptive retrieval
+USE_INVERSES=""         # set to "--use-inverses" to enable inverse relations
+USE_TRAIN_PARAMS=""     # set to "--use-train-params" to use training sampling params (T=1.0)
+CONCAT_ALL_DB=""        # set to "--concat-all-db" to build unified database (two_phase only)
+USE_CONTEXTS="golden"   # "golden" | "all" (two_phase only)
 SIMILARITY_THRESHOLD=0.6
+METHODS=("lmlm")
+OUTPUT_DIR=./output/main_tables
 
-
-# Parse command line arguments
+# ── Parse CLI arguments ──────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --model_path)
-            MODEL_PATH="$2"
-            shift 2
-            ;;
-        --dataset)
-            DATASET="$2"
-            shift 2
-            ;;
-        --method)
-            METHODS=("$2")
-            shift 2
-            ;;
-        --llm_model)
-            LLM_MODEL="$2"
-            shift 2
-            ;;
-        --split)
-            SPLIT="$2"
-            shift 2
-            ;;
-        --num_samples)
-            NUM_SAMPLES="$2"
-            shift 2
-            ;;
-        --use-inverses)
-            USE_INVERSES="--use-inverses"
-            shift
-            ;;
-        --use-train-params)
-            USE_TRAIN_PARAMS="--use-train-params"
-            shift
-            ;;
-        --concat-all-db)
-            CONCAT_ALL_DB="--concat-all-db"
-            shift
-            ;;
-        --use-contexts)
-            USE_CONTEXTS="$2"
-            shift 2
-            ;;
-        --save_version)
-            SAVE_VERSION="$2"
-            shift 2
-            ;;
+        --model_path)       MODEL_PATH="$2";       shift 2 ;;
+        --dataset)          DATASET="$2";           shift 2 ;;
+        --method)           METHODS=("$2");         shift 2 ;;
+        --llm_model)        LLM_MODEL="$2";        shift 2 ;;
+        --split)            SPLIT="$2";             shift 2 ;;
+        --num_samples)      NUM_SAMPLES="$2";       shift 2 ;;
+        --top-k)            TOP_K="$2";             shift 2 ;;
+        --adaptive-k)       ADAPTIVE_K="--adaptive-k"; shift ;;
+        --use-inverses)     USE_INVERSES="--use-inverses"; shift ;;
+        --use-train-params) USE_TRAIN_PARAMS="--use-train-params"; shift ;;
+        --concat-all-db)    CONCAT_ALL_DB="--concat-all-db"; shift ;;
+        --use-contexts)     USE_CONTEXTS="$2";      shift 2 ;;
+        --similarity-threshold) SIMILARITY_THRESHOLD="$2"; shift 2 ;;
+        --save_version)     SAVE_VERSION="$2";      shift 2 ;;
+        --output-dir)       OUTPUT_DIR="$2";        shift 2 ;;
         *)
             echo "Unknown argument: $1"
             exit 1
@@ -96,27 +49,24 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-
+# ── Dataset / split → database path mapping ──────────────────────────────────
 if [ "${DATASET}" = "hotpotqa" ]; then
     if [ "${SPLIT}" = "dev" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
-        SPLIT="dev"
     elif [ "${SPLIT}" = "train_val1k" ]; then
-        echo "Using train set from GRPO"
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=82347
         SPLIT="train"
     elif [ "${SPLIT}" = "train_train1k" ]; then
-        echo "Using train set from GRPO"
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=89347
         SPLIT="train"
     else
-        echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
+        echo "Error: hotpotqa SPLIT must be 'dev', 'train_val1k', or 'train_train1k', got '${SPLIT}'"
         exit 1
     fi
 elif [ "${DATASET}" = "musique" ]; then
@@ -124,27 +74,20 @@ elif [ "${DATASET}" = "musique" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/musique_validation_42_1000_all_context_database.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
-        SPLIT="dev"
-    elif [ "${SPLIT}" = "train" ]; then
-        echo "There is no train database made for musique"
-        exit 1
     else
-        echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
+        echo "Error: musique SPLIT must be 'dev', got '${SPLIT}'"
         exit 1
     fi
 elif [ "${DATASET}" = "mquake" ] || [ "${DATASET}" = "mquake-remastered" ]; then
     if [ "${SPLIT}" = "eval-edit" ]; then
-        # Evaluate with edited database against new_answer (auto-inferred in Python)
         DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-edit-database-multi-hop.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
     elif [ "${SPLIT}" = "eval-edit-new" ]; then
-        # Evaluate with edited database against new_answer (auto-inferred in Python)
         DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-new-database-multi-hop.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
     elif [ "${SPLIT}" = "eval-original" ]; then
-        # Evaluate with original database against original answer (auto-inferred in Python)
         DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-org-database-multi-hop.json"
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
@@ -153,7 +96,7 @@ elif [ "${DATASET}" = "mquake" ] || [ "${DATASET}" = "mquake-remastered" ]; then
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
     else
-        echo "Error: SPLIT must be 'eval-edit', 'eval-edit-new', 'eval-original', or 'train' for mquake, got '${SPLIT}'"
+        echo "Error: mquake SPLIT must be 'eval-edit', 'eval-edit-new', 'eval-original', or 'train', got '${SPLIT}'"
         exit 1
     fi
 elif [ "${DATASET}" = "two_wiki" ] || [ "${DATASET}" = "2wiki" ]; then
@@ -162,11 +105,11 @@ elif [ "${DATASET}" = "two_wiki" ] || [ "${DATASET}" = "2wiki" ]; then
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
     else
-        echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
+        echo "Error: 2wiki SPLIT must be 'dev', got '${SPLIT}'"
         exit 1
     fi
 else
-    echo "Error: DATASET must be one of 'hotpotqa', 'musique', or 'two_wiki', got '${DATASET}'"
+    echo "Error: DATASET must be 'hotpotqa', 'musique', 'mquake', or '2wiki', got '${DATASET}'"
     exit 1
 fi
 
@@ -174,89 +117,79 @@ if [ "${NUM_SAMPLES}" -gt "${DEFAULT_NUM_SAMPLES}" ]; then
     NUM_SAMPLES="${DEFAULT_NUM_SAMPLES}"
 fi
 
+# ── Fixed eval parameters ────────────────────────────────────────────────────
 MAX_TOKENS=1024
 BATCH_SIZE_DIRECT=32
 BATCH_SIZE_ICL=1
 BATCH_SIZE_RAG=1
 BATCH_SIZE_LMLM=64
-OUTPUT_DIR=./output
 SETTING=distractor
 SAVE_EVERY=64
 SEED=42
 
-# BUG: SFT model does not support adaptive k
-if [[ "${MODEL_PATH}" == *"-nak"* || "${MODEL_PATH}" != *"grpo"* ]]; then
-    ADAPTIVE_K=""
-    TOP_K=1
-else
-    # GRPO model. consistent with training
-    ADAPTIVE_K="--adaptive-k"
-    TOP_K=4
-fi
-
-if [ -n "${USE_INVERSES}" ]; then
-    USE_INVERSES="--use-inverses"
-else
-    USE_INVERSES=""
-fi
-
-# th-3
+# Auto-detect return-triplets mode from model path
+RETURN_TRIPLETS=""
 if [[ "${MODEL_PATH}" == *"-th-3"* ]]; then
     RETURN_TRIPLETS="--return-triplets"
-else
-    RETURN_TRIPLETS=""
 fi
 
-
+# ── Run evaluation ───────────────────────────────────────────────────────────
 for METHOD in "${METHODS[@]}"; do
-    echo "Running method: ${METHOD}"
+    echo "=========================================="
+    echo "Method: ${METHOD} | Dataset: ${DATASET} | Split: ${SPLIT}"
+    echo "Model:  ${MODEL_PATH}"
+    echo "TOP_K=${TOP_K} ADAPTIVE_K='${ADAPTIVE_K}' USE_INVERSES='${USE_INVERSES}'"
+    echo "=========================================="
+
     if [ "${METHOD}" = "lmlm" ]; then
         python src/eval_multihop.py \
-            --model-path ${MODEL_PATH} \
-            --database-path ${DATABASE_PATH} \
-            --method ${METHOD} \
+            --model-path "${MODEL_PATH}" \
+            --database-path "${DATABASE_PATH}" \
+            --method "${METHOD}" \
             --max-tokens ${MAX_TOKENS} \
             --batch-size ${BATCH_SIZE_LMLM} \
             --total-count ${NUM_SAMPLES} \
-            --output-dir ${OUTPUT_DIR}/ \
-            --save-version ${SAVE_VERSION} \
-            --split ${SPLIT} \
+            --output-dir "${OUTPUT_DIR}/" \
+            --save-version "${SAVE_VERSION}" \
+            --split "${SPLIT}" \
             --setting ${SETTING} \
-            --dataset ${DATASET} \
+            --dataset "${DATASET}" \
             --seed ${SEED} \
             --save-every ${SAVE_EVERY} \
             --start-index ${START_IDX} \
+            --top-k ${TOP_K} \
+            --similarity-threshold ${SIMILARITY_THRESHOLD} \
             ${ADAPTIVE_K} \
             ${RETURN_TRIPLETS} \
             ${USE_INVERSES} \
-            --top-k ${TOP_K} \
-            --similarity-threshold ${SIMILARITY_THRESHOLD} \
             --eval
+
     elif [ "${METHOD}" = "two_phase" ]; then
-        echo "ignoring database path"
         python src/eval_multihop.py \
-            --model-path ${MODEL_PATH} \
-            --method ${METHOD} \
+            --model-path "${MODEL_PATH}" \
+            --method "${METHOD}" \
             --max-tokens ${MAX_TOKENS} \
             --batch-size ${BATCH_SIZE_LMLM} \
             --total-count ${NUM_SAMPLES} \
-            --output-dir ${OUTPUT_DIR}/ \
-            --save-version ${SAVE_VERSION} \
-            --split ${SPLIT} \
+            --output-dir "${OUTPUT_DIR}/" \
+            --save-version "${SAVE_VERSION}" \
+            --split "${SPLIT}" \
             --setting ${SETTING} \
-            --dataset ${DATASET} \
+            --dataset "${DATASET}" \
             --seed ${SEED} \
             --save-every ${SAVE_EVERY} \
             --start-index ${START_IDX} \
-            ${RETURN_TRIPLETS} \
-            ${USE_INVERSES} \
             --top-k ${TOP_K} \
             --similarity-threshold ${SIMILARITY_THRESHOLD} \
+            ${RETURN_TRIPLETS} \
+            ${USE_INVERSES} \
             ${USE_TRAIN_PARAMS} \
             ${CONCAT_ALL_DB} \
-            --use-contexts ${USE_CONTEXTS} \
+            --use-contexts "${USE_CONTEXTS}" \
             --eval
+
     else
+        # direct / icl / rag
         if [ "${METHOD}" = "icl" ]; then
             BATCH_SIZE=${BATCH_SIZE_ICL}
         elif [ "${METHOD}" = "rag" ]; then
@@ -265,15 +198,15 @@ for METHOD in "${METHODS[@]}"; do
             BATCH_SIZE=${BATCH_SIZE_DIRECT}
         fi
         python src/eval_multihop.py \
-            --method ${METHOD} \
-            --model ${LLM_MODEL} \
+            --method "${METHOD}" \
+            --model "${LLM_MODEL}" \
             --max-tokens ${MAX_TOKENS} \
             --batch-size ${BATCH_SIZE} \
             --total-count ${NUM_SAMPLES} \
-            --output-dir ${OUTPUT_DIR}/ \
-            --split ${SPLIT} \
+            --output-dir "${OUTPUT_DIR}/" \
+            --split "${SPLIT}" \
             --setting ${SETTING} \
-            --dataset ${DATASET} \
+            --dataset "${DATASET}" \
             --seed ${SEED} \
             --save-every ${SAVE_EVERY} \
             --start-index ${START_IDX} \

@@ -702,7 +702,16 @@ def main() -> None:
         model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
         output_dir = os.path.join(base_output_dir, args.method, args.dataset, model_name)
         use_inv_str = "_inv" if args.use_inverses else ""
-        save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}.json"
+        # Encode all settings that vary across runs to prevent file overwrite
+        settings_str = ""
+        if args.method == "two_phase":
+            settings_str += f"_ctx{args.use_contexts}"
+            if args.concat_all_db:
+                settings_str += "_cdb"
+        settings_str += f"_k{args.top_k}"
+        if getattr(args, "use_train_params", False):
+            settings_str += "_tp"
+        save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}{settings_str}.json"
         save_path = os.path.join(output_dir, f"generations{args.save_version}", f"eval_{save_postfix}")
         save_results_path = os.path.join(output_dir, f"results{args.save_version}", f"results_{save_postfix}")
     else:
