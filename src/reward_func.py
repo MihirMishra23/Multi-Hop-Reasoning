@@ -91,7 +91,7 @@ _PHASE1_COMMENTARY_MARKERS = (
 )
 _EOS_TOKENS = ("<|im_end|>", "<|endoftext|>", "<|im_start|>", "<pad>")
 
-FORMAT_PENALTY = -0.5  # tune here: -0.5 is mild, -1.0 is more aggressive
+FORMAT_PENALTY = -1  # tune here: -0.5 is mild, -1.0 is more aggressive
 
 
 _DB_TOKEN_PAT = re.compile(
@@ -182,63 +182,15 @@ def _phase1_format_ok(lines: list[str], text: str) -> bool:
 
 
 def _phase2_format_score(c: str) -> float:
-    """Return the format penalty for a Phase 2 QA completion.
-
-    Two independent penalties, each -0.5:
-    - NO_LOOKUP  (-0.5): no DB lookup found before <answer>
-    - OTHER      (-0.5): structural issues (missing/misordered answer tags,
-                         misordered steps tags, empty answer, EOS leakage)
-
-    Possible return values: 0.0, -0.5, -1.0.
-
-    Supports two formats:
-    - With <steps>...</steps> (v5 and earlier): requires steps tags in correct order.
-    - Without <steps> (v6+): lookups appear directly before <answer>.
     """
-    no_lookup_penalty = 0.0
-    other_penalty = 0.0
+    Single penalty:
+    - NO_WELL_FORMED_LOOKUP (-0.5): no complete well-formed lookup found in completion
 
-    # --- structural checks (OTHER) ---
-    if ANSWER_START_TOKEN not in c or ANSWER_END_TOKEN not in c:
-        other_penalty = FORMAT_PENALTY
-    else:
-        ao = c.index(ANSWER_START_TOKEN)
-
-        if STEPS_START_TOKEN in c:
-            if STEPS_END_TOKEN not in c:
-                other_penalty = FORMAT_PENALTY
-            else:
-                so = c.index(STEPS_START_TOKEN)
-                sc = c.index(STEPS_END_TOKEN)
-                if not (so < sc < ao) or c.count(STEPS_START_TOKEN) > 1:
-                    other_penalty = FORMAT_PENALTY
-
-        if other_penalty == 0.0:
-            try:
-                answer = c.split(ANSWER_START_TOKEN)[1].split(ANSWER_END_TOKEN)[0].strip()
-            except IndexError:
-                answer = ""
-            if not answer:
-                other_penalty = FORMAT_PENALTY
-
-        if other_penalty == 0.0 and any(tok in c for tok in _EOS_TOKENS):
-            other_penalty = FORMAT_PENALTY
-
-    # --- lookup check (NO_LOOKUP) ---
-    if ANSWER_START_TOKEN in c:
-        ao = c.index(ANSWER_START_TOKEN)
-        if STEPS_START_TOKEN in c and STEPS_END_TOKEN in c:
-            so = c.index(STEPS_START_TOKEN)
-            sc = c.index(STEPS_END_TOKEN)
-            lookup_region = c[so + len(STEPS_START_TOKEN):sc] if so < sc else ""
-        else:
-            lookup_region = c[:ao]
-        if DB_START_TOKEN not in lookup_region:
-            no_lookup_penalty = FORMAT_PENALTY
-    else:
-        no_lookup_penalty = FORMAT_PENALTY
-
-    return no_lookup_penalty + other_penalty
+    Everything else (malformed syntax, missing answer tags) is implicitly
+    captured — if the model can't produce even one good lookup, it gets penalized.
+    """
+    well_formed_lookups = _DB_TOKEN_PAT.findall(c)
+    return FORMAT_PENALTY if not well_formed_lookups else 0.0
 
 
 def format_reward_zero_rl(completions, solution, **kwargs):

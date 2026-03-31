@@ -58,7 +58,7 @@ TOP_K=4
 
 # ── Logging / checkpointing ───────────────────────────────────────────────────
 LOGGING_STEPS=5
-SAVE_STEPS=100
+SAVE_STEPS=50
 EVAL_STEPS=500
 
 # ── Retrieval & reward ────────────────────────────────────────────────────────
@@ -101,6 +101,7 @@ while [[ $# -gt 0 ]]; do
         --two_phase)             TWO_PHASE=1;                 shift 1 ;;
         --vanilla_grpo)          VANILLA_GRPO=1;              shift 1 ;;
         --debug)                 DEBUG=1;                     shift 1 ;;
+        --num_generations)       NUM_GENERATIONS="$2";        shift 2 ;;
         *)
             echo "Unknown argument: $1"
             exit 1
@@ -110,6 +111,7 @@ done
 
 # ── GPU-type presets ──────────────────────────────────────────────────────────
 NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
+ACCEL_CONFIG="configs/accelerate/multi_gpu_${NUM_GPUS}.yaml"  # default; overridden for large models
 if [ "$GPU_TYPE" == "B200" ]; then
     if [[ "${MODEL_PATH}" == *"1.7B"* ]]; then
         # NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
@@ -123,8 +125,12 @@ if [ "$GPU_TYPE" == "B200" ]; then
         VLLM_GPU_MEMORY_UTILIZATION=0.15
     elif [[ "${MODEL_PATH}" == *"8B"* ]]; then
         # NUM_GPUS=2
-        PER_DEVICE_TRAIN_BATCH_SIZE=2
+        LEARNING_RATE=5e-6
+        # NUM_GENERATIONS=16
+        PER_DEVICE_TRAIN_BATCH_SIZE=4
         VLLM_GPU_MEMORY_UTILIZATION=0.2
+        ACCEL_CONFIG="configs/accelerate/fsdp_${NUM_GPUS}.yaml"
+
     elif [[ "${MODEL_PATH}" == *"382M"* ]]; then
         # NUM_GPUS=1
         PER_DEVICE_TRAIN_BATCH_SIZE=256
@@ -208,7 +214,7 @@ echo "  Checkpoint: ${RESUME_FROM_CHECKPOINT:-none}"
 # ── Launch ────────────────────────────────────────────────────────────────────
 accelerate launch \
   --num_processes=${NUM_GPUS} \
-  --config_file=configs/accelerate/multi_gpu_${NUM_GPUS}.yaml \
+  --config_file=${ACCEL_CONFIG} \
   src/grpo_train.py \
   --model_path="${MODEL_PATH}" \
   --dataset_name="${DATASET_NAME}" \

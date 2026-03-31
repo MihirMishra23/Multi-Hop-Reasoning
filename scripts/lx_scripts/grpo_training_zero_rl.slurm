@@ -2,13 +2,13 @@
 
 
 # SLURM Directives
-#SBATCH -J grpo_1.7b_zero_rl_v7                          # Job name
-#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_zero_rl_v7_%j.out   # Standard output file
-#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_zero_rl_v7_%j.err   # Standard error file
+#SBATCH -J grpo_1.7b_zero_rl_v8                          # Job name
+#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_zero_rl_v8_%j.out   # Standard output file
+#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_zero_rl_v8_%j.err   # Standard error file
 #SBATCH -N 1                                    # Number of nodes
 #SBATCH -n 1                                    # Number of tasks (or cores)
 #SBATCH --get-user-env                          # Retrieve the user's login environment
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=16
 #SBATCH --mem=256G                              # Memory requested (2GB per node)
 #SBATCH -t infinite                              # Time limit (2 hours)
 #SBATCH --partition=aimi,kilian,jjs533,default_partition          # Request partition
@@ -24,7 +24,7 @@ cd /home/lz586/icl/Multi-Hop-Reasoning/
 
 
 DATASET=hotpotqa-v2
-PHASE1_PROMPT_TYPE_ZERO_RL="formatted_zero_rl_v7"
+PHASE1_PROMPT_TYPE_ZERO_RL="formatted_zero_rl_v8"
 VANILLA_GRPO=""  # set to "--vanilla_grpo" to enable vanilla GRPO mode
 
 # MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1

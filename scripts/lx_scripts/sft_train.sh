@@ -22,6 +22,7 @@ OUTPUT_ROOT=/share/j_sun/lz586/checkpoints/lmlm_multi_hop
 MODEL_NAME_OR_PATH=Qwen/Qwen3-1.7B
 THRESHOLD=-1
 DATASET=hotpotqa
+TWO_PHASE=True
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -40,6 +41,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --dataset)
             DATASET="$2"
+            shift 2
+            ;;
+        --two_phase)
+            TWO_PHASE="$2"
             shift 2
             ;;
         *)
@@ -98,7 +103,11 @@ if [ "${DATASET}" = "hotpotqa" ]; then
     elif [ "${THRESHOLD}" = "-1" ]; then
         # default
         # the newest one
-        DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/gemini_2phase_rollouts_hotpotqa_6k_db_train_end_context_fifths_1203_ex_6k_qa_hotpot_rollouts_classic_retrieval_train_from_start.json"
+        if [ "${TWO_PHASE}" = "True" ]; then
+            DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/gemini_2phase_rollouts_hotpotqa_6k_db_train_end_context_fifths_1203_ex_6k_qa_hotpot_rollouts_classic_retrieval_train_from_start.json"
+        else
+            DATASET_PATH=/share/j_sun/lmlm_multihop/sft_data/gemini_rollouts_hotpotqa_12k_filtered_5743_classic_retrieval.json
+        fi
     elif [ "${THRESHOLD}" = "0.3" ]; then
         DATASET_PATH="/share/j_sun/lmlm_multihop/sft_data/combined_01_15/combined_2026-01-15_filtered_thresh_0.3_len_13796.json"
     elif [ "${THRESHOLD}" = "-2" ]; then
@@ -201,6 +210,9 @@ ADD_DBLOOKUP_TOKENS=True
 EFFECTIVE_BATCH_SIZE=$((PER_DEVICE_TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS * NUM_GPUS))
 
 export WANDB_NAME="${MODEL_NAME_OR_PATH##*/}-SFT_${DATASET}_ep${NUM_TRAIN_EPOCHS}_bsz${EFFECTIVE_BATCH_SIZE}_th${THRESHOLD}"
+if [ "${TWO_PHASE}" = "False" ]; then
+    export WANDB_NAME="${WANDB_NAME}_1phase"
+fi
 OUTPUT_DIR="${OUTPUT_ROOT}/${WANDB_NAME}"
 
 echo "Running for $DATASET_PATH"

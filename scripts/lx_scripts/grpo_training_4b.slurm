@@ -41,6 +41,9 @@ REWARD_FUNC="em_size"
 TWO_PHASE=""
 DEBUG=""
 
+export TRITON_CACHE_DIR=/home/lz586/.cache/triton
+export TMPDIR=/home/lz586/.tmp
+mkdir -p $TRITON_CACHE_DIR $TMPDIR
 
 if [ "${DATASET}" = "hotpotqa-v2" ]; then
     echo "Training on hotpotqa-v2"

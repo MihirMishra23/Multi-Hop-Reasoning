@@ -8,7 +8,7 @@
 #SBATCH -N 1                                    # Number of nodes
 #SBATCH -n 1                                    # Number of tasks (or cores)
 #SBATCH --get-user-env                          # Retrieve the user's login environment
-#SBATCH --cpus-per-task=64
+#SBATCH --cpus-per-task=16
 #SBATCH --mem=256G                              # Memory requested (2GB per node)
 #SBATCH -t infinite                              # Time limit (2 hours)
 #SBATCH --partition=aimi,kilian,jjs533,default_partition          # Request partition
@@ -25,8 +25,9 @@ cd /home/lz586/icl/Multi-Hop-Reasoning/
 echo "Starting SFT training..."
 
 bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/lx_scripts/sft_train.sh \
---model_size 4B \
+--model_size 1.7B \
 --threshold -1 \
---dataset hotpotqa
+--dataset hotpotqa \
+--two_phase False
 
 echo "SFT complete!"
