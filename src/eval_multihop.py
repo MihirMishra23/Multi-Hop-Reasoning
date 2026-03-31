@@ -40,6 +40,9 @@ from data import get_dataset
 from data.hotpotqa import load_hotpotqa_rag_corpus
 from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
 
+# Import for TriviaQA sentence splitting
+from nltk.tokenize import PunktSentenceTokenizer
+
 def split_into_parts(items: list, num_parts: int) -> list[list]:
     """Split a list into num_parts parts where max and min lengths differ by at most 1."""
     if num_parts <= 0:
@@ -59,6 +62,56 @@ def split_into_parts(items: list, num_parts: int) -> list[list]:
         start += part_size
 
     return parts
+
+
+def split_trivia_qa_contexts(contexts: List[str], titles: List[str], min_chunk_length: int = 800) -> List[str]:
+    """Split TriviaQA contexts into sentence groups with length >= min_chunk_length.
+
+    For each context (wiki_context without title prefix), this function:
+    1. Splits the context text into sentences using PunktSentenceTokenizer
+    2. Groups sentences into chunks where each chunk has >= min_chunk_length chars
+    3. Returns a list of contexts formatted as "title: chunk"
+
+    Args:
+        contexts: List of wiki_context strings (without title prefix)
+        titles: List of titles parallel to contexts (from context_titles field)
+        min_chunk_length: Minimum character length for each chunk (default: 800)
+
+    Returns:
+        List of split contexts formatted as "title: chunk"
+    """
+    tokenizer = PunktSentenceTokenizer()
+    result_contexts = []
+
+    for i, wiki_context in enumerate(contexts):
+        # Get the title from the parallel list
+        title = titles[i] if i < len(titles) else "Unknown"
+
+        # Split wiki_context into sentences
+        sentences = tokenizer.tokenize(wiki_context)
+        print("context is :", wiki_context)
+
+        # Group sentences into chunks of >= min_chunk_length
+        current_chunk = []
+        current_length = 0
+
+        for sentence in sentences:
+            current_chunk.append(sentence)
+            current_length += len(sentence)
+
+            # If we've reached the minimum length, create a new context chunk
+            if current_length >= min_chunk_length:
+                chunk_text = " ".join(current_chunk)
+                result_contexts.append(f"{title}: {chunk_text}")
+                current_chunk = []
+                current_length = 0
+
+        # Add any remaining sentences as a final chunk
+        if current_chunk:
+            chunk_text = " ".join(current_chunk)
+            result_contexts.append(f"{title}: {chunk_text}")
+
+    return result_contexts
 
 DEFAULT_FULLWIKI_CORPUS_PATH = "/share/j_sun/lmlm_multihop/datasets/hotpot_dev_fullwiki_v1.json"
 
@@ -205,11 +258,22 @@ def process_single_batch(
                 contexts = ex.get("golden_contexts")
             elif args.use_contexts == "all":
                 # Use all contexts and split into parts
-                # TODO: Check if 5 parts is appropriate for musique, hotpot, and 2wiki dataset sizes
                 original_len = len(contexts)
-                contexts = split_into_parts(contexts, num_parts=5)
-                if len(queries) == 0:  # Log only for first example
-                    logger.info(f"Split {original_len} contexts into {len(contexts)} parts for first example")
+
+                # TriviaQA uses custom sentence-based splitting to avoid token limits
+                if args.dataset.lower() in {"trivia_qa", "triviaqa"}:
+                    # Get context_titles from the example (parallel to contexts)
+                    context_titles = ex.get("context_titles", [])
+                    # Split articles into sentence chunks, then wrap each chunk as its own part
+                    chunks = split_trivia_qa_contexts(contexts, context_titles, min_chunk_length=600)
+                    contexts = [[chunk] for chunk in chunks]  # Each chunk becomes its own part
+                    if len(queries) == 0:  # Log only for first example
+                        logger.info(f"Split {original_len} TriviaQA contexts into {len(chunks)} parts (1 chunk per part)")
+                else:
+                    # TODO: Check if 5 parts is appropriate for musique, hotpot, and 2wiki dataset sizes
+                    contexts = split_into_parts(contexts, num_parts=5)
+                    if len(queries) == 0:  # Log only for first example
+                        logger.info(f"Split {original_len} contexts into {len(contexts)} parts for first example")
 
         queries.append(question)
         
@@ -394,11 +458,11 @@ def save_results_to_file(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run agent over a dataset and save predictions.")
-    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki", "mquake", "mquake-remastered"], help="Dataset name")
+    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki", "synthworlds", "trivia_qa", "mquake", "mquake-remastered"], help="Dataset name")
     parser.add_argument(
         "--setting",
         default="distractor",
-        choices=["distractor", "fullwiki"],
+        choices=["distractor", "fullwiki", "qa-sm", "qa-rm", "rc.wikipedia"],
         help="Dataset setting",
     )
     parser.add_argument(
@@ -544,6 +608,10 @@ def main() -> None:
     # Validate use-contexts flag
     if args.use_contexts == "all" and args.method != "two_phase":
         raise ValueError("--use-contexts=all is only supported for --method=two_phase")
+
+    # SynthWorlds does not have a 'contexts' field, only 'golden_contexts'
+    if args.dataset.lower() in {"synthworlds", "synth"} and args.use_contexts == "all":
+        raise ValueError("--use-contexts=all is not supported for SynthWorlds dataset (only 'golden' contexts are available)")
 
     if args.concat_all_db and args.method != "two_phase":
         raise ValueError("--concat-all-db is only supported for --method=two_phase")
@@ -799,6 +867,12 @@ def main() -> None:
         "concat_all_db": args.concat_all_db if args.method == "two_phase" else False,
         "contexts_are_split": args.use_contexts == "all" if args.method == "two_phase" else False,
     }
+
+    # Add RAG corpus if available (for fullwiki setting)
+    if args.method == "rag" and rag_corpus:
+        agent_kwargs["corpus"] = rag_corpus
+        logger.info(f"Added RAG corpus to agent_kwargs: {len(rag_corpus)} documents")
+
     agent_kwargs.update(_extra_agent_kwargs)
 
     # Get agent instance using factory function
@@ -822,8 +896,16 @@ def main() -> None:
             if args.use_contexts == "golden":
                 contexts = ex["golden_contexts"]
             elif args.use_contexts == "all":
-                # TODO: Check if 5 parts is appropriate for musique, hotpot, and 2wiki dataset sizes
-                contexts = split_into_parts(contexts, num_parts=5)
+                # TriviaQA uses custom sentence-based splitting to avoid token limits
+                if args.dataset.lower() in {"trivia_qa", "triviaqa"}:
+                    # Get context_titles from the example (parallel to contexts)
+                    context_titles = ex.get("context_titles", [])
+                    # Split articles into sentence chunks, then wrap each chunk as its own part
+                    chunks = split_trivia_qa_contexts(contexts, context_titles, min_chunk_length=800)
+                    contexts = [[chunk] for chunk in chunks]  # Each chunk becomes its own part
+                else:
+                    # TODO: Check if 5 parts is appropriate for musique, hotpot, and 2wiki dataset sizes
+                    contexts = split_into_parts(contexts, num_parts=5)
 
             all_contexts.append(contexts)
 

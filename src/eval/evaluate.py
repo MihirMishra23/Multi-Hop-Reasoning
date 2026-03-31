@@ -174,8 +174,8 @@ def evaluate_file(
     is_mquake = dataset_name and dataset_name.lower() in ("mquake", "mquake-remastered")
     answer_type = "new_answer" if (is_mquake and split_name and split_name.startswith("eval-edit")) else "answer"
 
-    # Lazily loaded mapping from qid -> joined gold answers
-    gold_by_id: Dict[str, str] | None = None
+    # Lazily loaded mapping from qid -> list of gold answers
+    gold_by_id: Dict[str, list] | None = None
 
     total = 0
     sum_em = 0.0
@@ -194,7 +194,7 @@ def evaluate_file(
     for _qid, rec in results.items():
         pred_text = rec.get("pred", "")
 
-        # gold key variations for robustness
+                # gold key variations for robustness
         # For MQuAKE with new_answer, use new_gold_answer field
         if use_new_answer:
             gold_field = rec.get("new_gold_answer") or rec.get("gold_answer")
@@ -216,7 +216,13 @@ def evaluate_file(
             else:
                 gold_list = []
         else:
-            gold_text = _safe_join_gold(gold_field)
+            # For general datasets, always normalize to a list of answers
+            if gold_field is None:
+                gold_answers = []
+            elif isinstance(gold_field, (list, tuple)):
+                gold_answers = [str(x) for x in gold_field if x]
+            else:
+                gold_answers = [str(gold_field)]
 
         # If gold missing, try to load from dataset once
         if is_mquake:
@@ -231,47 +237,64 @@ def evaluate_file(
                         for row in ds:
                             ans = row.get(ans_key) or row.get("answers") or []
                             if isinstance(ans, list):
-                                tmp[str(row.get("case_id") or row.get("id"))] = ans
+                                tmp[str(row.get("case_id") or row.get("id"))] = [str(x) for x in ans if x]
                             else:
-                                tmp[str(row.get("case_id") or row.get("id"))] = [str(ans)]
+                                tmp[str(row.get("case_id") or row.get("id"))] = [str(ans)] if ans else []
                         gold_by_id = tmp
                     except Exception:
                         gold_by_id = {}
                 gold_list = gold_by_id.get(str(_qid), [])
         else:
-            if gold_text == "" and dataset_name not in (None, "unknown") and split_name is not None:
+            if not gold_answers and dataset_name not in (None, "unknown") and split_name is not None:
                 if gold_by_id is None:
                     # get_dataset requires a setting param; for datasets without setting, pass a placeholder
                     effective_setting = setting_name or "na"
                     try:
                         ds = get_dataset(name=dataset_name, setting=effective_setting, split=split_name, source=source)
-                        tmp: Dict[str, str] = {}
+                        tmp: Dict[str, list[str]] = {}
                         for row in ds:
                             ans = row.get("answers") or []
+                            key = str(row.get("id") or row.get("case_id"))
                             if isinstance(ans, list):
-                                tmp[row["id"]] = "\n".join(str(x) for x in ans)
+                                tmp[key] = [str(x) for x in ans if x]
                             else:
-                                tmp[row["id"]] = str(ans)
+                                tmp[key] = [str(ans)] if ans else []
                         gold_by_id = tmp
                     except Exception:
                         gold_by_id = {}
-                gold_text = gold_by_id.get(str(_qid), "")
+                gold_answers = gold_by_id.get(str(_qid), [])
 
         # Skip if no gold present
         if is_mquake:
             if not gold_list:
                 continue
         else:
-            if gold_text == "":
+            if not gold_answers:
                 continue
 
-        # Compute metrics (MQuAKE uses relaxed EM and max F1)
+        # Compute metrics
         if is_mquake:
+            # MQuAKE uses relaxed EM and max F1
             em = exact_match_relaxed(pred_text, gold_list)
             f1, precision, recall = mquake_f1_score(pred_text, gold_list)
         else:
-            em = 1.0 if exact_match_score(pred_text, gold_text) else 0.0
-            f1, precision, recall = f1_score(pred_text, gold_text)
+            # For multiple gold answers, EM if pred matches ANY, F1 is MAX over answers
+            em = 0.0
+            best_f1 = 0.0
+            best_precision = 0.0
+            best_recall = 0.0
+
+            for gold_answer in gold_answers:
+                if exact_match_score(pred_text, gold_answer):
+                    em = 1.0
+
+                cur_f1, cur_precision, cur_recall = f1_score(pred_text, gold_answer)
+                if cur_f1 > best_f1:
+                    best_f1 = cur_f1
+                    best_precision = cur_precision
+                    best_recall = cur_recall
+
+            f1, precision, recall = best_f1, best_precision, best_recall
 
         sum_em += em
         sum_f1 += f1
