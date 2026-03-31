@@ -1,4 +1,5 @@
-from datasets import load_dataset, concatenate_datasets
+from datasets import load_dataset, concatenate_datasets, Dataset
+import pyarrow.parquet as pq
 import random
 
 def _rename_question(example):
@@ -18,7 +19,9 @@ def _filter_example(example):
 
 
 def load_mquake(split : str, limit : int, seed : int = 42):
-    raw_dataset = load_dataset("henryzhongsc/MQuAKE-Remastered", split = "CF6334") #Fixed constant split
+    # Load via pyarrow to bypass broken HF metadata embedded in the parquet file
+    pa_table = pq.read_table("/share/j_sun/lmlm_multihop/mquake/CF6334-00000-of-00001.parquet")
+    raw_dataset = Dataset(pa_table)
 
     no_conflict_6334_subset  = raw_dataset.filter(_filter_example)
     no_conflict_6334_subset = no_conflict_6334_subset.shuffle(seed = seed)

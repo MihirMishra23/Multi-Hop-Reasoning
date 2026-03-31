@@ -194,75 +194,41 @@ def evaluate_file(
     for _qid, rec in results.items():
         pred_text = rec.get("pred", "")
 
-                # gold key variations for robustness
-        # For MQuAKE with new_answer, use new_gold_answer field
-        if use_new_answer:
-            gold_field = rec.get("new_gold_answer") or rec.get("gold_answer")
-        else:
-            gold_field = (
-                rec.get("gold_answer")
-                if "gold_answer" in rec
-                else rec.get("answers")
-                if "answers" in rec
-                else rec.get("true")
-            )
+        # gold key variations for robustness
+        gold_field = (
+            rec.get("gold_answer")
+            if "gold_answer" in rec
+            else rec.get("answers")
+            if "answers" in rec
+            else rec.get("true")
+        )
 
-        # For MQuAKE, keep gold as list for relaxed matching
-        if is_mquake:
-            if isinstance(gold_field, (list, tuple)):
-                gold_list = [str(x) for x in gold_field if x]
-            elif gold_field:
-                gold_list = [str(gold_field)]
-            else:
-                gold_list = []
+        # Ensure gold_field is a list of possible answers
+        if gold_field is None:
+            gold_answers = []
+        elif isinstance(gold_field, (list, tuple)):
+            gold_answers = [str(x) for x in gold_field]
         else:
-            # For general datasets, always normalize to a list of answers
-            if gold_field is None:
-                gold_answers = []
-            elif isinstance(gold_field, (list, tuple)):
-                gold_answers = [str(x) for x in gold_field if x]
-            else:
-                gold_answers = [str(gold_field)]
+            gold_answers = [str(gold_field)]
 
         # If gold missing, try to load from dataset once
-        if is_mquake:
-            if not gold_list and dataset_name not in (None, "unknown") and split_name is not None:
-                if gold_by_id is None:
-                    effective_setting = setting_name or "na"
-                    try:
-                        ds = get_dataset(name=dataset_name, setting=effective_setting, split=split_name, source=source)
-                        tmp: Dict[str, Any] = {}
-                        # Use new_answers if answer_type is new_answer, else use answers
-                        ans_key = "new_answers" if use_new_answer else "answers"
-                        for row in ds:
-                            ans = row.get(ans_key) or row.get("answers") or []
-                            if isinstance(ans, list):
-                                tmp[str(row.get("case_id") or row.get("id"))] = [str(x) for x in ans if x]
-                            else:
-                                tmp[str(row.get("case_id") or row.get("id"))] = [str(ans)] if ans else []
-                        gold_by_id = tmp
-                    except Exception:
-                        gold_by_id = {}
-                gold_list = gold_by_id.get(str(_qid), [])
-        else:
-            if not gold_answers and dataset_name not in (None, "unknown") and split_name is not None:
-                if gold_by_id is None:
-                    # get_dataset requires a setting param; for datasets without setting, pass a placeholder
-                    effective_setting = setting_name or "na"
-                    try:
-                        ds = get_dataset(name=dataset_name, setting=effective_setting, split=split_name, source=source)
-                        tmp: Dict[str, list[str]] = {}
-                        for row in ds:
-                            ans = row.get("answers") or []
-                            key = str(row.get("id") or row.get("case_id"))
-                            if isinstance(ans, list):
-                                tmp[key] = [str(x) for x in ans if x]
-                            else:
-                                tmp[key] = [str(ans)] if ans else []
-                        gold_by_id = tmp
-                    except Exception:
-                        gold_by_id = {}
-                gold_answers = gold_by_id.get(str(_qid), [])
+        if not gold_answers and dataset_name not in (None, "unknown") and split_name is not None:
+            if gold_by_id is None:
+                # get_dataset requires a setting param; for datasets without setting, pass a placeholder
+                effective_setting = setting_name or "na"
+                try:
+                    ds = get_dataset(name = dataset_name, setting = effective_setting, split = split_name, source=source)
+                    tmp: Dict[str, list] = {}
+                    for row in ds:
+                        ans = row.get("answers") or []
+                        if isinstance(ans, list):
+                            tmp[row["id"]] = [str(x) for x in ans]
+                        else:
+                            tmp[row["id"]] = [str(ans)]
+                    gold_by_id = tmp
+                except Exception:
+                    gold_by_id = {}
+            gold_answers = gold_by_id.get(str(_qid), [])
 
         # Skip if no gold present
         if is_mquake:
@@ -272,29 +238,23 @@ def evaluate_file(
             if not gold_answers:
                 continue
 
-        # Compute metrics
-        if is_mquake:
-            # MQuAKE uses relaxed EM and max F1
-            em = exact_match_relaxed(pred_text, gold_list)
-            f1, precision, recall = mquake_f1_score(pred_text, gold_list)
-        else:
-            # For multiple gold answers, EM if pred matches ANY, F1 is MAX over answers
-            em = 0.0
-            best_f1 = 0.0
-            best_precision = 0.0
-            best_recall = 0.0
+        # For multiple gold answers, check if pred matches ANY (for EM) and take MAX (for F1)
+        em = 0.0
+        best_f1 = 0.0
+        best_precision = 0.0
+        best_recall = 0.0
 
-            for gold_answer in gold_answers:
-                if exact_match_score(pred_text, gold_answer):
-                    em = 1.0
+        for gold_answer in gold_answers:
+            if exact_match_score(pred_text, gold_answer):
+                em = 1.0
 
-                cur_f1, cur_precision, cur_recall = f1_score(pred_text, gold_answer)
-                if cur_f1 > best_f1:
-                    best_f1 = cur_f1
-                    best_precision = cur_precision
-                    best_recall = cur_recall
+            f1, precision, recall = f1_score(pred_text, gold_answer)
+            if f1 > best_f1:
+                best_f1 = f1
+                best_precision = precision
+                best_recall = recall
 
-            f1, precision, recall = best_f1, best_precision, best_recall
+        f1, precision, recall = best_f1, best_precision, best_recall
 
         sum_em += em
         sum_f1 += f1

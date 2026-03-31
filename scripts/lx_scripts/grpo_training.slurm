@@ -2,9 +2,9 @@
 
 
 # SLURM Directives
-#SBATCH -J grpo_1.7b_s16_k4                  # Job name
-#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_s16_k4_%j.out   # Standard output file
-#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_s16_k4_%j.err   # Standard error file
+#SBATCH -J grpo_1.7b_ckpt276                  # Job name
+#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_ckpt276_%j.out   # Standard output file
+#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_ckpt276_%j.err   # Standard error file
 #SBATCH -N 1                                    # Number of nodes
 #SBATCH -n 1                                    # Number of tasks (or cores)
 #SBATCH --get-user-env                          # Retrieve the user's login environment
@@ -30,7 +30,8 @@ DATASET=hotpotqa-v2
 # MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
 # MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_1phase 
 # MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.9_top_k_1
-MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
+MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-276
+# MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
 RETRIEVAL_THRESHOLD=0.6
 TOP_K=4
 NUM_GENERATIONS=16

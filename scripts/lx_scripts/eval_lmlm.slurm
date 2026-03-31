@@ -21,7 +21,7 @@ echo "Starting Eval..."
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 EVAL_MODE="latest"   # "latest" = last checkpoint only, "all" = every checkpoint
-SUBMIT_MODE="launch"  # "launch" = one sbatch job per ckpt/dataset/split, "run" = sequential (legacy)
+SUBMIT_MODE="run"  # "launch" = one sbatch job per ckpt/dataset/split, "run" = sequential (legacy)
 
 # Model roots
 SFT_MODEL_ROOT=/share/j_sun/lmlm_multihop/checkpoints/main
@@ -114,23 +114,36 @@ MODEL_PATH_LST=(
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-B32-K4-M4-bs16-s32-b0.0-ep5-n7000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-B32-K2-M4-bs16-s16-b0.0-ep5-n7000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
 
-    # Ablation: early stopping, zero rl, 1-phase only, vanilla grpo
-    # checkpoint-368-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-th0.6-topk4-nak
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-vanilla-th0.6-topk4-nak
 
     # Currently active
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
-    Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
 
     # Main 2-phase full runs
     Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
-    Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
 
     # Ablation: em_size, em_size_4b,lr=1e-6
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-em_size-2ph-prsft-wcount-th0.6-topk4-nak
     # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-em_size-2ph-prsft-wcount-th0.6-topk4-nak
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-2ph-prcontext_only-wcount-th0.6-topk4-nak
+
+    # # Ablation: early stopping, zero rl, 1-phase only, vanilla grpo
+    # phase 1 final
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_1phase-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-th0.6-topk4-nak
+    # # early sft
+    # checkpoint-92-grpo-tbs512-N16-K4-B32-M3-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # checkpoint-276-grpo-tbs512-N16-K4-B32-M3-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # # N16
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4-grpo-tbs512-N16-K4-B32-M3-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+
+    # # top1-th0.9
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.9_top_k_1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.9-topk1-nak
+
+    # 
+    # checkpoint-368-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-th0.6-topk4-nak
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-vanilla-th0.6-topk4-nak
 
     # Ablation: topk=1 (todo)
 
@@ -141,24 +154,38 @@ MODEL_PATH_LST=(
     # Qwen3-1.7B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prformatted_zero_rl_v5-wcount-th0.6-topk4-nak
 )
 
-TWO_PHASE_METHOD="lmlm"
-# TWO_PHASE_METHOD="two_phase"
+# TWO_PHASE_METHOD="lmlm"
+TWO_PHASE_METHOD="two_phase"
 
 # ── Datasets and splits ──────────────────────────────────────────────────────
 # NOTE: train_val1k is only valid for hotpotqa. musique/2wiki only support "dev".
 #       mquake supports: eval-original, eval-edit, eval-edit-new, train
 DATASET_LST=(
-    hotpotqa
-    musique
-    2wiki
-    # mquake
+    # synthworlds
+    # trivia_qa
+    # hotpotqa
+    # musique
+    # 2wiki
+    mquake
 )
 SPLIT_LST=(
-    train_val1k
-    dev
+    # train_val1k
+    # dev
     # eval-original
-    # eval-edit
+    eval-edit
 )
+# if synthworlds, qa-sm, qa-rm, otherwise distractor
+if [[ "${DATASET_LST[@]}" == *"synthworlds"* ]]; then
+    SETTING_LST=(
+        qa-sm
+        # qa-rm
+    )
+else
+    SETTING_LST=(
+        distractor
+    )
+fi
+
 
 # ── Eval parameters ──────────────────────────────────────────────────────────
 OUTPUT_DIR="./output/main_tables"
@@ -171,6 +198,7 @@ SIMILARITY_THRESHOLD=0.6
 # Set to "--use-train-params" to use training sampling (T=1.0, top_p=0.95).
 # USE_TRAIN_PARAMS="--use-train-params"
 USE_TRAIN_PARAMS_LST=("--use-train-params")
+# USE_TRAIN_PARAMS_LST=("")
 
 # Two-phase only
 CONCAT_ALL_DB_LST=("--concat-all-db")
@@ -189,11 +217,14 @@ is_valid_combo() {
         musique)            [[ "${sp}" == "dev" ]] ;;
         2wiki|two_wiki)     [[ "${sp}" == "dev" ]] ;;
         mquake*)            [[ "${sp}" =~ ^(eval-edit|eval-edit-new|eval-original|train)$ ]] ;;
+        trivia_qa)          [[ "${sp}" == "dev" ]] ;;
+        synthworlds)        [[ "${sp}" == "dev" ]] ;;
         *)                  return 1 ;;
     esac
 }
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
+for SETTING in "${SETTING_LST[@]}"; do
 for TOP_K in "${TOP_K_LST[@]}"; do
 for USE_TRAIN_PARAMS in "${USE_TRAIN_PARAMS_LST[@]}"; do
 for CONCAT_ALL_DB in "${CONCAT_ALL_DB_LST[@]}"; do
@@ -244,6 +275,13 @@ SCRIPT_EOF
                 else
                     METHOD="${TWO_PHASE_METHOD}"
                 fi
+
+                    # Automatically set setting to 'qa-sm' for synthworlds dataset
+                if [[ "${DATASET}" == "synthworlds" ]]; then
+                    USE_CONTEXTS="golden"
+                    echo "NOTE: Automatically setting --use-contexts=golden for synthworlds dataset (only golden contexts are available)"
+                fi
+
                 cat >> "${TMP_SCRIPT}" << SCRIPT_EOF
 echo "========== ${MODEL_PATH} | ${DATASET} | ${SPLIT} | ${METHOD} =========="
 bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
@@ -260,7 +298,8 @@ bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
     ${USE_INVERSES} \
     ${USE_TRAIN_PARAMS} \
     ${CONCAT_ALL_DB} \
-    --use-contexts "${USE_CONTEXTS}"
+    --use-contexts "${USE_CONTEXTS}" \
+    --setting "${SETTING}"
 SCRIPT_EOF
             done
         done
@@ -286,6 +325,7 @@ SCRIPT_EOF
             rm -f "${TMP_SCRIPT}"
         fi
     done
+done
 done
 done
 done

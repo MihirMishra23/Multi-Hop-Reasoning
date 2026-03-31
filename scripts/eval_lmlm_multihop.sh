@@ -23,6 +23,8 @@ USE_CONTEXTS="golden"   # "golden" | "all" (two_phase only)
 SIMILARITY_THRESHOLD=0.6
 METHODS=("lmlm")
 OUTPUT_DIR=./output/main_tables
+SETTING=${SETTING:-distractor}
+
 
 # ── Parse CLI arguments ──────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -42,6 +44,7 @@ while [[ $# -gt 0 ]]; do
         --similarity-threshold) SIMILARITY_THRESHOLD="$2"; shift 2 ;;
         --save_version)     SAVE_VERSION="$2";      shift 2 ;;
         --output-dir)       OUTPUT_DIR="$2";        shift 2 ;;
+        --setting)          SETTING="$2";          shift 2 ;;
         *)
             echo "Unknown argument: $1"
             exit 1
@@ -108,8 +111,24 @@ elif [ "${DATASET}" = "two_wiki" ] || [ "${DATASET}" = "2wiki" ]; then
         echo "Error: 2wiki SPLIT must be 'dev', got '${SPLIT}'"
         exit 1
     fi
+elif [ "${DATASET}" = "synthworlds" ]; then
+    if [ "${SPLIT}" = "dev" ]; then
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+    else
+        echo "Error: synthworlds SPLIT must be 'dev', got '${SPLIT}'"
+        exit 1
+    fi
+elif [ "${DATASET}" = "trivia_qa" ]; then
+    if [ "${SPLIT}" = "dev" ]; then
+        DEFAULT_NUM_SAMPLES=1000
+        START_IDX=0
+    else
+        echo "Error: trivia_qa SPLIT must be 'dev', got '${SPLIT}'"
+        exit 1
+    fi
 else
-    echo "Error: DATASET must be 'hotpotqa', 'musique', 'mquake', or '2wiki', got '${DATASET}'"
+    echo "Error: DATASET must be 'hotpotqa', 'musique', 'mquake', '2wiki', 'synthworlds', or 'trivia_qa', got '${DATASET}'"
     exit 1
 fi
 
@@ -123,7 +142,6 @@ BATCH_SIZE_DIRECT=32
 BATCH_SIZE_ICL=1
 BATCH_SIZE_RAG=1
 BATCH_SIZE_LMLM=64
-SETTING=distractor
 SAVE_EVERY=64
 SEED=42
 

@@ -779,6 +779,9 @@ def main() -> None:
         settings_str += f"_k{args.top_k}"
         if getattr(args, "use_train_params", False):
             settings_str += "_tp"
+        if args.dataset == "synthworlds":
+            settings_str += f"_setting{args.setting}"
+
         save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}{settings_str}.json"
         save_path = os.path.join(output_dir, f"generations{args.save_version}", f"eval_{save_postfix}")
         save_results_path = os.path.join(output_dir, f"results{args.save_version}", f"results_{save_postfix}")

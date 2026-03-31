@@ -58,7 +58,7 @@ TOP_K=4
 
 # ── Logging / checkpointing ───────────────────────────────────────────────────
 LOGGING_STEPS=5
-SAVE_STEPS=50
+SAVE_STEPS=25
 EVAL_STEPS=500
 
 # ── Retrieval & reward ────────────────────────────────────────────────────────

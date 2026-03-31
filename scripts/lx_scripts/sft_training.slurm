@@ -28,6 +28,6 @@ bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/lx_scripts/sft_train.sh \
 --model_size 1.7B \
 --threshold -1 \
 --dataset hotpotqa \
---two_phase False
+--two_phase True
 
 echo "SFT complete!"

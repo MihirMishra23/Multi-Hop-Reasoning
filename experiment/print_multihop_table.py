@@ -12,6 +12,7 @@ top_k, use_train_params) are shown as per-model metadata columns. When a model h
 multiple results for the same dataset+split, the one with the highest EM is kept.
 
 Use --format long to see one row per result file with all settings visible.
+python /home/lz586/icl/Multi-Hop-Reasoning/experiment/print_multihop_table.py --date 0330 --format markdown --dataset trivia_qa 
 """
 
 import json, re, argparse

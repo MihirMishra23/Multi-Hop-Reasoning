@@ -239,8 +239,8 @@ accelerate launch \
     --do_train \
     --eval_strategy epoch \
     --save_strategy steps \
-    --save_steps 0.5 \
-    --save_total_limit 2 \
+    --save_steps 0.125 \
+    --save_total_limit 8 \
     --save_only_model \
     --logging_steps 10 \
     --logging_dir ${OUTPUT_DIR}/logs \
