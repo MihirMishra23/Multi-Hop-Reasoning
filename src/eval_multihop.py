@@ -89,7 +89,6 @@ def split_trivia_qa_contexts(contexts: List[str], titles: List[str], min_chunk_l
 
         # Split wiki_context into sentences
         sentences = tokenizer.tokenize(wiki_context)
-        print("context is :", wiki_context)
 
         # Group sentences into chunks of >= min_chunk_length
         current_chunk = []
@@ -261,7 +260,7 @@ def process_single_batch(
                 original_len = len(contexts)
 
                 # TriviaQA uses custom sentence-based splitting to avoid token limits
-                if args.dataset.lower() in {"trivia_qa", "triviaqa"}:
+                if args.dataset.lower() in {"trivia_qa", "triviaqa", "popqa"}:
                     # Get context_titles from the example (parallel to contexts)
                     context_titles = ex.get("context_titles", [])
                     # Split articles into sentence chunks, then wrap each chunk as its own part
@@ -450,7 +449,7 @@ def save_results_to_file(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run agent over a dataset and save predictions.")
-    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki", "synthworlds", "trivia_qa"], help="Dataset name")
+    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki", "synthworlds", "trivia_qa", "popqa"], help="Dataset name")
     parser.add_argument(
         "--setting",
         default="distractor",
@@ -869,7 +868,7 @@ def main() -> None:
                 contexts = ex["golden_contexts"]
             elif args.use_contexts == "all":
                 # TriviaQA uses custom sentence-based splitting to avoid token limits
-                if args.dataset.lower() in {"trivia_qa", "triviaqa"}:
+                if args.dataset.lower() in {"trivia_qa", "triviaqa", "popqa"}:
                     # Get context_titles from the example (parallel to contexts)
                     context_titles = ex.get("context_titles", [])
                     # Split articles into sentence chunks, then wrap each chunk as its own part
