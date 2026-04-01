@@ -26,7 +26,7 @@ from datasets import Dataset as HFDataset  # type: ignore
 from datasets import load_dataset  # type: ignore
 
 # Path to the PopQA Wikipedia corpus
-POPQA_CORPUS_PATH = "/home/rtn27/Multi-Hop-Reasoning/wiki_dump_popqa_s_42_1k.json"
+POPQA_CORPUS_PATH = "/share/j_sun/lmlm_multihop/popqa/popqa_corpus_1000_ex_seed_42.json"
 
 
 def _normalize_split(split: str) -> str:
