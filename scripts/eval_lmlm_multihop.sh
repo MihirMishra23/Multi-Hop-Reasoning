@@ -56,16 +56,13 @@ done
 if [ "${DATASET}" = "hotpotqa" ]; then
     if [ "${SPLIT}" = "dev" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_validation_42_1000_all_context_database.json"
-        DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
     elif [ "${SPLIT}" = "train_val1k" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
-        DEFAULT_NUM_SAMPLES=1000
         START_IDX=82347
         SPLIT="train"
     elif [ "${SPLIT}" = "train_train1k" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
-        DEFAULT_NUM_SAMPLES=1000
         START_IDX=89347
         SPLIT="train"
     else
@@ -75,7 +72,6 @@ if [ "${DATASET}" = "hotpotqa" ]; then
 elif [ "${DATASET}" = "musique" ]; then
     if [ "${SPLIT}" = "dev" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/musique_validation_42_1000_all_context_database.json"
-        DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
     else
         echo "Error: musique SPLIT must be 'dev', got '${SPLIT}'"
@@ -83,20 +79,18 @@ elif [ "${DATASET}" = "musique" ]; then
     fi
 elif [ "${DATASET}" = "mquake" ] || [ "${DATASET}" = "mquake-remastered" ]; then
     if [ "${SPLIT}" = "eval-edit" ]; then
-        DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-edit-database-multi-hop.json"
-        DEFAULT_NUM_SAMPLES=1000
+        DATABASE_PATH="/home/lz586/icl/Multi-Hop-Reasoning/data/mquake_cf6334_mis_db.json"
+        # DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-edit-database-multi-hop.json"
         START_IDX=0
-    elif [ "${SPLIT}" = "eval-edit-new" ]; then
-        DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-new-database-multi-hop.json"
-        DEFAULT_NUM_SAMPLES=1000
-        START_IDX=0
+    # elif [ "${SPLIT}" = "eval-edit-new" ]; then
+    #     DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-new-database-multi-hop.json"
+    #     DEFAULT_NUM_SAMPLES=99999
+    #     START_IDX=0
     elif [ "${SPLIT}" = "eval-original" ]; then
-        DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-org-database-multi-hop.json"
-        DEFAULT_NUM_SAMPLES=1000
+        DATABASE_PATH="/home/lz586/icl/Multi-Hop-Reasoning/data/mquake_cf6334_orig_db.json"
         START_IDX=0
     elif [ "${SPLIT}" = "train" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/mquake-remastered/mquake_remastered_cf6334_database.json"
-        DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
     else
         echo "Error: mquake SPLIT must be 'eval-edit', 'eval-edit-new', 'eval-original', or 'train', got '${SPLIT}'"
@@ -105,7 +99,6 @@ elif [ "${DATASET}" = "mquake" ] || [ "${DATASET}" = "mquake-remastered" ]; then
 elif [ "${DATASET}" = "two_wiki" ] || [ "${DATASET}" = "2wiki" ]; then
     if [ "${SPLIT}" = "dev" ]; then
         DATABASE_PATH="/share/j_sun/as2637/database/2wiki_db.json"
-        DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
     else
         echo "Error: 2wiki SPLIT must be 'dev', got '${SPLIT}'"
@@ -113,7 +106,6 @@ elif [ "${DATASET}" = "two_wiki" ] || [ "${DATASET}" = "2wiki" ]; then
     fi
 elif [ "${DATASET}" = "synthworlds" ]; then
     if [ "${SPLIT}" = "dev" ]; then
-        DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
     else
         echo "Error: synthworlds SPLIT must be 'dev', got '${SPLIT}'"
@@ -121,7 +113,6 @@ elif [ "${DATASET}" = "synthworlds" ]; then
     fi
 elif [ "${DATASET}" = "trivia_qa" ]; then
     if [ "${SPLIT}" = "dev" ]; then
-        DEFAULT_NUM_SAMPLES=1000
         START_IDX=0
     else
         echo "Error: trivia_qa SPLIT must be 'dev', got '${SPLIT}'"
@@ -130,10 +121,6 @@ elif [ "${DATASET}" = "trivia_qa" ]; then
 else
     echo "Error: DATASET must be 'hotpotqa', 'musique', 'mquake', '2wiki', 'synthworlds', or 'trivia_qa', got '${DATASET}'"
     exit 1
-fi
-
-if [ "${NUM_SAMPLES}" -gt "${DEFAULT_NUM_SAMPLES}" ]; then
-    NUM_SAMPLES="${DEFAULT_NUM_SAMPLES}"
 fi
 
 # ── Fixed eval parameters ────────────────────────────────────────────────────
@@ -180,7 +167,8 @@ for METHOD in "${METHODS[@]}"; do
             ${ADAPTIVE_K} \
             ${RETURN_TRIPLETS} \
             ${USE_INVERSES} \
-            --eval
+            --eval \
+            --resume
 
     elif [ "${METHOD}" = "two_phase" ]; then
         python src/eval_multihop.py \
@@ -204,8 +192,8 @@ for METHOD in "${METHODS[@]}"; do
             ${USE_TRAIN_PARAMS} \
             ${CONCAT_ALL_DB} \
             --use-contexts "${USE_CONTEXTS}" \
-            --eval
-
+            --eval \
+            --resume
     else
         # direct / icl / rag
         if [ "${METHOD}" = "icl" ]; then

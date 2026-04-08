@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple, Optional
 
@@ -186,22 +187,39 @@ def evaluate_file(
     retrieval_total_retrieved = 0
     retrieval_total_overlap = 0
 
+    # Per-type accumulators for MQuAKE (test_edited / train_edited / test_unedited)
+    type_sums: Dict[str, Dict[str, float]] = defaultdict(
+        lambda: {"em": 0.0, "f1": 0.0, "prec": 0.0, "recall": 0.0, "count": 0}
+    )
+
     # Extract results from new format (with fallback for potential edge cases)
     results = preds.get("results", preds)
-    
-    use_new_answer = is_mquake and answer_type == "new_answer"
 
     for _qid, rec in results.items():
         pred_text = rec.get("pred", "")
 
-        # gold key variations for robustness
-        gold_field = (
-            rec.get("gold_answer")
-            if "gold_answer" in rec
-            else rec.get("answers")
-            if "answers" in rec
-            else rec.get("true")
-        )
+        if is_mquake:
+            # For MQuAKE, pick gold based on the split-level answer_type first:
+            #   eval-original (answer_type=="answer") → always use gold_answer (original answers)
+            #   eval-edit* (answer_type=="new_answer") → use per-example mquake_split_type:
+            #     test_unedited → gold_answer; test_edited / train_edited → new_gold_answer
+            if answer_type == "answer":
+                gold_field = rec.get("gold_answer")
+            else:
+                mquake_type = rec.get("mquake_split_type")
+                if mquake_type == "test_unedited":
+                    gold_field = rec.get("gold_answer")
+                else:
+                    # Prefer new_gold_answer; fall back to gold_answer if missing
+                    gold_field = rec.get("new_gold_answer") or rec.get("gold_answer")
+        else:
+            gold_field = (
+                rec.get("gold_answer")
+                if "gold_answer" in rec
+                else rec.get("answers")
+                if "answers" in rec
+                else rec.get("true")
+            )
 
         # Ensure gold_field is a list of possible answers
         if gold_field is None:
@@ -217,7 +235,7 @@ def evaluate_file(
                 # get_dataset requires a setting param; for datasets without setting, pass a placeholder
                 effective_setting = setting_name or "na"
                 try:
-                    ds = get_dataset(name = dataset_name, setting = effective_setting, split = split_name, source=source)
+                    ds = get_dataset(name=dataset_name, setting=effective_setting, split=split_name, source=source)
                     tmp: Dict[str, list] = {}
                     for row in ds:
                         ans = row.get("answers") or []
@@ -230,13 +248,8 @@ def evaluate_file(
                     gold_by_id = {}
             gold_answers = gold_by_id.get(str(_qid), [])
 
-        # Skip if no gold present
-        if is_mquake:
-            if not gold_list:
-                continue
-        else:
-            if not gold_answers:
-                continue
+        if not gold_answers:
+            continue
 
         # For multiple gold answers, check if pred matches ANY (for EM) and take MAX (for F1)
         em = 0.0
@@ -262,6 +275,15 @@ def evaluate_file(
         sum_recall += recall
         total += 1
 
+        # Accumulate per-type stats for MQuAKE
+        if is_mquake:
+            t = rec.get("mquake_split_type", "unknown")
+            type_sums[t]["em"] += em
+            type_sums[t]["f1"] += f1
+            type_sums[t]["prec"] += precision
+            type_sums[t]["recall"] += recall
+            type_sums[t]["count"] += 1
+
         retrieval = rec.get("retrieval")
         if isinstance(retrieval, dict):
             gold_total = retrieval.get("gold_total")
@@ -282,6 +304,19 @@ def evaluate_file(
         "recall": round(sum_recall / total, 4) if total else 0.0,
     }
 
+    # Build per-type metrics for MQuAKE (test_edited / train_edited / test_unedited)
+    per_type_metrics: Dict[str, Any] = {}
+    if is_mquake and type_sums:
+        for t, s in type_sums.items():
+            c = s["count"]
+            per_type_metrics[t] = {
+                "count": c,
+                "em": round(s["em"] / c, 4) if c else 0.0,
+                "f1": round(s["f1"] / c, 4) if c else 0.0,
+                "precision": round(s["prec"] / c, 4) if c else 0.0,
+                "recall": round(s["recall"] / c, 4) if c else 0.0,
+            }
+
     output: Dict[str, Any] = {
         "metrics": metrics,
         "meta": {
@@ -299,6 +334,8 @@ def evaluate_file(
         },
         "inference_params": preds.get("inference_params") or {},
     }
+    if per_type_metrics:
+        output["per_type_metrics"] = per_type_metrics
     if retrieval_total_gold or retrieval_total_retrieved or retrieval_total_overlap:
         output["retrieval_metrics"] = {
             "total_gold": retrieval_total_gold,

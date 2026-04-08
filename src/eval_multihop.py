@@ -284,9 +284,11 @@ def process_single_batch(
             "supporting_facts": ex.get("supporting_facts"),
             "contexts": contexts,
         }
-        # For MQuAKE, also capture new_answers for knowledge editing evaluation
+        # For MQuAKE, also capture new_answers and split type for knowledge editing evaluation
         if "new_answers" in ex:
             metadata_entry["new_answers"] = ex["new_answers"]
+        if "mquake_split_type" in ex:
+            metadata_entry["mquake_split_type"] = ex["mquake_split_type"]
         examples_metadata.append(metadata_entry)
 
     logger.info(f"Processing batch of {len(queries)} queries")
@@ -362,9 +364,11 @@ def process_single_batch(
             "question": metadata["question"],
             "trace": serialized_trace,
         }
-        # For MQuAKE, also save new_gold_answer for knowledge editing evaluation
+        # For MQuAKE, also save new_gold_answer and split type for knowledge editing evaluation
         if "new_answers" in metadata:
             results[str(metadata["qid"])]["new_gold_answer"] = metadata["new_answers"]
+        if "mquake_split_type" in metadata:
+            results[str(metadata["qid"])]["mquake_split_type"] = metadata["mquake_split_type"]
         if args.method == "lmlm":
             lookup_logs = getattr(agent, "_lookup_logs", [])
             if idx < len(lookup_logs):
@@ -762,6 +766,7 @@ def main() -> None:
     # Calculate the exclusive end index
     end_index = args.start_index + examples_to_process
 
+    print(f"Evaluating {examples_to_process} / {total_dataset_size} examples (index {args.start_index} to {end_index})")
     logger.info(f"Dataset size: {total_dataset_size}, Processing {examples_to_process} examples from index {args.start_index} to {end_index}")
 
     # Prepare output location

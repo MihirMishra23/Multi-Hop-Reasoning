@@ -20,8 +20,9 @@ echo "Starting Eval..."
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-EVAL_MODE="latest"   # "latest" = last checkpoint only, "all" = every checkpoint
-SUBMIT_MODE="run"  # "launch" = one sbatch job per ckpt/dataset/split, "run" = sequential (legacy)
+EVAL_MODE="latest"   # "latest" = last checkpoint only, "all" = every checkpoint, "target" = specific checkpoint
+TARGET_CKPT=400      # used when EVAL_MODE="target"
+SUBMIT_MODE="launch"  # "launch" = one sbatch job per ckpt/dataset/split, "run" = sequential (legacy)
 
 # Model roots
 SFT_MODEL_ROOT=/share/j_sun/lmlm_multihop/checkpoints/main
@@ -119,9 +120,17 @@ MODEL_PATH_LST=(
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
     # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
 
-    # Main 2-phase full runs
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-92
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-276
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
+
+
+    # checkpoint-92-grpo-tbs512-N16-K4-B32-M3-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+
+    # # Main 2-phase full runs
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
     # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
 
     # Ablation: em_size, em_size_4b,lr=1e-6
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-em_size-2ph-prsft-wcount-th0.6-topk4-nak
@@ -163,16 +172,16 @@ TWO_PHASE_METHOD="two_phase"
 DATASET_LST=(
     # synthworlds
     # trivia_qa
-    # hotpotqa
-    # musique
-    # 2wiki
-    mquake
+    hotpotqa
+    musique
+    2wiki
+    # mquake
 )
 SPLIT_LST=(
     # train_val1k
-    # dev
+    dev
     # eval-original
-    eval-edit
+    # eval-edit
 )
 # if synthworlds, qa-sm, qa-rm, otherwise distractor
 if [[ "${DATASET_LST[@]}" == *"synthworlds"* ]]; then
@@ -224,11 +233,6 @@ is_valid_combo() {
 }
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
-for SETTING in "${SETTING_LST[@]}"; do
-for TOP_K in "${TOP_K_LST[@]}"; do
-for USE_TRAIN_PARAMS in "${USE_TRAIN_PARAMS_LST[@]}"; do
-for CONCAT_ALL_DB in "${CONCAT_ALL_DB_LST[@]}"; do
-for USE_CONTEXTS in "${USE_CONTEXTS_LST[@]}"; do
 for MODEL_DIR in "${MODEL_PATH_LST[@]}"; do
 
     # Resolve model root
@@ -240,33 +244,61 @@ for MODEL_DIR in "${MODEL_PATH_LST[@]}"; do
         MODEL_ROOT="${SFT_MODEL_ROOT2}"
     fi
 
-    # Find checkpoint dirs
-    mapfile -t CKPT_DIRS < <(
-        find "${MODEL_ROOT}/${MODEL_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' -printf '%f\n' \
-        | sort -V
-    )
-    if [[ ${#CKPT_DIRS[@]} -eq 0 ]]; then
-        echo "WARN: No checkpoint-* dirs under ${MODEL_ROOT}/${MODEL_DIR}" >&2
-        continue
-    fi
-    if [[ "${EVAL_MODE}" == "latest" ]]; then
-        CKPT_DIRS=( "${CKPT_DIRS[-1]}" )
+    # If MODEL_DIR already ends with /checkpoint-N, treat it as a direct path
+    if [[ "${MODEL_DIR}" == */checkpoint-* ]]; then
+        FULL_PATH="${MODEL_ROOT}/${MODEL_DIR}"
+        if [[ ! -d "${FULL_PATH}" ]]; then
+            echo "WARN: ${FULL_PATH} not found" >&2
+            continue
+        fi
+        CKPT_DIRS=( "" )
+        _DIRECT_PATH="${FULL_PATH}"
+    else
+        _DIRECT_PATH=""
+        # Find checkpoint dirs
+        mapfile -t CKPT_DIRS < <(
+            find "${MODEL_ROOT}/${MODEL_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' -printf '%f\n' \
+            | sort -V
+        )
+        if [[ ${#CKPT_DIRS[@]} -eq 0 ]]; then
+            echo "WARN: No checkpoint-* dirs under ${MODEL_ROOT}/${MODEL_DIR}" >&2
+            continue
+        fi
+        if [[ "${EVAL_MODE}" == "latest" ]]; then
+            CKPT_DIRS=( "${CKPT_DIRS[-1]}" )
+        elif [[ "${EVAL_MODE}" == "target" ]]; then
+            CKPT_DIRS=( "checkpoint-${TARGET_CKPT}" )
+            if [[ ! -d "${MODEL_ROOT}/${MODEL_DIR}/checkpoint-${TARGET_CKPT}" ]]; then
+                echo "WARN: checkpoint-${TARGET_CKPT} not found under ${MODEL_ROOT}/${MODEL_DIR}" >&2
+                continue
+            fi
+        fi
     fi
 
     for CKPT in "${CKPT_DIRS[@]}"; do
-        MODEL_PATH="${MODEL_ROOT}/${MODEL_DIR}/${CKPT}"
+        if [[ -n "${_DIRECT_PATH}" ]]; then
+            MODEL_PATH="${_DIRECT_PATH}"
+        else
+            MODEL_PATH="${MODEL_ROOT}/${MODEL_DIR}/${CKPT}"
+        fi
 
-        # Write a temp script for this checkpoint (avoids all quoting issues with --wrap)
-        TMP_SCRIPT=$(mktemp /tmp/lmlm_eval_XXXXXX.sh)
-        cat > "${TMP_SCRIPT}" << SCRIPT_EOF
+        for DATASET in "${DATASET_LST[@]}"; do
+
+            # Write a temp script for this (checkpoint, dataset) pair
+            TMP_SCRIPT=$(mktemp /tmp/lmlm_eval_XXXXXX.sh)
+            cat > "${TMP_SCRIPT}" << SCRIPT_EOF
 #!/bin/bash
 source \$(conda info --base)/etc/profile.d/conda.sh
 conda activate mem
 cd /home/lz586/icl/Multi-Hop-Reasoning/
 SCRIPT_EOF
 
-        for SPLIT in "${SPLIT_LST[@]}"; do
-            for DATASET in "${DATASET_LST[@]}"; do
+            for SETTING in "${SETTING_LST[@]}"; do
+            for TOP_K in "${TOP_K_LST[@]}"; do
+            for USE_TRAIN_PARAMS in "${USE_TRAIN_PARAMS_LST[@]}"; do
+            for CONCAT_ALL_DB in "${CONCAT_ALL_DB_LST[@]}"; do
+            for USE_CONTEXTS in "${USE_CONTEXTS_LST[@]}"; do
+            for SPLIT in "${SPLIT_LST[@]}"; do
                 if ! is_valid_combo "${DATASET}" "${SPLIT}"; then
                     continue
                 fi
@@ -276,10 +308,10 @@ SCRIPT_EOF
                     METHOD="${TWO_PHASE_METHOD}"
                 fi
 
-                    # Automatically set setting to 'qa-sm' for synthworlds dataset
+                # Automatically set use-contexts=golden for synthworlds dataset
+                _USE_CONTEXTS="${USE_CONTEXTS}"
                 if [[ "${DATASET}" == "synthworlds" ]]; then
-                    USE_CONTEXTS="golden"
-                    echo "NOTE: Automatically setting --use-contexts=golden for synthworlds dataset (only golden contexts are available)"
+                    _USE_CONTEXTS="golden"
                 fi
 
                 cat >> "${TMP_SCRIPT}" << SCRIPT_EOF
@@ -298,38 +330,39 @@ bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
     ${USE_INVERSES} \
     ${USE_TRAIN_PARAMS} \
     ${CONCAT_ALL_DB} \
-    --use-contexts "${USE_CONTEXTS}" \
+    --use-contexts "${_USE_CONTEXTS}" \
     --setting "${SETTING}"
 SCRIPT_EOF
             done
-        done
+            done
+            done
+            done
+            done
+            done
 
-        if [[ "${SUBMIT_MODE}" == "launch" ]]; then
-            JOB_NAME="lmlm_${MODEL_DIR}_${TOP_K}_${USE_TRAIN_PARAMS}_${CONCAT_ALL_DB}_${USE_CONTEXTS}"
-            echo "Submitting: ${JOB_NAME}"
-            sbatch \
-                -J "${JOB_NAME}" \
-                -o "/home/lz586/icl/slurm_output/lmlm_multi_hop/${JOB_NAME}_%j.out" \
-                -e "/home/lz586/icl/slurm_output/lmlm_multi_hop/${JOB_NAME}_%j.err" \
-                -N 1 -n 1 \
-                --get-user-env \
-                --cpus-per-task=4 \
-                --mem=64G \
-                -t infinite \
-                --partition=kilian \
-                --gres=gpu:nvidia_rtx_a6000:1 \
-                --requeue \
-                "${TMP_SCRIPT}"
-        else
-            bash "${TMP_SCRIPT}"
-            rm -f "${TMP_SCRIPT}"
-        fi
+            if [[ "${SUBMIT_MODE}" == "launch" ]]; then
+                CKPT_SHORT="${CKPT#checkpoint-}"
+                JOB_NAME="lmlm_eval_${DATASET}_${MODEL_DIR}_ckpt${CKPT_SHORT}"
+                echo "Submitting: ${JOB_NAME}"
+                sbatch \
+                    -J "${JOB_NAME}" \
+                    -o "/home/lz586/icl/slurm_output/lmlm_multi_hop/${JOB_NAME}_%j.out" \
+                    -e "/home/lz586/icl/slurm_output/lmlm_multi_hop/${JOB_NAME}_%j.err" \
+                    -N 1 -n 1 \
+                    --get-user-env \
+                    --cpus-per-task=4 \
+                    --mem=64G \
+                    -t infinite \
+                    --partition=kilian \
+                    --gres=gpu:nvidia_rtx_a6000:1 \
+                    --requeue \
+                    "${TMP_SCRIPT}"
+            else
+                bash "${TMP_SCRIPT}"
+                rm -f "${TMP_SCRIPT}"
+            fi
+        done
     done
-done
-done
-done
-done
-done
 done
 
 echo "Evaluation complete!"

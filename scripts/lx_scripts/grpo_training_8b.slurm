@@ -1,20 +1,17 @@
 #!/bin/bash
 
 
-# SLURM Directives
-#SBATCH -J grpo_8b_optimized                           # Job name
-#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_8b_optimized_%j.out   # Standard output file
-#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_8b_optimized_%j.err   # Standard error file
-#SBATCH -N 1                                    # Number of nodes
-#SBATCH -n 1                                    # Number of tasks (or cores)
-#SBATCH --get-user-env                          # Retrieve the user's login environment
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=256G                              # Memory requested (2GB per node)
-#SBATCH -t infinite                              # Time limit (2 hours)
-#SBATCH --partition=aimi,kilian,jjs533,default_partition          # Request partition
-#SBATCH --gres=gpu:nvidia_b200:4                # Request 1 NVIDIA A6000 GPU
+#SBATCH -J grpo_8b_optimized
+#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_8b_optimized_%j.out
+#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_8b_optimized_%j.err
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH --cpus-per-task=64
+#SBATCH --mem=256G
+#SBATCH -t 3-00:00:00
+#SBATCH --partition=aimi
+#SBATCH --gres=gpu:nvidia_b200:4
 #SBATCH --requeue
-#SBATCH --nodelist=aimi-compute-01,aimi-compute-02,aimi-compute-03
 
 
 # Load the required environmentt
@@ -27,7 +24,8 @@ cd /home/lz586/icl/Multi-Hop-Reasoning/
 # DATASET=hotpotqa-v2
 DATASET=hotpotqa-v2
 
-MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1
+MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-8B-SFT_hotpotqa_ep3_bsz48_lr5e-5_th-1
+# MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1
 # MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
 # MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_classic_retrieval_6k
 # MODEL_PATH="/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k"

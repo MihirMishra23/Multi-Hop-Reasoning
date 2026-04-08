@@ -21,7 +21,7 @@ export WANDB_PROJECT=LMLM-Multihop
 GPU_TYPE=""
 MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k
 DATABASE_PATH=""  # Not used in two-phase mode
-SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
+SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/main
 DATASET_NAME="hotpotqa"
 NUM_GPUS=1
 
