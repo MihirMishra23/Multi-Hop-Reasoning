@@ -24,10 +24,13 @@ cd /home/lz586/icl/Multi-Hop-Reasoning/
 
 echo "Starting SFT training..."
 
+# Linxi: max_seq_length 2048 for 1.7B, 1024 for 4B, 1024 for 8B
+# Ryan: max_seq_length 8192 for 1.7B
 bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/sft_train.sh \
---model_size 1.7B \
---threshold -1 \
---dataset hotpotqa \
---two_phase True
+    --model_size 1.7B \
+    --threshold -1 \
+    --dataset hotpotqa \
+    --two_phase True \
+    --max_seq_length 2048
 
 echo "SFT complete!"
