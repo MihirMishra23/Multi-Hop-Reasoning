@@ -183,6 +183,94 @@ RewardFunc = str | PreTrainedModel | Callable[[list, list], list[float]]
 RolloutFunc = Callable[[list[str], "GRPOTrainer"], dict[str, Any]]
 
 
+class CurriculumRepeatSampler(Sampler):
+    """
+    Like RepeatSampler, but progressively expands the sampling pool through curriculum phases.
+
+    Each call to ``__iter__`` constitutes one epoch through the *current* phase's pool.
+    After each epoch the elapsed-step counter advances, and the next epoch may draw from
+    a wider pool (the next curriculum phase).
+
+    Args:
+        phase_index_lists: list of index lists into the dataset, one per phase.
+            Each phase should be a superset of the previous (easy → hard expansion).
+        phase_step_counts: number of optimizer steps to spend in each phase.
+            The sampler advances to the next phase after this many steps.
+        mini_repeat_count: rollouts per question (= ``num_generations``).
+        batch_size: unique questions per optimizer step
+            (= ``generation_batch_size // num_generations``).
+        repeat_count: reuse factor (= ``num_iterations × steps_per_generation``).
+        seed: random seed for reproducibility.
+    """
+
+    def __init__(
+        self,
+        phase_index_lists: list[list[int]],
+        phase_step_counts: list[int],
+        mini_repeat_count: int,
+        batch_size: int,
+        repeat_count: int = 1,
+        seed: int | None = None,
+    ):
+        assert len(phase_index_lists) == len(phase_step_counts), (
+            "phase_index_lists and phase_step_counts must have the same length"
+        )
+        self.phase_index_lists = phase_index_lists
+        self.phase_step_counts = phase_step_counts
+        self.mini_repeat_count = mini_repeat_count
+        self.batch_size = batch_size
+        self.repeat_count = repeat_count
+        self.seed = seed
+        self._elapsed_steps = 0
+        # Cumulative step boundaries: phase i is active while elapsed < _cum_boundaries[i]
+        self._cum_boundaries: list[int] = []
+        cumsum = 0
+        for s in phase_step_counts:
+            cumsum += s
+            self._cum_boundaries.append(cumsum)
+        self._generator = torch.Generator()
+        if seed is not None:
+            self._generator.manual_seed(seed)
+
+    def _current_phase(self) -> int:
+        for i, boundary in enumerate(self._cum_boundaries):
+            if self._elapsed_steps < boundary:
+                return i
+        return len(self.phase_index_lists) - 1
+
+    def __iter__(self):
+        phase = self._current_phase()
+        indices = list(self.phase_index_lists[phase])
+        logger.info(
+            "[CurriculumRepeatSampler] epoch start — phase %d/%d, "
+            "elapsed_steps=%d, pool_size=%d",
+            phase + 1, len(self.phase_index_lists), self._elapsed_steps, len(indices),
+        )
+
+        # Shuffle the phase pool
+        perm = torch.randperm(len(indices), generator=self._generator).tolist()
+        shuffled = [indices[p] for p in perm]
+
+        # Group into full batches
+        chunks = [shuffled[i : i + self.batch_size] for i in range(0, len(shuffled), self.batch_size)]
+        chunks = [c for c in chunks if len(c) == self.batch_size]
+
+        steps_yielded = 0
+        for chunk in chunks:
+            for _ in range(self.repeat_count):
+                for idx in chunk:
+                    for _ in range(self.mini_repeat_count):
+                        yield idx
+            steps_yielded += 1
+
+        self._elapsed_steps += steps_yielded
+
+    def __len__(self) -> int:
+        phase = self._current_phase()
+        n_chunks = len(self.phase_index_lists[phase]) // self.batch_size
+        return n_chunks * self.batch_size * self.mini_repeat_count * self.repeat_count
+
+
 class LMLMGRPOTrainer(BaseTrainer):
     """
     Trainer for the Group Relative Policy Optimization (GRPO) method. This algorithm was initially proposed in the
@@ -332,6 +420,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         phase1_db_weight_mode: str = "fixed_1.0",
         use_chat_template: bool = False,
         vanilla_grpo: bool = False,
+        curriculum_schedule: dict | None = None,
     ):
         self.retrieval_top_k = retrieval_top_k
         self.use_chat_template = use_chat_template
@@ -348,6 +437,7 @@ class LMLMGRPOTrainer(BaseTrainer):
         # Two-phase mode: Phase 1 generates triplets from contexts, Phase 2 does QA with per-example DB
         self.two_phase = two_phase
         self.vanilla_grpo = vanilla_grpo
+        self.curriculum_schedule = curriculum_schedule
         if vanilla_grpo:
             assert two_phase, "vanilla_grpo requires two_phase=True"
             # In vanilla GRPO, K=G (one DB per trajectory); num_db_rollouts will be
@@ -961,6 +1051,22 @@ class LMLMGRPOTrainer(BaseTrainer):
         #                                          ...
         if dataset is None:
             dataset = self.train_dataset
+        if self.curriculum_schedule is not None:
+            batch_size = self.args.generation_batch_size // self.num_generations
+            logger.info(
+                "[CurriculumRepeatSampler] initialising — %d phases, step_counts=%s, batch_size=%d",
+                len(self.curriculum_schedule["phase_index_lists"]),
+                self.curriculum_schedule["phase_step_counts"],
+                batch_size,
+            )
+            return CurriculumRepeatSampler(
+                phase_index_lists=self.curriculum_schedule["phase_index_lists"],
+                phase_step_counts=self.curriculum_schedule["phase_step_counts"],
+                mini_repeat_count=self.num_generations,
+                batch_size=batch_size,
+                repeat_count=self.num_iterations * self.args.steps_per_generation,
+                seed=self.args.seed,
+            )
         return RepeatSampler(
             data_source=dataset,
             mini_repeat_count=self.num_generations,
@@ -1772,23 +1878,16 @@ class LMLMGRPOTrainer(BaseTrainer):
                         if post_tool_logprobs is not None:
                             post_tool_logprobs[idx] = post_tool_logprobs[idx][:-excess]
 
-            # Decode completions from completion_ids
-            completions = [
-                self.processing_class.decode(completion_ids[idx], skip_special_tokens=False)
-                for idx in range(len(completion_ids))
-            ]
+            # Only re-decode completions that were modified (idxs_with_tool) to avoid decoding the
+            # full B*N batch every loop iteration. post_tool_ids is already local-sized (idxs_with_tool).
+            for i, idx_with_tool in enumerate(idxs_with_tool):
+                completions[idx_with_tool] = self.processing_class.decode(
+                    completion_ids[idx_with_tool], skip_special_tokens=False
+                )
             post_tool_completions = [
-                self.processing_class.decode(post_tool_ids[idx], skip_special_tokens=False) if len(post_tool_ids[idx]) > 0 else ""
-                for idx in range(len(post_tool_ids))
+                self.processing_class.decode(post_tool_ids[i], skip_special_tokens=False) if post_tool_ids[i] else ""
+                for i in range(len(post_tool_ids))
             ]
-
-            # # Decode post-tool completions
-            # post_tool_completions = [
-            #     self.processing_class.decode(ids) if ids else "" for ids in post_tool_ids
-            # ]
-            # decode all completions from completion_ids
-            completions = [self.processing_class.decode(completion_ids[idx], skip_special_tokens=False) for idx in range(len(completion_ids))]
-            post_tool_completions = [self.processing_class.decode(post_tool_ids[idx], skip_special_tokens=False) if len(post_tool_ids[idx]) > 0 else "" for idx in range(len(post_tool_ids))]
 
             # # Add post-tool completions to the existing completions
             # for idx in range(len(idxs_with_tool)):

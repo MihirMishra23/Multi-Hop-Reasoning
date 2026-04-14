@@ -44,6 +44,23 @@ class ScriptArguments:
         default=7,
         metadata={"help": "Maximum rollout success count (inclusive) to keep an example."}
     )
+    # Natural curriculum: progressively expand the learnable pool from easy to hard
+    curriculum: bool = field(
+        default=False,
+        metadata={"help": "Enable natural curriculum learning. Requires tier_path. "
+                  "Progressively expands the training pool from easy examples (high score) "
+                  "to hard examples (low score) according to curriculum_phases and curriculum_steps."}
+    )
+    curriculum_phases: str = field(
+        default="5-7,3-7,1-7",
+        metadata={"help": "Comma-separated score ranges for each curriculum phase, e.g. '5-7,3-7,1-7'. "
+                  "Each phase is a superset of the previous (easy → hard expansion)."}
+    )
+    curriculum_steps: str = field(
+        default="0.33,0.67",
+        metadata={"help": "Comma-separated fractions of max_steps at which to advance to the next phase, "
+                  "e.g. '0.33,0.67' switches at 33%% and 67%% of training."}
+    )
 
 
 @dataclass
@@ -139,6 +156,7 @@ def main():
     train_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "train", limit = script_args.train_size, seed = 42)
     test_dataset = get_dataset(name = script_args.dataset_name, setting = script_args.dataset_config, split = "train", sub_split = "eval", limit = script_args.eval_size, seed = 42)
 
+    curriculum_schedule = None
     if script_args.tier_path is not None:
         print(f"Applying tier filter from {script_args.tier_path} (score {script_args.tier_min_score}..{script_args.tier_max_score})")
         with open(script_args.tier_path, "r", encoding="utf-8") as f:
@@ -150,6 +168,45 @@ def main():
         before = len(train_dataset)
         train_dataset = train_dataset.filter(lambda ex: ex["id"] in valid_ids)
         print(f"Tier filter: {before} -> {len(train_dataset)} examples")
+
+        if script_args.curriculum:
+            if grpo_config.max_steps <= 0:
+                raise ValueError("curriculum requires max_steps > 0 in GRPOConfig")
+            # Score lookup for the filtered dataset
+            score_lookup = {qid: int(item["score"]) for qid, item in tier_data["results"].items()}
+            # Parse phase score ranges, e.g. "5-7,3-7,1-7"
+            phase_ranges = []
+            for p in script_args.curriculum_phases.split(","):
+                lo, hi = map(int, p.strip().split("-"))
+                phase_ranges.append((lo, hi))
+            # Parse step fractions, e.g. "0.33,0.67" → boundaries [0, 0.33, 0.67, 1.0]
+            fractions = [float(f) for f in script_args.curriculum_steps.split(",")]
+            boundaries = [0.0] + fractions + [1.0]
+            if len(boundaries) - 1 != len(phase_ranges):
+                raise ValueError(
+                    f"curriculum_steps has {len(fractions)} values but curriculum_phases has "
+                    f"{len(phase_ranges)} phases; need len(curriculum_steps) == len(curriculum_phases) - 1"
+                )
+            # Build index lists: positions in the filtered train_dataset per phase
+            phase_index_lists = []
+            for lo, hi in phase_ranges:
+                indices = [
+                    i for i, ex in enumerate(train_dataset)
+                    if lo <= score_lookup.get(ex["id"], -1) <= hi
+                ]
+                phase_index_lists.append(indices)
+                print(f"  Curriculum phase {lo}-{hi}: {len(indices)} examples")
+            # Convert fractional boundaries to absolute step counts
+            max_steps = grpo_config.max_steps
+            phase_step_counts = [
+                round((boundaries[i + 1] - boundaries[i]) * max_steps)
+                for i in range(len(phase_ranges))
+            ]
+            print(f"  Curriculum step schedule: {list(zip([f'{lo}-{hi}' for lo,hi in phase_ranges], phase_step_counts))}")
+            curriculum_schedule = {
+                "phase_index_lists": phase_index_lists,
+                "phase_step_counts": phase_step_counts,
+            }
 
     train_set = train_dataset.map(process_example)
     eval_set = test_dataset.map(process_example)
@@ -249,6 +306,7 @@ def main():
         retrieval_top_k = lmlm_args.retrieval_top_k,
         use_chat_template=lmlm_args.use_chat_template,
         vanilla_grpo=lmlm_args.vanilla_grpo,
+        curriculum_schedule=curriculum_schedule,
     )
     
     # Start training

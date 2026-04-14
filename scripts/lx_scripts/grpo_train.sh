@@ -25,6 +25,14 @@ SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/main
 DATASET_NAME="hotpotqa"
 NUM_GPUS=1
 
+# ── Tier settings ─────────────────────────────────────────────────────────────
+TIER_PATH=""      # Optional: path to tier JSON from generate_tier.py
+TIER_MIN_SCORE=1
+TIER_MAX_SCORE=7
+CURRICULUM=""               # set to 1 via --curriculum to enable natural curriculum
+CURRICULUM_PHASES="5-7,3-7,1-7"
+CURRICULUM_STEPS="0.33,0.67"
+
 # ── Batch / generation dimensions ─────────────────────────────────────────────
 # N = NUM_GENERATIONS  — total rollouts per question (phase 1 + phase 2), N must be divisible by K
 # K = NUM_DB_ROLLOUTS  — phase 1 DB rollouts per question            (phase 1 completions: B*K)
@@ -102,6 +110,12 @@ while [[ $# -gt 0 ]]; do
         --vanilla_grpo)          VANILLA_GRPO=1;              shift 1 ;;
         --debug)                 DEBUG=1;                     shift 1 ;;
         --num_generations)       NUM_GENERATIONS="$2";        shift 2 ;;
+        --tier_path)             TIER_PATH="$2";              shift 2 ;;
+        --tier_min_score)        TIER_MIN_SCORE="$2";         shift 2 ;;
+        --tier_max_score)        TIER_MAX_SCORE="$2";         shift 2 ;;
+        --curriculum)            CURRICULUM=1;                shift 1 ;;
+        --curriculum_phases)     CURRICULUM_PHASES="$2";      shift 2 ;;
+        --curriculum_steps)      CURRICULUM_STEPS="$2";       shift 2 ;;
         *)
             echo "Unknown argument: $1"
             exit 1
@@ -169,7 +183,7 @@ echo "  GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS} (= ${TOTAL_BA
 # (rewards are reordered from [GPU0_p1+p2, GPU1_p1+p2, ...] to [all_p1, all_p2]).
 
 # ── Output directory ──────────────────────────────────────────────────────────
-# Format: {model}-{loss}-tbs{total_batch}-N{num_gen}-K{db_rollouts}-B{questions/batch}-M{qa_per_db}-b{beta}-step{max_steps}-n{train_size}-{reward}[-2ph[-rw{reward_type}]-pr{prompt_type}-w{weight_mode}]-th{threshold}-topk{top_k}[-nak][-debug]
+# Format: {model}-{loss}-tbs{total_batch}-N{num_gen}-K{db_rollouts}-B{questions/batch}-M{qa_per_db}-b{beta}-step{max_steps}-n{train_size}-{reward}[-2ph[-rw{reward_type}]-pr{prompt_type}-w{weight_mode}]-th{threshold}-topk{top_k}[-tier{min}_{max}][-nak][-debug]
 B=$((TOTAL_BATCH_SIZE / NUM_GENERATIONS))                       # unique questions per global batch
 M=$(((NUM_GENERATIONS - NUM_DB_ROLLOUTS) / NUM_DB_ROLLOUTS))    # phase 2 QA rollouts per (question, DB) pair
 OUTPUT_DIR="${SAVE_DIR}/${MODEL_PATH##*/}-${LOSS_TYPE}-tbs${TOTAL_BATCH_SIZE}-N${NUM_GENERATIONS}-K${NUM_DB_ROLLOUTS}-B${B}-M${M}-b${BETA}-lr${LEARNING_RATE}-step${MAX_STEPS}-n${TRAIN_SIZE}-${REWARD_FUNC}"
@@ -183,6 +197,8 @@ else
     TWO_PHASE=""
 fi
 OUTPUT_DIR="${OUTPUT_DIR}-th${RETRIEVAL_THRESHOLD}-topk${TOP_K}"
+[ -n "${TIER_PATH}" ] && OUTPUT_DIR="${OUTPUT_DIR}-tier${TIER_MIN_SCORE}_${TIER_MAX_SCORE}"
+[ -n "${CURRICULUM}" ] && OUTPUT_DIR="${OUTPUT_DIR}-curric"
 [ -n "${DEBUG}" ] && OUTPUT_DIR="${OUTPUT_DIR}-debug"
 
 # ── Flag resolution ───────────────────────────────────────────────────────────
@@ -265,7 +281,9 @@ accelerate launch \
   --num_db_rollouts=${NUM_DB_ROLLOUTS} \
   --phase1_db_weight_mode=${PHASE1_DB_WEIGHT_MODE} \
   $([ "${USE_CHAT_TEMPLATE}" = "True" ] && echo "--use_chat_template") \
-  $([ -n "${VANILLA_GRPO}" ] && echo "--vanilla_grpo")
+  $([ -n "${VANILLA_GRPO}" ] && echo "--vanilla_grpo") \
+  $([ -n "${TIER_PATH}" ] && echo "--tier_path=${TIER_PATH} --tier_min_score=${TIER_MIN_SCORE} --tier_max_score=${TIER_MAX_SCORE}") \
+  $([ -n "${CURRICULUM}" ] && echo "--curriculum --curriculum_phases=${CURRICULUM_PHASES} --curriculum_steps=${CURRICULUM_STEPS}")
 
 echo "Training completed!"
 

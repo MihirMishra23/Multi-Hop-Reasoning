@@ -79,15 +79,10 @@ elif [ "${DATASET}" = "musique" ]; then
     fi
 elif [ "${DATASET}" = "mquake" ] || [ "${DATASET}" = "mquake-remastered" ]; then
     if [ "${SPLIT}" = "eval-edit" ]; then
-        DATABASE_PATH="/home/lz586/icl/Multi-Hop-Reasoning/data/mquake_cf6334_mis_db.json"
-        # DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-edit-database-multi-hop.json"
+        DATABASE_PATH=/share/j_sun/lmlm_multihop/database/mquake-remastered_corrected/mquake_cf6334_mis_db.json
         START_IDX=0
-    # elif [ "${SPLIT}" = "eval-edit-new" ]; then
-    #     DATABASE_PATH="/share/j_sun/lz586/memgpt/dataset/mquake/mquake6334-all-gt-new-database-multi-hop.json"
-    #     DEFAULT_NUM_SAMPLES=99999
-    #     START_IDX=0
     elif [ "${SPLIT}" = "eval-original" ]; then
-        DATABASE_PATH="/home/lz586/icl/Multi-Hop-Reasoning/data/mquake_cf6334_orig_db.json"
+        DATABASE_PATH=/share/j_sun/lmlm_multihop/database/mquake-remastered_corrected/mquake_cf6334_orig_db.json
         START_IDX=0
     elif [ "${SPLIT}" = "train" ]; then
         DATABASE_PATH="/share/j_sun/lmlm_multihop/database/mquake-remastered/mquake_remastered_cf6334_database.json"

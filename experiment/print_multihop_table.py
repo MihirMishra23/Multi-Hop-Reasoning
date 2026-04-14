@@ -12,7 +12,7 @@ top_k, use_train_params) are shown as per-model metadata columns. When a model h
 multiple results for the same dataset+split, the one with the highest EM is kept.
 
 Use --format long to see one row per result file with all settings visible.
-python /home/lz586/icl/Multi-Hop-Reasoning/experiment/print_multihop_table.py --date 0330 --format markdown --dataset trivia_qa 
+python /home/lz586/icl/Multi-Hop-Reasoning/experiment/print_multihop_table.py --date 0330 --format markdown --standard
 """
 
 import json, re, argparse
@@ -74,6 +74,7 @@ def build_wide(
     use_contexts: Optional[str] = None,
     concat_all_db: Optional[bool] = None,
     use_train_params: Optional[bool] = None,
+    top_k: Optional[int] = None,
 ) -> pd.DataFrame:
     """Pivot to wide format: one row per (model, settings) combo, columns = {dataset}_{split}_{phase}.
     Each unique combination of settings gets its own row."""
@@ -89,6 +90,8 @@ def build_wide(
         df = df[df["concat_all_db"] == concat_all_db]
     if use_train_params is not None:
         df = df[df["use_train_params"] == use_train_params]
+    if top_k is not None:
+        df = df[df["top_k"] == top_k]
     if df.empty:
         return df
 
@@ -165,6 +168,7 @@ def build_long(
     use_contexts: Optional[str] = None,
     concat_all_db: Optional[bool] = None,
     use_train_params: Optional[bool] = None,
+    top_k: Optional[int] = None,
 ) -> pd.DataFrame:
     """Long format: one row per result file, sorted by dataset/split/EM."""
     if not rows:
@@ -179,6 +183,8 @@ def build_long(
         df = df[df["concat_all_db"] == concat_all_db]
     if use_train_params is not None:
         df = df[df["use_train_params"] == use_train_params]
+    if top_k is not None:
+        df = df[df["top_k"] == top_k]
     if df.empty:
         return df
 
@@ -228,10 +234,20 @@ def main():
                         help="Filter by concat_all_db (true/false)")
     parser.add_argument("--use_train_params", default=None, choices=["true", "false"],
                         help="Filter by use_train_params (true/false)")
+    parser.add_argument("--top_k", type=int, default=None,
+                        help="Filter by top_k value (e.g. 4)")
+    parser.add_argument("--standard", action="store_true",
+                        help="Filter to standard setting: use_contexts=all, concat_all_db=true, use_train_params=true, top_k=4")
     parser.add_argument("--format", "-f", default="simple",
                         choices=["simple", "markdown", "long"],
                         help="Output format: simple (wide), markdown (wide), long (one row per result)")
     args = parser.parse_args()
+
+    if args.standard:
+        args.use_contexts = args.use_contexts or "all"
+        args.concat_all_db = args.concat_all_db or "true"
+        args.use_train_params = args.use_train_params or "true"
+        args.top_k = args.top_k or 4
 
     concat_all_db_filter = (
         True if args.concat_all_db == "true" else
@@ -258,6 +274,7 @@ def main():
         use_contexts=args.use_contexts,
         concat_all_db=concat_all_db_filter,
         use_train_params=use_train_params_filter,
+        top_k=args.top_k,
     )
 
     if args.format == "long":
