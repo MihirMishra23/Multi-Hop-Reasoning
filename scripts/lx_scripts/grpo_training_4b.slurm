@@ -80,7 +80,7 @@ else
 fi
 
 echo "Starting GRPO Training..."
-bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/lx_scripts/grpo_train.sh \
+bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/grpo_train.sh \
 --gpu_type B200 \
 --model_path ${MODEL_PATH} \
 --dataset_name ${DATASET_NAME} \

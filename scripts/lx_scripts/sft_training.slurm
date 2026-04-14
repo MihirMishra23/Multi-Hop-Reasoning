@@ -24,7 +24,7 @@ cd /home/lz586/icl/Multi-Hop-Reasoning/
 
 echo "Starting SFT training..."
 
-bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/lx_scripts/sft_train.sh \
+bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/sft_train.sh \
 --model_size 1.7B \
 --threshold -1 \
 --dataset hotpotqa \
