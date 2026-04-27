@@ -1,15 +1,15 @@
 #!/bin/bash
 #SBATCH --mail-user=ryan.noonan@outlook.com
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --job-name=concat-sft
+#SBATCH --job-name=32-debug-linxi-concat-all
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=256G
 #SBATCH --partition=jjs533
-#SBATCH --constraint='gpu-mid|gpu-high'
-#SBATCH --time=10:00:00
+#SBATCH --constraint='h100'
+#SBATCH --time=36:00:00
 #SBATCH --output=logs/%j.out
 #SBATCH --error=logs/%j.err
 
@@ -26,19 +26,12 @@ conda activate /scratch/rtn27/multi-hop-reasoning
 echo "Starting Eval..."
 
 
-# # Load the required environmentt
-# source activate mem
-
-# # Navigate to the working directory
-# cd /home/lz586/icl/Multi-Hop-Reasoning/
-
-
 echo "Starting Eval..."
 
 EVAL_MODE="latest"   # options: latest | all
 
 # MODEL_ROOT="/share/j_sun/lz586/checkpoints/lmlm_multi_hop"
-SFT_MODEL_ROOT=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop
+SFT_MODEL_ROOT=/share/j_sun/lz586/checkpoints/lmlm_multi_hop
 GRPO_MODEL_ROOT=/share/j_sun/lmlm_multihop/checkpoints/debug
 MODEL_PATH_LST=(
     # ----------------------------
@@ -93,6 +86,7 @@ MODEL_PATH_LST=(
     # SFT
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k
     # Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
     
     # full run
     # Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed-grpo-B1-K4-M4-bs16-s8-b0.0-ep5-n7000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
@@ -126,13 +120,49 @@ MODEL_PATH_LST=(
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-B32-K2-M4-bs16-s16-b0.0-ep5-n7000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
 
     #final runs, shared march 28
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak BROKEN
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # I got this one from wandb
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+
+    #FRom linxi march 29
+    # SFT
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k
+    Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
+
+    # # GRPO
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
     Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+
+    ##### Ablation: 
+    # 2phase em_size
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-em_size-2ph-prsft-wcount-th0.6-topk4-nak
+    
+    # 2phase lr=1e-6
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-2ph-prcontext_only-wcount-th0.6-topk4-nak
+
+    # 1 phase only other 2 variants
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-th0.6-topk4-nak
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-th0.6-topk4-nak
+    # 1 phase only final
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-th0.6-topk4-nak
+
+    # early sft
+    checkpoint-368-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+
+    # vanilla grpo
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-vanilla-th0.6-topk4-nak
+
+    # zero rl
+    Qwen3-4B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1_format-2ph-prformatted_zero_rl_v7-wcount-th0.6-topk4-nak
+    Qwen3-1.7B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1_format-2ph-prformatted_zero_rl_v5-wcount-th0.6-topk4-nak
+    Qwen3-1.7B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prformatted_zero_rl_v5-wcount-th0.6-topk4-nak
 )
 
 TWO_PHASE_METHOD="two_phase"
 
 DATASET_LST=(
+    synthworlds
     hotpotqa
     musique
     2wiki
@@ -142,12 +172,15 @@ SPLIT_lst=(
     # train_val1k
     dev
 )
-SAVE_VERSION="no-concat-all-context"
-NUM_SAMPLES=1000
+SAVE_VERSION="concat-all"
+NUM_SAMPLES=32
 # USE_TRAIN_PARAMS=""
 USE_TRAIN_PARAMS="--use-train-params"
+CONCAT_ALL_DB=""
 CONCAT_ALL_DB="--concat-all-db"              # set to "--concat-all-db" to build unified database
 USE_CONTEXTS="all"         # options: "golden" | "all"
+OUTPUT_DIR="./nb-32-debug-linxi-req"
+SETTING="distractor"
 
 # -----------------------
 # Main loop
@@ -181,17 +214,35 @@ for SPLIT in "${SPLIT_lst[@]}"; do
         MODEL_PATH="${MODEL_ROOT}/${MODEL_DIR}/${CKPT}"
 
         for DATASET in "${DATASET_LST[@]}"; do
-            echo "========== Evaluating ${MODEL_PATH} on ${DATASET} =========="
-            bash /home/rtn27/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
+            # Skip non-hotpotqa datasets when using train_val1k split
+            if [[ "${SPLIT}" == "train_val1k" && "${DATASET}" != "hotpotqa" ]]; then
+                echo "Skipping ${DATASET} for ${SPLIT} split"
+                continue
+            fi
+
+            # Automatically set setting to 'qa-sm' for synthworlds dataset
+            if [[ "${DATASET}" == "synthworlds" ]]; then
+                DATASET_SETTING="qa-sm"
+                DATASET_USE_CONTEXTS="golden"
+                echo "NOTE: Automatically setting --use-contexts=golden for synthworlds dataset (only golden contexts are available)"
+            else
+                DATASET_SETTING="${SETTING}"
+                DATASET_USE_CONTEXTS="${USE_CONTEXTS}"
+            fi
+
+            echo "========== Evaluating ${MODEL_PATH} on ${DATASET} (setting=${DATASET_SETTING}, use-contexts=${DATASET_USE_CONTEXTS}) =========="
+            bash /home/rtn27/Multi-Hop-Reasoning/ryan-scripts/eval_multihop.sh \
                 --model_path "${MODEL_PATH}" \
                 --dataset "${DATASET}" \
                 --split "${SPLIT}" \
                 --num_samples ${NUM_SAMPLES} \
                 --save_version "${SAVE_VERSION}" \
                 --method "${TWO_PHASE_METHOD}" \
+                --output-dir "${OUTPUT_DIR}" \
                 ${USE_TRAIN_PARAMS} \
                 ${CONCAT_ALL_DB} \
-                --use-contexts "${USE_CONTEXTS}"
+                --use-contexts "${DATASET_USE_CONTEXTS}" \
+                --setting "${DATASET_SETTING}"
             done
         done
     done

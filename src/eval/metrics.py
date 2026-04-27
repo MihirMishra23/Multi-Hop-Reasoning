@@ -46,3 +46,38 @@ def f1_score(prediction, ground_truth):
 
 def exact_match_score(prediction, ground_truth):
     return (normalize_answer(prediction) == normalize_answer(ground_truth))
+
+
+def exact_match_relaxed(prediction: str, gold_answers: list) -> float:
+    """
+    MQuAKE-specific EM: 1 if any gold answer appears in the FIRST 5 WORDS of prediction.
+    Uses normalized string containment.
+    """
+    pred_norm = normalize_answer(prediction)
+    pred_tokens = pred_norm.split()
+    first_five = " ".join(pred_tokens[:5])
+
+    for ans in gold_answers:
+        ans_norm = normalize_answer(str(ans))
+        if ans_norm and ans_norm in first_five:
+            return 1.0
+    return 0.0
+
+
+def mquake_f1_score(prediction: str, gold_answers: list) -> tuple:
+    """
+    MQuAKE-specific F1: max F1 across all gold answers.
+    Returns (f1, precision, recall) for the best matching gold answer.
+    """
+    best_f1 = 0.0
+    best_prec = 0.0
+    best_recall = 0.0
+
+    for ans in gold_answers:
+        f1, prec, recall = f1_score(prediction, str(ans))
+        if f1 > best_f1:
+            best_f1 = f1
+            best_prec = prec
+            best_recall = recall
+
+    return best_f1, best_prec, best_recall

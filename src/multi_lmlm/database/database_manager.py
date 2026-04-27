@@ -75,7 +75,7 @@ def build_databases_from_triplets_batch(triplets_batch: list[list[tuple[str, str
         List of DatabaseManager instances, one per input triplet list
     """
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device=device)
+    embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device=device, local_files_only=True)
 
     # Flatten all triplets and compute embeddings at once
     combined_triplets = [t for triplet_list in triplets_batch for t in triplet_list]
