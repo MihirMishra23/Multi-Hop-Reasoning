@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 # ── Config ──────────────────────────────────────────────────────────────
-CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "final_v2.2_0.csv")
+# CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "final_v2.2_0.csv")
 OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "lookup_efficiency_results.json")
 
 
@@ -92,7 +92,7 @@ def main():
     parser = argparse.ArgumentParser(description="Phase 2: Lookup Efficiency Analysis")
     parser.add_argument("--num_rows", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--csv", type=str, default=CSV_PATH)
+    parser.add_argument("--csv", type=str, required=True)
     parser.add_argument("--output", type=str, default=OUTPUT_PATH)
     args = parser.parse_args()
 

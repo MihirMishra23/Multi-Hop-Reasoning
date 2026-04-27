@@ -47,3 +47,6 @@ scripts/local/
 output/
 
 mlruns/
+
+*.csv
+*.json

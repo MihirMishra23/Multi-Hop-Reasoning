@@ -25,33 +25,33 @@ def main():
 
     # Collect all DB-level scores and triplet-level details
     all_faithfulness = []
-    all_quality = []
+    all_soundness = []
     all_overall = []
     total_dbs = 0
     total_triplets = 0
     total_hallucinated = 0
     total_clean = 0
-    total_with_quality_issues = 0
-    quality_issue_counts = Counter()
+    total_with_soundness_issues = 0
+    soundness_issue_counts = Counter()
 
     for row in results:
         for db in row.get("db_results", []):
             s = db["scores"]
             all_faithfulness.append(s["faithfulness_score"])
-            all_quality.append(s["quality_score"])
+            all_soundness.append(s["soundness_score"])
             all_overall.append(s["overall_score"])
             total_dbs += 1
             total_triplets += s["total_triplets"]
             total_hallucinated += s["hallucinated_count"]
             total_clean += s["clean_count"]
 
-            # Count per-triplet quality issues
+            # Count per-triplet soundness issues
             for triplet_eval in db["evaluation"]["triplet_evaluations"]:
-                issues = triplet_eval.get("quality_issues", [])
+                issues = triplet_eval.get("soundness_issues", [])
                 if triplet_eval.get("faithfulness") == "faithful" and len(issues) > 0:
-                    total_with_quality_issues += 1
+                    total_with_soundness_issues += 1
                 for issue in issues:
-                    quality_issue_counts[issue] += 1
+                    soundness_issue_counts[issue] += 1
 
     avg = lambda lst: sum(lst) / len(lst) if lst else 0
     pct = lambda n, d: f"{n / d:.1%}" if d > 0 else "N/A"
@@ -69,10 +69,10 @@ def main():
     print(f"{'='*55}")
     print(f"  Clean (score=1):     {total_clean} / {total_triplets} ({pct(total_clean, total_triplets)})")
     print(f"  Hallucinated:        {total_hallucinated} / {total_triplets} ({pct(total_hallucinated, total_triplets)})")
-    print(f"  Quality issues:      {total_with_quality_issues} / {total_triplets} ({pct(total_with_quality_issues, total_triplets)})")
+    print(f"  soundness issues:      {total_with_soundness_issues} / {total_triplets} ({pct(total_with_soundness_issues, total_triplets)})")
 
     print(f"\n{'='*55}")
-    print(f"  Quality Issue Breakdown (among all triplets)")
+    print(f"  soundness Issue Breakdown (among all triplets)")
     print(f"{'='*55}")
     all_issue_types = [
         "ambiguous_entity_value",
@@ -82,20 +82,20 @@ def main():
         "reversed_roles",
     ]
     for issue_type in all_issue_types:
-        count = quality_issue_counts.get(issue_type, 0)
+        count = soundness_issue_counts.get(issue_type, 0)
         print(f"  {issue_type:<30s} {count:>4d}  ({pct(count, total_triplets)})")
 
     # Also show any unexpected issue types
-    unexpected = set(quality_issue_counts.keys()) - set(all_issue_types)
+    unexpected = set(soundness_issue_counts.keys()) - set(all_issue_types)
     for issue_type in sorted(unexpected):
-        count = quality_issue_counts[issue_type]
+        count = soundness_issue_counts[issue_type]
         print(f"  {issue_type:<30s} {count:>4d}  ({pct(count, total_triplets)})  [unexpected]")
 
     print(f"\n{'='*55}")
     print(f"  Aggregate Scores (DB-level avg)")
     print(f"{'='*55}")
     print(f"  Avg Faithfulness:    {avg(all_faithfulness):.2%}")
-    print(f"  Avg Quality:         {avg(all_quality):.2%}")
+    print(f"  Avg soundness:         {avg(all_soundness):.2%}")
     print(f"  Avg Overall:         {avg(all_overall):.2%}")
 
     print(f"\n{'='*55}")

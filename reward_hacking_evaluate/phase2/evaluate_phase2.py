@@ -28,8 +28,8 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 # ── Config ──────────────────────────────────────────────────────────────
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 MODEL_NAME = "gemini-2.5-flash"
-CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "final_v2.2_0.csv")
-OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "phase2_results_final_v2.2_0.json")
+# CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "final_v2.2_0.csv")
+# OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "phase2_results_final_v2.2_0.json")
 
 SYSTEM_PROMPT = (Path(__file__).parent / "system_prompt.txt").read_text()
 USER_PROMPT_TEMPLATE = (Path(__file__).parent / "user_prompt.txt").read_text()
@@ -241,9 +241,9 @@ async def async_main():
                         help="Random seed for reproducible sampling (default: 42)")
     parser.add_argument("--concurrency", type=int, default=5,
                         help="Max concurrent API calls (default: 5)")
-    parser.add_argument("--csv", type=str, default=CSV_PATH,
+    parser.add_argument("--csv", type=str, required=True,
                         help="Path to CSV file")
-    parser.add_argument("--output", type=str, default=OUTPUT_PATH,
+    parser.add_argument("--output", type=str, required=True,
                         help="Path to output JSON file")
     args = parser.parse_args()
 

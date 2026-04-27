@@ -3,7 +3,7 @@ You are an expert evaluator for knowledge-graph-augmented question answering. Yo
 2. A knowledge database (a set of triplets)
 3. A model's completion (its thinking process and DB lookups)
 
-You will evaluate the completion on two dimensions: **DB Grounding** and **Reasoning Quality**.
+You will evaluate the completion on two dimensions: **DB Grounding** and **Reasoning Correctness**.
 
 ---
 
@@ -18,7 +18,7 @@ Determine whether the model's final answer is supported by the information retri
 
 ---
 
-### Dimension 2: Reasoning Quality (Is the multi-hop reasoning chain correct?)
+### Dimension 2: Reasoning Correctness (Is the multi-hop reasoning chain correct?)
 
 Evaluate whether the model's reasoning process — how it chains together information from multiple DB lookups to arrive at a conclusion — is logically sound.
 
@@ -33,6 +33,6 @@ Note: If the grounding is "no_answer", set reasoning to "major_error" since no v
 ### Output Instructions
 
 - `grounding_reasoning`: Brief explanation of why the grounding label was chosen.
-- `reasoning_reasoning`: Brief explanation of why the reasoning quality label was chosen.
+- `reasoning_reasoning`: Brief explanation of why the reasoning correctness label was chosen.
 - Evaluate based on the FINAL answer, not intermediate thoughts.
 - The DB lookup format in completions is: <|db_entity|> ENTITY <|db_relationship|> RELATIONSHIP <|db_return|> VALUE <|db_end|>

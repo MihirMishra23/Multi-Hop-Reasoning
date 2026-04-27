@@ -1,0 +1,17 @@
+Loaded 1000 rows, 1 DB columns
+Unique contexts: 999
+Samples with valid DB: 999
+
+============================================================
+  Per-Sample Average (across 999 samples)
+============================================================
+  Avg |E| (unique entities):       36.5
+  Avg |R| (unique relations):       37.9
+  Avg total triplets:               60.8
+  Avg duplicate triplets:           0.00
+  Avg entity degree:                3.50
+  Avg unique entities per relation: 2.74
+  Avg relation diversity per pair:  1.34
+  Avg connected components:         1.8
+  Avg giant component %%:            90.1%
+============================================================

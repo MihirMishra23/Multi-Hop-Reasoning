@@ -18,7 +18,7 @@ except ImportError:
     exit(1)
 
 
-CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "reward_hacking_evaluate/final_v2.2_0.csv")
+CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "KG_results", "ckpt500_hotpotqa_dev_n1000_all_concat_trainparams.csv")
 
 
 def get_db_columns(header):
@@ -147,8 +147,8 @@ def main():
 
     print(f"Loaded {len(rows)} rows, {len(db_cols)} DB columns")
 
-    # ── Collect triplets: one DB per unique context ──
-    all_triplets = []
+    # ── Per-sample stats: compute for each unique context, then average ──
+    per_sample_stats = []
     seen_contexts = set()
 
     for row in rows:
@@ -163,27 +163,30 @@ def main():
                 continue
             triplets = parse_db_column(raw)
             if triplets:
-                all_triplets.extend(triplets)
+                stats = analyze_triplets(triplets)
+                if stats:
+                    per_sample_stats.append(stats)
                 break
 
     print(f"Unique contexts: {len(seen_contexts)}")
-    print(f"Total triplets collected: {len(all_triplets)}")
+    print(f"Samples with valid DB: {len(per_sample_stats)}")
 
-    # ── Global stats ──
-    stats = analyze_triplets(all_triplets, label="Global DB (one DB per unique context)")
-    if stats:
-        print_stats(stats)
+    if per_sample_stats:
+        avg = lambda key: sum(s[key] for s in per_sample_stats) / len(per_sample_stats)
 
-        # ── Degree distribution ──
-        degree_count = Counter()
-        for e, r, v in all_triplets:
-            degree_count[e] += 1
-            degree_count[v] += 1
-
-        print(f"\n  Degree Distribution (top 10):")
-        deg_values = Counter(degree_count.values())
-        for deg, count in sorted(deg_values.items(), key=lambda x: -x[1])[:10]:
-            print(f"    Degree {deg}: {count} entities")
+        print(f"\n{'='*60}")
+        print(f"  Per-Sample Average (across {len(per_sample_stats)} samples)")
+        print(f"{'='*60}")
+        print(f"  Avg |E| (unique entities):       {avg('n_entities'):.1f}")
+        print(f"  Avg |R| (unique relations):       {avg('n_relations'):.1f}")
+        print(f"  Avg total triplets:               {avg('n_triplets'):.1f}")
+        print(f"  Avg duplicate triplets:           {avg('duplicate_triplets'):.2f}")
+        print(f"  Avg entity degree:                {avg('avg_degree'):.2f}")
+        print(f"  Avg unique entities per relation: {avg('avg_unique_e_per_r'):.2f}")
+        print(f"  Avg relation diversity per pair:  {avg('avg_r_diversity'):.2f}")
+        print(f"  Avg connected components:         {avg('n_components'):.1f}")
+        print(f"  Avg giant component %%:            {avg('giant_component_pct'):.1f}%")
+        print(f"{'='*60}")
 
 
 if __name__ == "__main__":

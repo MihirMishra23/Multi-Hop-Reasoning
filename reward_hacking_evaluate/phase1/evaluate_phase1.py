@@ -11,6 +11,7 @@ import argparse
 import ast
 import asyncio
 import csv
+from html import parser
 import json
 import random
 import os
@@ -29,8 +30,8 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 # ── Config ──────────────────────────────────────────────────────────────
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 MODEL_NAME = "gemini-2.5-flash"
-CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "final_v2.2_0.csv")
-OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "phase1_results_flash_final_v2.2_0.json")
+# CSV_PATH = "../../KG_results/ckpt500_hotpotqa_dev_n1000_all_concat_trainparams.csv"
+# OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "phase1_results_flash_ckpt500_hotpotqa_dev_n1000_all_concat_trainparams.json")
 
 SYSTEM_PROMPT = (Path(__file__).parent / "system_prompt.txt").read_text()
 USER_PROMPT_TEMPLATE = (Path(__file__).parent / "user_prompt.txt").read_text()
@@ -42,7 +43,7 @@ class TripletEvaluation(BaseModel):
     triplet: str
     reasoning: str
     faithfulness: Literal["faithful", "hallucinated"]
-    quality_issues: list[Literal[
+    soundness_issues: list[Literal[
         "ambiguous_entity_value",
         "trivial",
         "non_specific",
@@ -84,7 +85,7 @@ def get_db_columns(header: list[str]) -> list[str]:
 def compute_score(evals: list[TripletEvaluation], total_triplets: int) -> dict:
     """Compute scores from judge output."""
     faithful = [e for e in evals if e.faithfulness == "faithful"]
-    clean = [e for e in faithful if len(e.quality_issues) == 0]
+    clean = [e for e in faithful if len(e.soundness_issues) == 0]
     hallucinated = [e for e in evals if e.faithfulness == "hallucinated"]
 
     return {
@@ -93,7 +94,7 @@ def compute_score(evals: list[TripletEvaluation], total_triplets: int) -> dict:
         "hallucinated_count": len(hallucinated),
         "clean_count": len(clean),
         "faithfulness_score": len(faithful) / total_triplets if total_triplets > 0 else 0,
-        "quality_score": len(clean) / len(faithful) if len(faithful) > 0 else 0,
+        "soundness_score": len(clean) / len(faithful) if len(faithful) > 0 else 0,
         "overall_score": len(clean) / total_triplets if total_triplets > 0 else 0,
     }
 
@@ -254,10 +255,8 @@ async def async_main():
                         help="Random seed for reproducible sampling (default: 42)")
     parser.add_argument("--concurrency", type=int, default=5,
                         help="Max concurrent API calls (default: 5)")
-    parser.add_argument("--csv", type=str, default=CSV_PATH,
-                        help="Path to CSV file")
-    parser.add_argument("--output", type=str, default=OUTPUT_PATH,
-                        help="Path to output JSON file")
+    parser.add_argument("--csv", type=str, required=True, help="Path to input CSV file")
+    parser.add_argument("--output", type=str, required=True, help="Path to output JSON file")
     args = parser.parse_args()
 
     # ── Init client ──
