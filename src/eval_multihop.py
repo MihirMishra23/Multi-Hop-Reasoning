@@ -39,6 +39,7 @@ from llm import get_llm
 from data import get_dataset
 from data.hotpotqa import load_hotpotqa_rag_corpus
 from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
+from multi_lmlm.database.database_manager import build_databases_from_triplets_batch
 
 # Import for TriviaQA sentence splitting
 from nltk.tokenize import PunktSentenceTokenizer
@@ -449,7 +450,7 @@ def save_results_to_file(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run agent over a dataset and save predictions.")
-    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki", "synthworlds", "trivia_qa", "popqa"], help="Dataset name")
+    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki", "synthworlds", "trivia_qa", "popqa", "confiqa"], help="Dataset name")
     parser.add_argument(
         "--setting",
         default="distractor",
@@ -484,6 +485,12 @@ def main() -> None:
         "--concat-all-db",
         action="store_true",
         help="Build a single unified database from all examples (two_phase only)",
+    )
+    parser.add_argument(
+        "--confiqa-setting",
+        default="orig",
+        choices=["orig", "cf", "cf_100", "cf_500"],
+        help="ConFiQA setting: 'orig' for original, 'cf' for counterfactual, 'cf_100' for CF on 100 examples, 'cf_500' for CF on 500 examples (only used with --dataset confiqa)",
     )
     parser.add_argument("--model-path", default=None, help="Local model path")
     parser.add_argument(
@@ -727,7 +734,14 @@ def main() -> None:
     print("split is :", args.split)
 
     # Load full dataset once (with seed for deterministic shuffling)
-    full_dataset = get_dataset(name = args.dataset, setting = args.setting, split =  args.split, seed=args.seed)
+    # For ConFiQA, use confiqa_setting instead of setting
+    dataset_setting = args.confiqa_setting if args.dataset == "confiqa" else args.setting
+    if args.dataset == "confiqa":
+        logger.info(f"DEBUG: Loading ConFiQA with setting='{dataset_setting}' (args.confiqa_setting='{args.confiqa_setting}')")
+    full_dataset = get_dataset(name = args.dataset, setting = dataset_setting, split =  args.split, seed=args.seed)
+    if args.dataset == "confiqa":
+        logger.info(f"DEBUG: First example answers: {full_dataset[0]['answers']}")
+        logger.info(f"DEBUG: First example contexts preview: {full_dataset[0]['contexts'][0][:100] if full_dataset[0]['contexts'] else 'N/A'}...")
     total_dataset_size = len(full_dataset)
 
     # Validate start_index
@@ -747,7 +761,9 @@ def main() -> None:
     # Prepare output location
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
     if args.method in ('lmlm', 'two_phase'):
-        model_name = args.model_path.split('/')[-1] if "checkpoint" not in args.model_path else args.model_path.split('/')[-2]+"-ckpt"+args.model_path.split('/')[-1].split("checkpoint-")[-1]
+        # Strip trailing slashes to ensure consistent path parsing
+        model_path_clean = args.model_path.rstrip('/')
+        model_name = model_path_clean.split('/')[-1] if "checkpoint" not in model_path_clean else model_path_clean.split('/')[-2]+"-ckpt"+model_path_clean.split('/')[-1].split("checkpoint-")[-1]
         output_dir = os.path.join(base_output_dir, args.method, args.dataset, model_name)
         use_inv_str = "_inv" if args.use_inverses else ""
         save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}.json"
@@ -883,7 +899,39 @@ def main() -> None:
         logger.info(f"Prepared {len(all_queries)} queries for unified DB building")
 
         # Build the unified database
-        agent.build_unified_db_from_dataset(all_queries, all_contexts)
+        if args.dataset == "confiqa":
+            # Special handling for ConFiQA: use golden triplets directly, skip phase 1
+            logger.info(f"Building ConFiQA database from golden triplets (setting={args.confiqa_setting})")
+
+            all_triplets = []
+            for ex in full_dataset.select(range(args.start_index, end_index)):
+                triplets = ex.get("golden_triplets", [])
+                # Convert triplets to (head, relation, tail) format
+                for triplet in triplets:
+                    if isinstance(triplet, (list, tuple)) and len(triplet) == 3:
+                        all_triplets.append(tuple(triplet))
+
+            # Build unified DatabaseManager from golden triplets
+            unified_db = build_databases_from_triplets_batch(
+                [all_triplets],
+                top_k=agent.top_k,
+                default_threshold=agent.similarity_threshold,
+                adaptive=False,
+                use_inverses=agent.use_inverses,
+            )[0]
+
+            # Store in agent (same as build_unified_db_from_dataset does)
+            agent._unified_db = unified_db
+            agent._phase1_info = [{"triplets": all_triplets}]
+            agent._unified_db_stats = {
+                "total_triplets": len(all_triplets),
+                "num_examples": len(all_queries),
+            }
+            logger.info(f"Built ConFiQA database with {len(all_triplets)} golden triplets")
+        else:
+            # Normal phase 1 processing for other datasets
+            agent.build_unified_db_from_dataset(all_queries, all_contexts)
+
         logger.info("Unified database built successfully")
 
         # Save the unified database to disk
