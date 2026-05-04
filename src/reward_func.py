@@ -1,7 +1,13 @@
 from collections import defaultdict, deque, Counter
 import re
-from multi_lmlm.constants import ANSWER_START_TOKEN, ANSWER_END_TOKEN, THINKING_START_TOKEN
+from multi_lmlm.constants import (
+    ANSWER_START_TOKEN, ANSWER_END_TOKEN, THINKING_START_TOKEN,
+    DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, DB_END_TOKEN,
+)
 from eval.metrics import exact_match_score
+
+STEPS_START_TOKEN = "<steps>"
+STEPS_END_TOKEN = "</steps>"
 
 
 def extract_answer_from_tags(text: str):
@@ -76,6 +82,142 @@ def f1_reward(completions, solution, **kwargs):
             pred_tokens = normalize_text(extracted).split()
             gold_tokens = normalize_text(s).split()
             results.append(token_f1(pred_tokens, gold_tokens))
+    return results
+
+
+_PHASE1_COMMENTARY_MARKERS = (
+    "Relationship:", "Implicit Fact:", "Triplets:", "Note:", "note:",
+    "however,", "Therefore,", "In summary",
+)
+_EOS_TOKENS = ("<|im_end|>", "<|endoftext|>", "<|im_start|>", "<pad>")
+
+FORMAT_PENALTY = -1  # tune here: -0.5 is mild, -1.0 is more aggressive
+
+
+_DB_TOKEN_PAT = re.compile(
+    r"<\|db_entity\|>\s*(.+?)\s*<\|db_relationship\|>\s*(.+?)\s*<\|db_return\|>\s*(.+?)\s*<\|db_end\|>"
+)
+_PAREN_PAT = re.compile(r"^\(\s*([^,]+?)\s*,\s*([^,]+?)\s*,\s*(.+?)\s*\)\s*$")
+
+
+def _parse_phase1_triplets(lines: list[str], text: str):
+    """Parse Phase 1 triplets, auto-detecting format.
+
+    Tries in order: v6 DB-token → v5 pipe → v1 paren.
+    Returns (triplets, is_line_based) where is_line_based=True means
+    each non-empty line should correspond to exactly one triplet.
+    """
+    # v6: <|db_entity|> E <|db_relationship|> R <|db_return|> V <|db_end|>
+    if DB_START_TOKEN in text:
+        triplets = [
+            (m.group(1), m.group(2), m.group(3))
+            for m in _DB_TOKEN_PAT.finditer(text)
+        ]
+        # count lines containing a db_start as "triplet lines"
+        triplet_lines = sum(1 for l in lines if DB_START_TOKEN in l)
+        return triplets, triplet_lines
+
+    # v5: entity | relationship | value
+    pipe_triplets = []
+    pipe_triplet_lines = 0
+    for line in lines:
+        if " | " in line:
+            parts = line.split(" | ", 2)
+            if len(parts) == 3 and all(p.strip() for p in parts):
+                pipe_triplets.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
+                pipe_triplet_lines += 1
+    if pipe_triplets:
+        return pipe_triplets, pipe_triplet_lines
+
+    # v1: (entity, relationship, value)
+    paren_triplets = []
+    paren_triplet_lines = 0
+    for line in lines:
+        m = _PAREN_PAT.match(line)
+        if m:
+            paren_triplets.append((m.group(1), m.group(2), m.group(3)))
+            paren_triplet_lines += 1
+    return paren_triplets, paren_triplet_lines
+
+
+def _phase1_format_ok(lines: list[str], text: str) -> bool:
+    """Return True if Phase 1 triplet output passes all format checks.
+
+    Compatible with all three zero_rl Phase 1 formats:
+        - formatted_zero_rl   : (entity, relationship, value)
+        - formatted_zero_rl_v5: entity | relationship | value
+        - formatted_zero_rl_v6: <|db_entity|> E <|db_relationship|> R <|db_return|> V <|db_end|>
+    """
+    if not lines:
+        return False
+
+    triplets, triplet_line_count = _parse_phase1_triplets(lines, text)
+
+    # has_triplets
+    if not triplets:
+        return False
+
+    # no_junk_lines + triplet_line_ratio (≥80% of lines are valid triplets)
+    if triplet_line_count < len(lines) * 0.8:
+        return False
+
+    # no_commentary
+    if any(m in text for m in _PHASE1_COMMENTARY_MARKERS):
+        return False
+
+    # no_duplicates
+    seen: set[tuple[str, str, str]] = set()
+    for t in triplets:
+        key = (t[0].lower(), t[1].lower(), t[2].lower())
+        if key in seen:
+            return False
+        seen.add(key)
+
+    # no_nested_parens — only meaningful for paren/pipe formats (v6 uses tags, not parens)
+    if DB_START_TOKEN not in text:
+        if any(line.startswith("((") for line in lines):
+            return False
+
+    return True
+
+
+def _phase2_format_score(c: str) -> float:
+    """
+    Single penalty:
+    - NO_WELL_FORMED_LOOKUP (-0.5): no complete well-formed lookup found in completion
+
+    Everything else (malformed syntax, missing answer tags) is implicitly
+    captured — if the model can't produce even one good lookup, it gets penalized.
+    """
+    well_formed_lookups = _DB_TOKEN_PAT.findall(c)
+    return FORMAT_PENALTY if not well_formed_lookups else 0.0
+
+
+def format_reward_zero_rl(completions, solution, **kwargs):
+    """Format reward for zero_rl two-phase completions.
+
+    Phase 1 (triplet extraction): checks triplet quality — has valid pipe-separated
+    triplets, no junk lines, no commentary, no duplicates, no nested parens.
+
+    Phase 2 (QA with DB lookups): two independent -0.5 penalties:
+    - NO_LOOKUP: no DB lookup found before <answer>
+    - OTHER: structural issues (missing/misordered tags, empty answer, EOS leakage)
+
+    Phase detection: Phase 2 is identified by presence of <steps> or <answer> tags;
+    everything else is treated as Phase 1.
+
+    Returns 0.0 if all checks pass, up to -1.0 for Phase 2 failures.
+    """
+    results = []
+    for c in completions:
+        lines = [l for l in c.strip().splitlines() if l.strip()]
+
+        # Phase detection: Phase 2 has <steps> or <answer> structural tags
+        if STEPS_START_TOKEN in c or ANSWER_START_TOKEN in c:
+            results.append(_phase2_format_score(c))
+        else:
+            results.append(0.0 if _phase1_format_ok(lines, c) else FORMAT_PENALTY)
+
     return results
 
 

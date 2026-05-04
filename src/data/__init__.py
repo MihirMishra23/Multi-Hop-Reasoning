@@ -28,7 +28,7 @@ def get_dataset(
     if name_norm == "musique":
         # MuSiQue has no 'setting'; ignore the argument
         return load_musique(split=split, source=source, limit=limit, seed=seed)
-    if name_norm == "mquake-remastered":
+    if name_norm == "mquake-remastered" or name_norm == "mquake":
         return load_mquake(split = split, limit = limit, seed = seed)
     if name_norm == "2wiki":
         return load_2wiki(setting=setting, split=split, limit=limit, seed=seed)

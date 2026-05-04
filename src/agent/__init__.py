@@ -5,6 +5,7 @@ from typing import Any, Dict
 from .agent_class import Agent
 from .rag_agent import RAGAgent
 from .icl_agent import ICLAgent
+from .cot_agent import CotAgent
 from .lmlm_agent import LMLMAgent
 from .two_phase_agent import TwoPhaseAgent
 
@@ -64,6 +65,12 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
 
             agent = LMLMAgent(**agent_kwargs)
 
+        case "cot":
+            llm = agent_kwargs.get("llm")
+            if llm is None:
+                raise Exception("You must set an LLM for CoT inference.")
+            agent = CotAgent(llm=llm, max_steps=agent_kwargs.get("max_steps", 8))
+
         case "direct":
             llm = agent_kwargs.get("llm")
             if llm is None:
@@ -82,4 +89,4 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
     return agent
 
 
-__all__ = ["Agent", "RAGAgent", "ICLAgent", "LMLMAgent", "TwoPhaseAgent", "get_agent"]
+__all__ = ["Agent", "RAGAgent", "ICLAgent", "CotAgent", "LMLMAgent", "TwoPhaseAgent", "get_agent"]

@@ -2,17 +2,17 @@
 
 
 # SLURM Directives
-#SBATCH -J grpo_1.7b_ckpt184                 # Job name
-#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_ckpt184_%j.out   # Standard output file
-#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_ckpt184_%j.err   # Standard error file
+#SBATCH -J grpo_4b_optimized                           # Job name
+#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_optimized_%j.out   # Standard output file
+#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_optimized_%j.err   # Standard error file
 #SBATCH -N 1                                    # Number of nodes
 #SBATCH -n 1                                    # Number of tasks (or cores)
 #SBATCH --get-user-env                          # Retrieve the user's login environment
-#SBATCH --cpus-per-task=28
+#SBATCH --cpus-per-task=64
 #SBATCH --mem=256G                              # Memory requested (2GB per node)
 #SBATCH -t infinite                              # Time limit (2 hours)
 #SBATCH --partition=aimi,kilian,jjs533,default_partition          # Request partition
-#SBATCH --gres=gpu:nvidia_b200:1                # Request 1 NVIDIA A6000 GPU
+#SBATCH --gres=gpu:nvidia_b200:2                # Request 1 NVIDIA A6000 GPU
 #SBATCH --requeue
 #SBATCH --nodelist=aimi-compute-01,aimi-compute-02,aimi-compute-03
 
@@ -24,19 +24,11 @@ source activate mem
 cd /home/lz586/icl/Multi-Hop-Reasoning/
 
 
+# DATASET=hotpotqa-v2
 DATASET=hotpotqa-v2
 
 # MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1
-# MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
-# MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_1phase 
-# MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.9_top_k_1
-MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-184
-# MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
-RETRIEVAL_THRESHOLD=0.6
-TOP_K=4
-NUM_GENERATIONS=32
-NUM_DB_ROLLOUTS=4
-
+MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
 # MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_classic_retrieval_6k
 # MODEL_PATH="/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k"
 # MODEL_PATH="Qwen/Qwen3-1.7B"
@@ -45,10 +37,13 @@ DATABASE_PATH=""  # TODO: set a valid database JSON path for single-phase mode
 THRESHOLD=-1
 
 # Defaults (overridden per dataset below)
-REWARD_FUNC="f1"
+REWARD_FUNC="em_size"
 TWO_PHASE=""
 DEBUG=""
 
+export TRITON_CACHE_DIR=/home/lz586/.cache/triton
+export TMPDIR=/home/lz586/.tmp
+mkdir -p $TRITON_CACHE_DIR $TMPDIR
 
 if [ "${DATASET}" = "hotpotqa-v2" ]; then
     echo "Training on hotpotqa-v2"
@@ -78,7 +73,7 @@ fi
 # if it is qwen model, then we need to use the zero_rl prompt
 USE_CHAT_TEMPLATE=""
 if [[ "${MODEL_PATH}" == *"Qwen/Qwen"* ]]; then
-    PHASE1_PROMPT_TYPE="formatted_zero_rl_v5"
+    PHASE1_PROMPT_TYPE="formatted_zero_rl"
     USE_CHAT_TEMPLATE="--use_chat_template"
 else
     PHASE1_PROMPT_TYPE="sft"
@@ -96,10 +91,6 @@ bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/grpo_train.sh \
 --phase1_prompt_type ${PHASE1_PROMPT_TYPE} \
 ${USE_CHAT_TEMPLATE} \
 ${TWO_PHASE} \
-${DEBUG} \
---retrieval_threshold ${RETRIEVAL_THRESHOLD} \
---top_k ${TOP_K} \
---num_generations ${NUM_GENERATIONS} \
---num_db_rollouts ${NUM_DB_ROLLOUTS}
+${DEBUG}
 
 echo "GRPO Training complete!"

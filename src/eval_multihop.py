@@ -31,7 +31,7 @@ from datetime import datetime
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 from constants import REPO_ROOT
-
+import warnings
 import torch
 
 from agent import get_agent, Agent
@@ -245,7 +245,7 @@ def process_single_batch(
     examples_metadata = []
 
     for ex in ds:
-        qid = ex.get("id") or ex.get("_id")
+        qid = ex.get("id") or ex.get("_id") or ex.get("case_id")
         question = ex["question"]
         contexts = ex.get("contexts") or []
 
@@ -276,13 +276,20 @@ def process_single_batch(
                         logger.info(f"Split {original_len} contexts into {len(contexts)} parts for first example")
 
         queries.append(question)
-        examples_metadata.append({
+        
+        metadata_entry = {
             "qid": qid,
             "question": question,
             "answers": ex["answers"],
-            "supporting_facts": ex["supporting_facts"],
+            "supporting_facts": ex.get("supporting_facts"),
             "contexts": contexts,
-        })
+        }
+        # For MQuAKE, also capture new_answers and split type for knowledge editing evaluation
+        if "new_answers" in ex:
+            metadata_entry["new_answers"] = ex["new_answers"]
+        if "mquake_split_type" in ex:
+            metadata_entry["mquake_split_type"] = ex["mquake_split_type"]
+        examples_metadata.append(metadata_entry)
 
     logger.info(f"Processing batch of {len(queries)} queries")
 
@@ -357,6 +364,11 @@ def process_single_batch(
             "question": metadata["question"],
             "trace": serialized_trace,
         }
+        # For MQuAKE, also save new_gold_answer and split type for knowledge editing evaluation
+        if "new_answers" in metadata:
+            results[str(metadata["qid"])]["new_gold_answer"] = metadata["new_answers"]
+        if "mquake_split_type" in metadata:
+            results[str(metadata["qid"])]["mquake_split_type"] = metadata["mquake_split_type"]
         if args.method == "lmlm":
             lookup_logs = getattr(agent, "_lookup_logs", [])
             if idx < len(lookup_logs):
@@ -450,7 +462,7 @@ def save_results_to_file(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run agent over a dataset and save predictions.")
-    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki", "synthworlds", "trivia_qa", "popqa", "confiqa"], help="Dataset name")
+    parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki", "synthworlds", "trivia_qa", "popqa", "confiqa", "mquake", "mquake-remastered"], help="Dataset name")
     parser.add_argument(
         "--setting",
         default="distractor",
@@ -460,7 +472,7 @@ def main() -> None:
     parser.add_argument(
         "--split",
         default="dev",
-        choices=["train", "dev", "validation", "test"],
+        choices=["train", "dev", "validation", "test", "eval-edit", "eval-edit-new", "eval-original"],
         help="Dataset split",
     )
     parser.add_argument(
@@ -507,7 +519,7 @@ def main() -> None:
     parser.add_argument(
         "--top-k",
         default=4,
-        type = int,
+        type=int,
         help="Maximum number of results to retrieve from database",
     )
     parser.add_argument(
@@ -734,6 +746,15 @@ def main() -> None:
     print("split is :", args.split)
 
     # Load full dataset once (with seed for deterministic shuffling)
+    # BUG: either use start_index or sub_split, not both
+    # if start_index is used, sub_split should be None
+    # if args.start_index is not None:
+    #     sub_split = None
+    #     if args.sub_split is not None:
+    #         warnings.warn("start_index is used, sub_split will be ignored during dataset loading")
+    # else:
+    #     sub_split = args.sub_split
+
     # For ConFiQA, use confiqa_setting instead of setting
     dataset_setting = args.confiqa_setting if args.dataset == "confiqa" else args.setting
     if args.dataset == "confiqa":
@@ -743,6 +764,8 @@ def main() -> None:
         logger.info(f"DEBUG: First example answers: {full_dataset[0]['answers']}")
         logger.info(f"DEBUG: First example contexts preview: {full_dataset[0]['contexts'][0][:100] if full_dataset[0]['contexts'] else 'N/A'}...")
     total_dataset_size = len(full_dataset)
+
+    print(f"examples in dataset: {full_dataset[0]}")
 
     # Validate start_index
     if args.start_index >= total_dataset_size:
@@ -756,6 +779,7 @@ def main() -> None:
     # Calculate the exclusive end index
     end_index = args.start_index + examples_to_process
 
+    print(f"Evaluating {examples_to_process} / {total_dataset_size} examples (index {args.start_index} to {end_index})")
     logger.info(f"Dataset size: {total_dataset_size}, Processing {examples_to_process} examples from index {args.start_index} to {end_index}")
 
     # Prepare output location
@@ -766,7 +790,19 @@ def main() -> None:
         model_name = model_path_clean.split('/')[-1] if "checkpoint" not in model_path_clean else model_path_clean.split('/')[-2]+"-ckpt"+model_path_clean.split('/')[-1].split("checkpoint-")[-1]
         output_dir = os.path.join(base_output_dir, args.method, args.dataset, model_name)
         use_inv_str = "_inv" if args.use_inverses else ""
-        save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}.json"
+        # Encode all settings that vary across runs to prevent file overwrite
+        settings_str = ""
+        if args.method == "two_phase":
+            settings_str += f"_ctx{args.use_contexts}"
+            if args.concat_all_db:
+                settings_str += "_cdb"
+        settings_str += f"_k{args.top_k}"
+        if getattr(args, "use_train_params", False):
+            settings_str += "_tp"
+        if args.dataset == "synthworlds":
+            settings_str += f"_setting{args.setting}"
+
+        save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}{settings_str}.json"
         save_path = os.path.join(output_dir, f"generations{args.save_version}", f"eval_{save_postfix}")
         save_results_path = os.path.join(output_dir, f"results{args.save_version}", f"results_{save_postfix}")
     else:
