@@ -760,9 +760,6 @@ def main() -> None:
     if args.dataset == "confiqa":
         logger.info(f"DEBUG: Loading ConFiQA with setting='{dataset_setting}' (args.confiqa_setting='{args.confiqa_setting}')")
     full_dataset = get_dataset(name = args.dataset, setting = dataset_setting, split =  args.split, seed=args.seed)
-    if args.dataset == "confiqa":
-        logger.info(f"DEBUG: First example answers: {full_dataset[0]['answers']}")
-        logger.info(f"DEBUG: First example contexts preview: {full_dataset[0]['contexts'][0][:100] if full_dataset[0]['contexts'] else 'N/A'}...")
     total_dataset_size = len(full_dataset)
 
     print(f"examples in dataset: {full_dataset[0]}")
