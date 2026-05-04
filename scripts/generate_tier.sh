@@ -30,14 +30,19 @@
 # Compatibility with eval:
 # - Uses get_dataset with seed; subset defined by start-index + total-count
 #
-MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_ep5_bsz48-grpo-g8-bs16-s8-b0.0-ep5-n8000/checkpoint-1250/
-DATASET=2wiki
-SPLIT=dev
-NUM_SAMPLES=100
+MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1
+DATASET=hotpotqa
+# train_all: full 7k GRPO training set (seed=42 shuffled, indices 83347..90347)
+SPLIT=train_all
+NUM_SAMPLES=7000
 SAVE_VERSION="v1"
-NUM_ROLLOUTS=8
+NUM_ROLLOUTS=4
 ANSWER_THRESHOLD=0.6
-PLOT_PATH=./output/tiers/2wiki_score_dist.png
+TOP_K=4
+SIMILARITY_THRESHOLD=0.6
+TWO_PHASE=0
+CHUNK_SIZE=6000
+PLOT_PATH=./output/tiers/hotpotqa_train_score_dist.png
 
 
 # Parse command line arguments
@@ -67,12 +72,28 @@ while [[ $# -gt 0 ]]; do
             ANSWER_THRESHOLD="$2"
             shift 2
             ;;
+        --top_k)
+            TOP_K="$2"
+            shift 2
+            ;;
+        --similarity_threshold)
+            SIMILARITY_THRESHOLD="$2"
+            shift 2
+            ;;
+        --two_phase)
+            TWO_PHASE=1
+            shift 1
+            ;;
         --save_version)
             SAVE_VERSION="$2"
             shift 2
             ;;
         --plot_path)
             PLOT_PATH="$2"
+            shift 2
+            ;;
+        --chunk_size)
+            CHUNK_SIZE="$2"
             shift 2
             ;;
         *)
@@ -110,6 +131,23 @@ if [ "${DATASET}" = "hotpotqa" ]; then
         DEFAULT_NUM_SAMPLES=1000
         START_IDX=89347
         SPLIT="train"
+    elif [ "${SPLIT}" = "train_all" ]; then
+        # Full 7k GRPO training set.
+        # grpo_train.py loads sub_split="train", limit=7000, seed=42 which selects
+        # range(n - eval_size - train_size, n - eval_size) = range(83347, 90347)
+        # of the seed=42-shuffled hotpotqa train split (n=90447).
+        echo "Using full 7k GRPO training set (seed=42 indices 83347..90347)"
+        DATABASE_PATH="/share/j_sun/lmlm_multihop/database/gemini/hotpotqa_train_start_idx_82347_nb_8100_database.json"
+        DEFAULT_NUM_SAMPLES=7000
+        START_IDX=83347
+        SPLIT="train"
+    elif [ "${SPLIT}" = "train_full" ]; then
+        # Full hotpotqa train split (n=90447). No database needed — use with --two_phase.
+        echo "Using full hotpotqa train split (n=90447, two_phase recommended)"
+        DATABASE_PATH=""
+        DEFAULT_NUM_SAMPLES=90447
+        START_IDX=0
+        SPLIT="train"
     else
         echo "Error: SPLIT must be either 'train' or 'dev', got '${SPLIT}'"
         exit 1
@@ -144,19 +182,24 @@ if [ "${NUM_SAMPLES}" -gt "${DEFAULT_NUM_SAMPLES}" ]; then
     NUM_SAMPLES="${DEFAULT_NUM_SAMPLES}"
 fi
 
-METHOD=lmlm
+if [ "${TWO_PHASE}" = "1" ]; then
+    METHOD=two_phase
+else
+    METHOD=lmlm
+fi
 MAX_TOKENS=1024
-BATCH_SIZE=32
-OUTPUT_DIR=./output
+BATCH_SIZE=512
+OUTPUT_DIR=/share/j_sun/lmlm_multihop/output_tier
 SETTING=distractor
 SEED="${SEED:-42}"
 
-python scripts/generate_tier.py \
+VLLM_USE_V1=0 python scripts/generate_tier.py \
     --model-path ${MODEL_PATH} \
-    --database-path ${DATABASE_PATH} \
+    ${DATABASE_PATH:+--database-path ${DATABASE_PATH}} \
     --method ${METHOD} \
     --max-tokens ${MAX_TOKENS} \
     --batch-size ${BATCH_SIZE} \
+    --chunk-size ${CHUNK_SIZE} \
     --total-count ${NUM_SAMPLES} \
     --output-dir ${OUTPUT_DIR}/ \
     --save-version ${SAVE_VERSION} \
@@ -167,4 +210,6 @@ python scripts/generate_tier.py \
     --start-index ${START_IDX} \
     --num-rollouts ${NUM_ROLLOUTS} \
     --answer-threshold ${ANSWER_THRESHOLD} \
+    --top-k ${TOP_K} \
+    --similarity-threshold ${SIMILARITY_THRESHOLD} \
     --plot-path ${PLOT_PATH}

@@ -6,6 +6,10 @@ from .hotpotqa import load_hotpotqa
 from .musique import load_musique
 from .mquake import load_mquake
 from .two_wiki import load_2wiki
+from .synthworlds import load_synthworlds
+from .trivia_qa import load_trivia_qa
+from .popqa import load_popqa
+from .confiqa import load_confiqa
 
 
 def get_dataset(
@@ -24,11 +28,20 @@ def get_dataset(
     if name_norm == "musique":
         # MuSiQue has no 'setting'; ignore the argument
         return load_musique(split=split, source=source, limit=limit, seed=seed)
-    if name_norm == "mquake-remastered":
+    if name_norm == "mquake-remastered" or name_norm == "mquake":
         return load_mquake(split = split, limit = limit, seed = seed)
     if name_norm == "2wiki":
         return load_2wiki(setting=setting, split=split, limit=limit, seed=seed)
+    if name_norm in {"synthworlds", "synth"}:
+        # For SynthWorlds, 'setting' is used as the subset (qa-sm or qa-rm)
+        return load_synthworlds(subset=setting, split=split, source=source, limit=limit, seed=seed)
+    if name_norm in {"trivia_qa", "triviaqa"}:
+        return load_trivia_qa(split=split, source=source, limit=limit, seed=seed, setting=setting)
+    if name_norm == "popqa":
+        return load_popqa(split=split, source=source, limit=limit, seed=seed, setting=setting)
+    if name_norm == "confiqa":
+        return load_confiqa(split=split, source=source, limit=limit, seed=seed, setting=setting)
     raise ValueError(f"Unsupported dataset: {name}")
 
 
-__all__ = ["get_dataset", "load_hotpotqa", "load_musique"]
+__all__ = ["get_dataset", "load_hotpotqa", "load_musique", "load_synthworlds", "load_trivia_qa", "load_popqa", "load_confiqa"]

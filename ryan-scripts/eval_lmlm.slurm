@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --mail-user=ryan.noonan@outlook.com
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --job-name=concat-sft
+#SBATCH --job-name=32-trivia-test
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
@@ -9,7 +9,7 @@
 #SBATCH --mem=256G
 #SBATCH --partition=jjs533
 #SBATCH --constraint='gpu-mid|gpu-high'
-#SBATCH --time=10:00:00
+#SBATCH --time=8:00:00
 #SBATCH --output=logs/%j.out
 #SBATCH --error=logs/%j.err
 
@@ -20,134 +20,55 @@ mkdir -p logs
 
 # Activate conda env from /scratch (faster than shared conda)
 eval "$(conda shell.bash hook)"
-conda activate /scratch/rtn27/multi-hop-reasoning
-# conda activate multi-hop-reasoning
+if [[ "${SLURM_JOB_PARTITION}" == "jjs533" ]]; then
+    conda activate /scratch/rtn27/multi-hop-reasoning
+else
+    conda activate multi-hop-reasoning
+fi
 
 echo "Starting Eval..."
-
-
-# # Load the required environmentt
-# source activate mem
-
-# # Navigate to the working directory
-# cd /home/lz586/icl/Multi-Hop-Reasoning/
 
 
 echo "Starting Eval..."
 
 EVAL_MODE="latest"   # options: latest | all
 
-# MODEL_ROOT="/share/j_sun/lz586/checkpoints/lmlm_multi_hop"
-SFT_MODEL_ROOT=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop
+MODEL_ROOT="/share/j_sun/lz586/checkpoints/lmlm_multi_hop"
+# SFT_MODEL_ROOT=/share/j_sun/lmlm_multihop/checkpoints/main/
 GRPO_MODEL_ROOT=/share/j_sun/lmlm_multihop/checkpoints/debug
 MODEL_PATH_LST=(
-    # ----------------------------
-    # Main CKPTs on hotpotqa
-    # Qwen3-1.7B-SFT_ep5_bsz48
-    # Qwen3-1.7B-SFT_ep5_bsz48-grpo-g8-bs16-s8-b0.0-ep3-n7000
-    # Qwen3-1.7B-SFT_ep5_bsz48-grpo-g8-bs16-s8-b0.0-ep5-n8000
-    # # Qwen3-4B-SFT_ep5_bsz48
-    # Qwen3-4B-SFT_ep5_bsz48-grpo-g8-bs16-s8-b0.0-ep5-n8000
-    # ----------------------------
-
-    # Ablation: F1 threshold (quality threshold of gemini rollouts)
-    # Qwen3-1.7B-SFT_ep5_bsz48_th0.8-grpo-g8-bs16-s8-b0.0-ep5-n8000
-    # Qwen3-1.7B-SFT_ep5_bsz48_th-2-grpo-g8-bs16-s8-b0.0-ep5-n8000
-    # Qwen3-1.7B-SFT_ep5_bsz48_th0.3-grpo-g8-bs16-s8-b0.0-ep5-n8000
-
-    # Debug
-    # Qwen3-1.7B-SFT_mquake-cf-debug_ep5_bsz48_th1.0
-    # Qwen3-1.7B-SFT_mquake-real-debug_ep5_bsz48_th1.0
-    
-    # Ablation: base model version
-    # Qwen2.5-3B-SFT_ep5_bsz48_th-1
-
-    # Ablation: new db format. return triples
-    # Qwen3-1.7B-SFT_ep5_bsz48_th-3
-
-    # Ablation: LMLM-llama2-382M
-    # LMLM-llama2-382M-SFT_ep5_bsz48_th-3
-    # LMLM-llama2-382M-SFT_ep5_bsz48_th-1
-    # LMLM-llama2-382M-SFT_ep5_bsz48_th-1-grpo-g8-bs256-s1-b0.0-ep5-n8000-nak
-    # LMLM-llama2-382M-SFT_hotpotqa_ep10_bsz48_th-1
-
-    # ----------------------------
-    # Main CKPTs on mquake
-    # Qwen3-1.7B-SFT_mquake_ep5_bsz48_th1.0
-    # Qwen3-1.7B-SFT_mquake_ep5_bsz48_th1.0-grpo-g8-bs16-s8-b0.0-ep5-n5334-inv
-    # ----------------------------
-
-    # Ablation: training on mquake variants
-    # Qwen3-1.7B-SFT_mquake-cf5334_ep5_bsz48_th1.0
-    # Qwen3-1.7B-SFT_mquake-real_ep5_bsz48_th1.0
-    # Qwen3-1.7B-SFT_mquake-cf_ep5_bsz48_th1.0
-
-    # Ablation: augmentation variants
-    # Qwen3-1.7B-SFT_mquake-cf5334-r10_ep5_bsz48_th1.0
-    # Qwen3-1.7B-SFT_mquake-cf5334-r1_ep5_bsz48_th1.0
-    # Qwen3-1.7B-SFT_mquake-cfall-r10_ep5_bsz48_th1.0
-    # Qwen3-1.7B-SFT_mquake-real5334-r1_ep5_bsz48_th1.0
-    # ----------------------------
-
-    # New 2 phase models
-    # SFT
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k
-    # Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
-    
-    # full run
-    # Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed-grpo-B1-K4-M4-bs16-s8-b0.0-ep5-n7000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
-
-    # # n1000
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-B1-K4-M4-bs16-s16-b0.0-ep5-n1000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-B2-K4-M2-bs16-s8-b0.0-ep5-n1000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
-
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-B0-K4-M8-bs16-s8-b0.0-ep5-n1000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-B1-K8-M2-bs16-s8-b0.0-ep5-n1000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-B8-K4-M8-bs16-s16-b0.0-ep5-n1000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
-
-
-    # # n500
-    # Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed-grpo-B2-K4-M2-bs16-s4-b0.0-ep10-n500-f1-v2-p1binary-ptcontext_only-wmcount_dynamic-th0.6-topk4-debug-nak
-    # Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed-grpo-B2-K4-M2-bs16-s4-b0.0-ep10-n500-em_size-v2-p1binary-ptcontext_only-wmcount_dynamic-th0.6-topk4-debug-nak
-
-    # # new full run
-    # huge performance drop
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N8-K4-B64-M2-b0.0-step500-n7000-f1-2ph-prcontext_only-wcount_dynamic-th0.6-topk4-nak
-    
-    # the best one
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-2ph-prcontext_only-wcount-th0.6-topk4-nak
-    
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-em-2ph-prcontext_only-wcount-th0.6-topk4-nak
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs1024-N32-K4-B32-M7-b0.0-step500-n7000-em-2ph-prcontext_only-wcount-th0.6-topk4-nak
-
-    # new full run v2
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-step500-n7000-f1-v2-2ph-prcontext_only-wcount-th0.6-topk4-nak
-
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-B32-K2-M4-bs16-s16-b0.0-ep5-n7000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
-
-    #final runs, shared march 28
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak BROKEN
-    Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # SFT models
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
+    /share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
+    # main 2 phase GRPO runs
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
 )
 
 TWO_PHASE_METHOD="two_phase"
 
 DATASET_LST=(
-    hotpotqa
-    musique
-    2wiki
+    # synthworlds
+    popqa
+    # hotpotqa
+    # musique
+    # 2wiki
+    trivia_qa
     # mquake
 )
 SPLIT_lst=(
     # train_val1k
     dev
 )
-SAVE_VERSION="no-concat-all-context"
+SAVE_VERSION="concat-all"
 NUM_SAMPLES=1000
 # USE_TRAIN_PARAMS=""
 USE_TRAIN_PARAMS="--use-train-params"
+CONCAT_ALL_DB=""
 CONCAT_ALL_DB="--concat-all-db"              # set to "--concat-all-db" to build unified database
 USE_CONTEXTS="all"         # options: "golden" | "all"
+OUTPUT_DIR="./march-31-trivia-qa-pop-qa-final"
+SETTING="distractor"
 
 # -----------------------
 # Main loop
@@ -181,17 +102,35 @@ for SPLIT in "${SPLIT_lst[@]}"; do
         MODEL_PATH="${MODEL_ROOT}/${MODEL_DIR}/${CKPT}"
 
         for DATASET in "${DATASET_LST[@]}"; do
-            echo "========== Evaluating ${MODEL_PATH} on ${DATASET} =========="
-            bash /home/rtn27/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
+            # Skip non-hotpotqa datasets when using train_val1k split
+            if [[ "${SPLIT}" == "train_val1k" && "${DATASET}" != "hotpotqa" ]]; then
+                echo "Skipping ${DATASET} for ${SPLIT} split"
+                continue
+            fi
+
+            # Automatically set setting to 'qa-sm' for synthworlds dataset
+            if [[ "${DATASET}" == "synthworlds" ]]; then
+                DATASET_SETTING="qa-sm"
+                DATASET_USE_CONTEXTS="golden"
+                echo "NOTE: Automatically setting --use-contexts=golden for synthworlds dataset (only golden contexts are available)"
+            else
+                DATASET_SETTING="${SETTING}"
+                DATASET_USE_CONTEXTS="${USE_CONTEXTS}"
+            fi
+
+            echo "========== Evaluating ${MODEL_PATH} on ${DATASET} (setting=${DATASET_SETTING}, use-contexts=${DATASET_USE_CONTEXTS}) =========="
+            bash /home/rtn27/Multi-Hop-Reasoning/ryan-scripts/eval_multihop.sh \
                 --model_path "${MODEL_PATH}" \
                 --dataset "${DATASET}" \
                 --split "${SPLIT}" \
                 --num_samples ${NUM_SAMPLES} \
                 --save_version "${SAVE_VERSION}" \
                 --method "${TWO_PHASE_METHOD}" \
+                --output-dir "${OUTPUT_DIR}" \
                 ${USE_TRAIN_PARAMS} \
                 ${CONCAT_ALL_DB} \
-                --use-contexts "${USE_CONTEXTS}"
+                --use-contexts "${DATASET_USE_CONTEXTS}" \
+                --setting "${DATASET_SETTING}"
             done
         done
     done

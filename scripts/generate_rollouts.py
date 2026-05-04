@@ -35,7 +35,7 @@ def _get_formatted_triplets(example, args, idx):
     if args.dataset == "mquake-remastered":
         triplets = example["orig_triples_labeled"]
     elif args.dataset == "hotpotqa":
-        triplets = args.metadata[args.start_idx + idx]["triplets"]
+        triplets = args.metadata[idx]["triplets"]
     else:
         raise Exception(f"Unsupported dataset: {args.dataset}")
     triplets_formatted_str = "\n".join([f"({triplet[0]}, {triplet[1]}, {triplet[2]})" for triplet in triplets])
@@ -149,7 +149,6 @@ async def gemini_w_db_lookup(prompt: str, args: argparse.Namespace) -> str:
                     return_values = args.db.retrieve_from_database(DB_START_TOKEN + query, args.db_threshold, return_triplets = args.return_triplets)[:4] #limit to 4 return values
                     return_value = ", ".join(return_values)
                 except Exception as e:
-                    print(f"Database lookup failed: {e}")
                     return_value = "unknown"
                     # Handle DB lookup failure with fallback policy
 
@@ -181,7 +180,7 @@ async def gemini_w_db_lookup(prompt: str, args: argparse.Namespace) -> str:
 async def process_example(semaphore, example, idx, args: argparse.Namespace):
     async with semaphore:
         max_retries = args.max_retries
-        retry_delay = 60
+        retry_delay = 10
         for attempt in range(max_retries):
             try:
                 print(f"\nProcessing example {idx + 1}...")
@@ -222,7 +221,7 @@ async def process_example(semaphore, example, idx, args: argparse.Namespace):
 async def main(args: argparse.Namespace):
     # Load HotpotQA dataset
     print(f"Loading HotpotQA dataset from HuggingFace...")
-    dataset = get_dataset(name = args.dataset, setting = args.hotpot_setting, split=args.split, seed = args.seed, limit = args.nb_examples)
+    dataset = get_dataset(name = args.dataset, setting = args.hotpot_setting, split=args.split, seed = args.seed, limit = args.start_idx + args.nb_examples)
     print(f"Using HotpotQA setting: {args.hotpot_setting}")
     print(f"Length of the dataset is: {len(dataset)}")
 
