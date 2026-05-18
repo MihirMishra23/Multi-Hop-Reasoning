@@ -8,6 +8,8 @@ from .mquake import load_mquake
 from .two_wiki import load_2wiki
 from .synthworlds import load_synthworlds
 from .trivia_qa import load_trivia_qa
+from .popqa import load_popqa
+from .confiqa import load_confiqa
 
 
 def get_dataset(
@@ -35,7 +37,11 @@ def get_dataset(
         return load_synthworlds(subset=setting, split=split, source=source, limit=limit, seed=seed)
     if name_norm in {"trivia_qa", "triviaqa"}:
         return load_trivia_qa(split=split, source=source, limit=limit, seed=seed, setting=setting)
+    if name_norm == "popqa":
+        return load_popqa(split=split, source=source, limit=limit, seed=seed, setting=setting)
+    if name_norm == "confiqa":
+        return load_confiqa(split=split, source=source, limit=limit, seed=seed, setting=setting)
     raise ValueError(f"Unsupported dataset: {name}")
 
 
-__all__ = ["get_dataset", "load_hotpotqa", "load_musique", "load_synthworlds", "load_trivia_qa"]
+__all__ = ["get_dataset", "load_hotpotqa", "load_musique", "load_synthworlds", "load_trivia_qa", "load_popqa", "load_confiqa"]

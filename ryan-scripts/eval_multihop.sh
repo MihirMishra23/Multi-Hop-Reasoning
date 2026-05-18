@@ -27,20 +27,21 @@ MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa
 # MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop//Qwen3-1.7B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_march8th_fixed
 # uncomment above to use two_phase model
 LLM_MODEL=gpt-4
-DATASET=hotpotqa
+DATASET=confiqa
 SPLIT=dev
 USE_INVERSES="true" # or "--use-inverses"
-USE_TRAIN_PARAMS=""   # set to "--use-train-params" to use grpo_train.sh sampling params instead of greedy
-CONCAT_ALL_DB=""      # set to "--concat-all-db" to build unified database
-USE_CONTEXTS="golden" # options: "golden" | "all"
+USE_TRAIN_PARAMS="--use-train-params"   # set to "--use-train-params" to use grpo_train.sh sampling params instead of greedy
+CONCAT_ALL_DB="--concat-all-db"      # set to "--concat-all-db" to build unified database
+USE_CONTEXTS="all" # options: "golden" | "all"
 NUM_SAMPLES=1000
 SAVE_VERSION="put-anything-here" #use this to add info to save path
 TOP_K=4
-METHODS=("lmlm")
+METHODS=("two_phase")
 # METHODS=("direct" "icl" "rag" "lmlm")
 # uncomment above to eval on all methods
 SIMILARITY_THRESHOLD=0.6
 SETTING=distractor
+OUTPUT_DIR=./config-qa-test
 
 
 # Parse command line arguments
@@ -96,6 +97,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --setting)
             SETTING="$2"
+            shift 2
+            ;;
+        --seed)
+            SEED="$2"
+            shift 2
+            ;;
+        --confiqa-setting)
+            CONFIQA_SETTING="$2"
             shift 2
             ;;
         *)
@@ -174,7 +183,7 @@ BATCH_SIZE_DIRECT=32
 BATCH_SIZE_ICL=1
 BATCH_SIZE_RAG=1
 BATCH_SIZE_LMLM=64
-OUTPUT_DIR=./march-28-output
+
 SAVE_EVERY=64
 SEED=42
 
@@ -198,7 +207,15 @@ else
     RETURN_TRIPLETS=""
 fi
 
+# confiqa-setting
+if [ -n "${CONFIQA_SETTING:-}" ]; then
+    CONFIQA_SETTING_ARG="--confiqa-setting ${CONFIQA_SETTING}"
+else
+    CONFIQA_SETTING_ARG=""
+fi
 
+# SIMILARITY_THRESHOLD=0.9
+# TOP_K=1
 for METHOD in "${METHODS[@]}"; do
     echo "Running method: ${METHOD}"
     if [ "${METHOD}" = "lmlm" ]; then
@@ -225,6 +242,7 @@ for METHOD in "${METHODS[@]}"; do
             --eval
     elif [ "${METHOD}" = "two_phase" ]; then
         echo "ignoring database path"
+        echo "DEBUG: CONFIQA_SETTING='${CONFIQA_SETTING}' CONFIQA_SETTING_ARG='${CONFIQA_SETTING_ARG}'"
         python src/eval_multihop.py \
             --model-path ${MODEL_PATH} \
             --method ${METHOD} \
@@ -246,6 +264,7 @@ for METHOD in "${METHODS[@]}"; do
             ${USE_TRAIN_PARAMS} \
             ${CONCAT_ALL_DB} \
             --use-contexts ${USE_CONTEXTS} \
+            ${CONFIQA_SETTING_ARG} \
             --eval
     else
         if [ "${METHOD}" = "icl" ]; then
