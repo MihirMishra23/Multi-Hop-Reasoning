@@ -17,7 +17,7 @@ export WANDB_PROJECT=LMLM-Multihop
 GPU_TYPE=""
 MODEL_PATH=""
 DATABASE_PATH=""  # Not used in two-phase mode
-SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/main
+SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/debug
 DATASET_NAME="hotpotqa"
 NUM_GPUS=1
 
@@ -55,7 +55,7 @@ TOP_K=4
 # ── Logging / checkpointing ───────────────────────────────────────────────────
 LOGGING_STEPS=5
 SAVE_STEPS=25
-EVAL_STEPS=500
+EVAL_STEPS=100
 
 # ── Core LMLM flags ───────────────────────────────────────────────────────────
 TOOLS="--tools"               # tools enabled by default; pass --no_tools to disable
@@ -178,8 +178,12 @@ echo "  GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS} (= ${TOTAL_BA
 B=$((TOTAL_BATCH_SIZE / NUM_GENERATIONS))
 M=$(((NUM_GENERATIONS - NUM_DB_ROLLOUTS) / NUM_DB_ROLLOUTS))
 
-# Core name
-OUTPUT_DIR="${SAVE_DIR}/${MODEL_PATH##*/}-${LOSS_TYPE}-tbs${TOTAL_BATCH_SIZE}-N${NUM_GENERATIONS}-K${NUM_DB_ROLLOUTS}-B${B}-M${M}-b${BETA}-lr${LEARNING_RATE}-step${MAX_STEPS}-n${TRAIN_SIZE}-${REWARD_FUNC}"
+# Core name: if the last path component looks like a checkpoint, prepend the parent dir (actual model name)
+MODEL_BASENAME="${MODEL_PATH##*/}"
+if [[ "${MODEL_BASENAME}" == checkpoint-* ]]; then
+    MODEL_BASENAME="$(basename "$(dirname "${MODEL_PATH}")")-${MODEL_BASENAME}"
+fi
+OUTPUT_DIR="${SAVE_DIR}/${MODEL_BASENAME}-${LOSS_TYPE}-tbs${TOTAL_BATCH_SIZE}-N${NUM_GENERATIONS}-K${NUM_DB_ROLLOUTS}-B${B}-M${M}-b${BETA}-lr${LEARNING_RATE}-step${MAX_STEPS}-n${TRAIN_SIZE}-${REWARD_FUNC}"
 if [ -n "${TWO_PHASE}" ]; then
     OUTPUT_DIR="${OUTPUT_DIR}-2ph"
     [ "${PHASE1_REWARD_TYPE}" != "binary" ] && OUTPUT_DIR="${OUTPUT_DIR}-rw${PHASE1_REWARD_TYPE}"
