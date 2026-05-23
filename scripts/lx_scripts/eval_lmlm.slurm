@@ -123,6 +123,8 @@ MODEL_PATH_LST=(
     # Final Runs: SFT
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
     # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
+    # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_lr5e-5_th-1
 
@@ -180,6 +182,9 @@ MODEL_PATH_LST=(
     # Qwen3-1.7B-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prformatted_zero_rl_v5-wcount-th0.6-topk4-nak
 
     # ----------------------------
+    # tier filter and curriculum
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n90447-f1-2ph-prsft-wcount-th0.6-topk4-nak-tier1_3
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n90447-f1-2ph-prsft-wcount-th0.6-topk4-nak-tier1_3-curric
 )
 
 # TWO_PHASE_METHOD="lmlm"
@@ -192,13 +197,13 @@ DATASET_LST=(
     # synthworlds
     # trivia_qa
     hotpotqa
-    musique
-    2wiki
+    # musique
+    # 2wiki
     # mquake
 )
 SPLIT_LST=(
-    # train_val1k
-    dev
+    train_val1k
+    # dev
     # eval-original
     # eval-edit
 )

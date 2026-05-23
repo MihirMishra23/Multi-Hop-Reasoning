@@ -118,7 +118,7 @@ def build_wide(
 
     # Compute avg_{phase} over non-train columns
     for phase in sorted(df["phase"].unique()):
-        phase_cols = [c for c in wide.columns if c.endswith(f"_{phase}") and "_train" not in c]
+        phase_cols = [c for c in wide.columns if c.endswith(f"_{phase}") and "_train" not in c and not c.startswith("triviaqa_") and not c.startswith("trivia_qa_")]
         if phase_cols:
             wide[f"avg_{phase}"] = wide[phase_cols].mean(axis=1, skipna=True).round(2)
 

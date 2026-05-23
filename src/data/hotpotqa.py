@@ -407,8 +407,10 @@ def load_hotpotqa(
         assert MAGIC_START_IDX + MAGIC_TRAIN_MAX_SIZE + MAGIC_VAL_MAX_SIZE == len(ds)
         
         if sub_split == "train":
-            assert limit <= MAGIC_TRAIN_MAX_SIZE
-            ds = ds.select(range(n - MAGIC_VAL_MAX_SIZE - limit, n - MAGIC_VAL_MAX_SIZE))
+            if limit is not None and limit <= MAGIC_TRAIN_MAX_SIZE:
+                ds = ds.select(range(n - MAGIC_VAL_MAX_SIZE - limit, n - MAGIC_VAL_MAX_SIZE))
+            else:
+                ds = ds.select(range(n - MAGIC_VAL_MAX_SIZE))
         if sub_split == "eval":
             assert limit  <= MAGIC_VAL_MAX_SIZE
             ds = ds.select(range(n - limit, n))

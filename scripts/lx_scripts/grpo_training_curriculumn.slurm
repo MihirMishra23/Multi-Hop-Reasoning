@@ -1,8 +1,8 @@
 #!/bin/bash
 
-#SBATCH -J grpo_1.7b_tier
-#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_tier_%j.out
-#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_tier_%j.err
+#SBATCH -J grpo_1.7b_curriculum
+#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_curriculum_%j.out
+#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_curriculum_%j.err
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH --cpus-per-task=28
@@ -20,7 +20,7 @@ source activate mem
 cd /home/lz586/icl/Multi-Hop-Reasoning/
 
 
-DATASET=hotpotqa-v2
+DATASET=hotpotqa-full
 
 # MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1
 # MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
@@ -34,16 +34,18 @@ NUM_GENERATIONS=32
 NUM_DB_ROLLOUTS=4
 
 # Tier prefiltering: keep examples whose rollout success score is in [TIER_MIN, TIER_MAX]
-TIER_PATH=/share/j_sun/lmlm_multihop/output_tier/hotpotqa_train_lmlm_n7000_i83347_v1.json
+TIER_PATH=/share/j_sun/lmlm_multihop/output_tier/hotpotqa_train_two_phase_n90447_i0_v1.json
+# TIER_PATH=/share/j_sun/lmlm_multihop/output_tier/hotpotqa_train_lmlm_n7000_i83347_v1.json
 TIER_MIN_SCORE=1
-TIER_MAX_SCORE=7
+TIER_MAX_SCORE=3
 
 # Natural curriculum: expand pool from easy (scores 5-7) → medium (3-7) → hard (1-7)
 # Phase boundaries at 33% and 67% of max_steps
-CURRICULUM=""
-# CURRICULUM="--curriculum"
+# CURRICULUM=""
+CURRICULUM="--curriculum"
 # CURRICULUM_PHASES="5-7,3-7,1-7"
-# CURRICULUM_STEPS="0.33,0.67"
+CURRICULUM_PHASES="2-3,1-3"
+CURRICULUM_STEPS="0.5"
 
 export TRITON_CACHE_DIR=/home/lz586/.cache/triton
 export TMPDIR=/home/lz586/.tmp
@@ -65,6 +67,13 @@ DEBUG=""
 if [ "${DATASET}" = "hotpotqa-v2" ]; then
     echo "Training on hotpotqa-v2"
     TRAIN_SIZE=7000
+    TOTAL_BATCH_SIZE=512
+    DATASET_NAME="hotpotqa"
+    TWO_PHASE="--two_phase"
+elif [ "${DATASET}" = "hotpotqa-full" ]; then
+    # using tier filtering
+    echo "Training on hotpotqa-full"
+    TRAIN_SIZE=90447
     TOTAL_BATCH_SIZE=512
     DATASET_NAME="hotpotqa"
     TWO_PHASE="--two_phase"
