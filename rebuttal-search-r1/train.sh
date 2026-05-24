@@ -167,7 +167,7 @@ RAY_BACKEND_LOG_LEVEL=debug PYTHONUNBUFFERED=1 python3 -u -m verl.trainer.main_p
     data.train_data_num=null \
     data.val_data_num=null \
     data.train_batch_size=512 \
-    data.val_batch_size=128 \
+    data.val_batch_size=32 \
     data.max_prompt_length=4096 \
     data.max_response_length=500 \
     data.max_start_length=2048 \

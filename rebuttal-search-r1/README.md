@@ -51,6 +51,9 @@ wandb login
 ### 5. Train
 
 ```bash
+# Ensure using the correct Python environment
+export PATH="/scratch/rtn27/envs/searchr1/bin:$PATH"
+
 # Qwen3-1.7B on 8 GPUs
 ./train.sh --model_size 1.7B --num_gpus 8
 
@@ -72,11 +75,12 @@ wandb login
 - Reward: F1 score (not exact match)
 
 ### Qwen3 Integration
-Qwen3 requires patches to work with vLLM 0.6.3:
-1. Added `Qwen3ForCausalLM` to model registry → uses Qwen2 implementation
-2. Weight loader skips Qwen3-specific layers (q_norm, k_norm)
+Qwen3 support added to vLLM 0.6.3 via custom implementation:
+1. Created `qwen3.py` model file with proper Qwen3 architecture (q_norm/k_norm layers)
+2. Registered `Qwen3ForCausalLM` in model registry
+3. Added Qwen3 config mapping to vLLM's config loader
 
-These patches are already applied in the repo.
+These patches are applied to `/scratch/rtn27/envs/searchr1/lib/python3.10/site-packages/vllm/`.
 
 ## Memory Notes
 
