@@ -1,0 +1,109 @@
+# Search-R1 Training Configuration for Qwen3-1.7B on HotpotQA
+# Based on Search-R1 paper hyperparameters
+
+# Model configuration
+model:
+  name: "Qwen/Qwen3-1.7B"  # Base model path (will be overridden by --model_path)
+  max_length: 4096
+  gradient_checkpointing: true
+
+# Data configuration
+data:
+  train_file: "data/hotpotqa_train.jsonl"
+  val_file: "data/hotpotqa_dev.jsonl"
+  train_batch_size: 512  # Paper default
+  eval_batch_size: 64
+  train_size: 7000  # Subset for faster training
+  eval_size: 100
+  num_workers: 4
+
+# Retrieval configuration
+retrieval:
+  retriever: "e5"
+  retriever_model: "intfloat/e5-base-v2"
+  corpus_path: "data/hotpotqa_corpus.jsonl"
+  index_path: "data/index/e5_Flat.index"
+  top_k: 3  # Paper default
+  api_url: "http://localhost:8000/search"  # Local retrieval server
+  max_retrieved_content_length: 500  # Paper default
+
+# Actor-Rollout-Ref configuration
+actor_rollout_ref:
+  rollout:
+    n_agent: 32  # Paper: 5, but we use 32 for better exploration
+    max_action_budget: 4  # Maximum number of search actions
+    max_response_length: 500  # Paper default
+    temperature: 1.0  # Paper default
+    top_p: 1.0  # Paper default
+    backend: "vllm"  # Paper: vLLM
+    vllm:
+      tensor_parallel_size: 1
+      gpu_memory_utilization: 0.4
+      max_model_len: 4096
+
+# Training configuration
+trainer:
+  algorithm: "grpo"  # Paper: GRPO
+  total_training_steps: 500  # Paper default
+  warmup_steps: null  # Will be computed from warmup_ratio
+  warmup_ratio: 0.285  # Paper default
+  logging_steps: 5
+  eval_steps: 100
+  save_steps: 100
+  save_total_limit: 5
+
+  # Optimizer
+  optimizer:
+    type: "adamw"
+    lr: 1.0e-6  # Paper: 1e-6 for policy
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+    weight_decay: 0.0
+
+  # Scheduler
+  scheduler:
+    type: "cosine"
+    min_lr_ratio: 0.1
+
+  # Gradient
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: null  # Will be computed from batch sizes
+
+# GRPO algorithm configuration
+grpo:
+  mini_batch_size: 256  # Paper default
+  micro_batch_size: 64  # Paper default
+  kl_beta: 0.001  # Paper default (KL penalty)
+  clip_ratio: 0.2  # Paper default (PPO-style clipping)
+
+  # Reward configuration
+  reward_function: "f1"  # Use F1 score
+  reward_scaling: 1.0
+  reward_clip: null  # No clipping
+
+# Distributed training
+distributed:
+  fsdp:
+    enabled: true
+    cpu_offload: true  # Paper default
+    auto_wrap_policy: "transformer_auto_wrap_policy"
+
+  ddp:
+    find_unused_parameters: false
+    gradient_as_bucket_view: true
+
+# Logging
+logging:
+  wandb:
+    enabled: true
+    project: "search-r1-hotpotqa"
+    entity: "ryan-noonan-cornell-university"
+    name: null  # Will be auto-generated
+
+  log_completions: true
+  log_frequency: 5
+
+# Misc
+seed: 42
+output_dir: null  # Will be set by command line
+resume_from_checkpoint: null  # Will be set by command line

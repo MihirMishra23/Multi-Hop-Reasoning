@@ -1,0 +1,34 @@
+# Generated data
+data/
+output/
+
+# Cloned repos
+Search-R1/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Conda
+*.conda
+*.tar.bz2
+
+# Logs
+*.log
+*.out
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# HuggingFace cache
+.cache/
