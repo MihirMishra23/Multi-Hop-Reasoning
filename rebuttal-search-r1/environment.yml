@@ -1,0 +1,27 @@
+name: searchr1
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch=2.4.0
+  - pytorch-cuda=12.1
+  - pip
+  - pip:
+      - transformers>=4.51.0
+      - accelerate
+      - datasets
+      - vllm==0.6.3.post1
+      - ray[default]
+      - wandb
+      - hydra-core
+      - pyarrow
+      - pandas
+      - numpy
+      - flash-attn
+      - fastapi
+      - uvicorn
+      - faiss-cpu
+      - sentence-transformers
