@@ -77,8 +77,18 @@ def build_databases_from_triplets_batch(triplets_batch: list[list[tuple[str, str
     device = "cuda" if torch.cuda.is_available() else "cpu"
     embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device=device, local_files_only=True)
 
+    # Augment triplets with inverses if requested
+    if use_inverses:
+        augmented_triplets_batch = []
+        for triplet_list in triplets_batch:
+            # Add inverse triplets: (value, relation, entity) for each (entity, relation, value)
+            augmented = list(triplet_list) + [(t[2], t[1], t[0]) for t in triplet_list]
+            augmented_triplets_batch.append(augmented)
+    else:
+        augmented_triplets_batch = triplets_batch
+
     # Flatten all triplets and compute embeddings at once
-    combined_triplets = [t for triplet_list in triplets_batch for t in triplet_list]
+    combined_triplets = [t for triplet_list in augmented_triplets_batch for t in triplet_list]
 
     if not combined_triplets:
         logger.warning("No triplets provided to build_databases_from_triplets_batch")
@@ -98,7 +108,7 @@ def build_databases_from_triplets_batch(triplets_batch: list[list[tuple[str, str
     database_managers = []
     start_idx = 0
 
-    for triplet_list in triplets_batch:
+    for triplet_list in augmented_triplets_batch:
         end_idx = start_idx + len(triplet_list)
         example_embeddings = embeddings[start_idx:end_idx]
 
@@ -110,7 +120,7 @@ def build_databases_from_triplets_batch(triplets_batch: list[list[tuple[str, str
             top_k=top_k,
             default_threshold=default_threshold,
             adaptive=adaptive,
-            use_inverses=use_inverses,
+            use_inverses=False,  # Already augmented above, don't augment again
             embedding_model = embedding_model
         )
         database_managers.append(db_manager)
