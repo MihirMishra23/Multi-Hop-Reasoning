@@ -147,9 +147,9 @@ if [ ! -d "${SEARCH_R1_DIR}" ]; then
     exit 1
 fi
 
-# Activate conda environment
+# Activate conda environment (override with CONDA_ENV=...)
 eval "$(conda shell.bash hook)"
-conda activate searchr1
+conda activate "${CONDA_ENV:-mem-searchr1}"
 
 # Create output directory
 mkdir -p "${OUTPUT_DIR}"

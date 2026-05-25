@@ -5,7 +5,7 @@ import os
 import sys
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
-sys.path.insert(0, '/home/rtn27/Multi-Hop-Reasoning/rebuttal-search-r1/Search-R1')
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Search-R1'))
 
 from vllm import LLM, SamplingParams
 

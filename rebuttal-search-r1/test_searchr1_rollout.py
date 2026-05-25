@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Test Search-R1's vLLM wrapper with Qwen3"""
 
-import sys
-sys.path.insert(0, '/home/rtn27/Multi-Hop-Reasoning/rebuttal-search-r1/Search-R1')
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Search-R1'))
 
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'

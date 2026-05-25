@@ -24,9 +24,9 @@ echo "Corpus: ${CORPUS_PATH}"
 echo "Index:  ${INDEX_DIR}"
 echo ""
 
-# Activate retriever environment
+# Activate retriever environment (override with CONDA_ENV=...)
 eval "$(conda shell.bash hook)"
-conda activate retriever
+conda activate "${CONDA_ENV:-mem-searchr1}"
 
 # Build index using Search-R1's indexing script
 # We'll create a custom build script based on Search-R1's approach

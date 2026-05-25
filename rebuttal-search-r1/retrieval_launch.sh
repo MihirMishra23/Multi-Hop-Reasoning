@@ -28,9 +28,9 @@ echo "Corpus: ${CORPUS_PATH}"
 echo "Port:   ${PORT}"
 echo ""
 
-# Activate retriever environment
+# Activate retriever environment (override with CONDA_ENV=...)
 eval "$(conda shell.bash hook)"
-conda activate retriever
+conda activate "${CONDA_ENV:-mem-searchr1}"
 
 # Create retrieval server script
 cat > "${SCRIPT_DIR}/retrieval_server.py" << 'EOF'
