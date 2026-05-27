@@ -161,6 +161,7 @@ if [ -n "${DEBUG}" ]; then
     TRAIN_SIZE=1000
     EVAL_SIZE=10
 fi
+# NUM_TRAIN_EPOCHS=100
 
 CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((NUM_GPUS - 1)))
 export CUDA_VISIBLE_DEVICES
