@@ -1,6 +1,13 @@
 # Generated data
 data/
 output/
+outputs/
+
+# Training artifacts (model checkpoints can be hundreds of GB)
+checkpoints/
+
+# Slurm/training logs
+logs/
 
 # Cloned repos
 Search-R1/

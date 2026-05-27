@@ -1,6 +1,6 @@
 hydra:
   searchpath:
-    - file://verl/trainer/config
+    - pkg://verl.trainer.config
 
 defaults:
   - ppo_trainer
@@ -20,4 +20,4 @@ actor_rollout_ref:
     multi_turn:
       enable: True
       max_assistant_turns: 2
-      format: qwen
+      format: hermes
