@@ -162,11 +162,12 @@ def parse_triplets(text: str) -> list[tuple[str, str, str]]:
 
 
 def extract_db_lookup_last(text : str) -> str | None:
-    # BUG: does it need to extract all the db_lookup or the last one?
-    #Used in _tool_call_loop 
+    # FIX: extract the LAST db lookup (most recent, unfilled query) not the first one.
+    # split(...)[1] returned content between the 1st and 2nd db_start, which is an already-
+    # filled query when the model retries -> infinite retry loop with the same lookup.
+    # Standalone TwoPhaseAgent uses rsplit; this matches that behavior.
     if DB_START_TOKEN in text and DB_RETRIEVE_TOKEN in text:
-        return DB_START_TOKEN + text.split(DB_START_TOKEN)[1].split(DB_RETRIEVE_TOKEN)[0] + DB_RETRIEVE_TOKEN # BUG
-        # return DB_START_TOKEN + text.split(DB_START_TOKEN)[1].split(DB_END_TOKEN)[0] + DB_RETRIEVE_TOKEN # BUG
+        return DB_START_TOKEN + text.rsplit(DB_START_TOKEN)[-1].split(DB_RETRIEVE_TOKEN)[0] + DB_RETRIEVE_TOKEN
     else:
         return None
 
@@ -470,7 +471,15 @@ class LMLMGRPOTrainer(BaseTrainer):
                 logger.info("No Phase 2 prompt template for '%s'; using bare QA prompt", phase1_prompt_type)
         else:
             self.db = DatabaseManager()
-            self.db.load_database(lmlm_database_path, adaptive= adaptive_k, use_inverses = use_inverses)
+            # NOTE: 1-phase mode — explicitly pass retrieval_top_k so load_database
+            # respects --retrieval_top_k (default 1), matching 2-phase behavior.
+            # Without this, load_database falls back to its own default of 4.
+            self.db.load_database(
+                lmlm_database_path,
+                top_k=retrieval_top_k,
+                adaptive=adaptive_k,
+                use_inverses=use_inverses,
+            )
 
         # Args
         if args is None:
@@ -897,8 +906,9 @@ class LMLMGRPOTrainer(BaseTrainer):
                     distributed_executor_backend="external_launcher",
                     # Feed identical seed for tp groups to ensure sampling results are the same across workers
                     seed=self.accelerator.process_index // self.vllm_tensor_parallel_size,
-                    # Latest vLLM v1 memory profiler is misled by the high default value (i.e., 32768) - thinking there's not enough memory
-                    max_num_batched_tokens=4096,
+                    # Latest vLLM v1 memory profiler is misled by the high default value (i.e., 32768) - thinking there's not enough memory.
+                    # Must be >= max_model_len, so scale with it.
+                    max_num_batched_tokens=max(4096, self.args.vllm_max_model_length),
                     model_impl=self.args.vllm_model_impl,
                     enable_sleep_mode=self.args.vllm_enable_sleep_mode,
                     # Important so temperature scaling/logit tweaking affects the TIS log probs
@@ -1183,6 +1193,26 @@ class LMLMGRPOTrainer(BaseTrainer):
     def _sync_fsdp1_params_to_vllm(self, module: nn.Module, prefix: str = "", visited=None):
         """Memory-efficient post-order traversal of FSDP modules to extract full parameters and sync with vLLM."""
         # For FSDP1, we need to recurse into children and also use summon_full_params
+        import torch.nn.functional as F
+
+        # -- DEBUG: init tracking on first call --
+        is_root_call = (visited is None)
+        log_debug = self.accelerator.is_main_process  # gate all prints to rank 0
+        if is_root_call:
+            self._sync_debug_count = 0
+            self._sync_critical_results = {}  # name -> dict of comparison metrics
+            # Cache vLLM param dict ONCE for the whole sync (O(n) instead of O(n^2))
+            if self.vllm_mode == "colocate":
+                try:
+                    _llm = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
+                    self._sync_vllm_param_cache = dict(_llm.named_parameters())
+                except Exception as _e:
+                    self._sync_vllm_param_cache = {}
+                    if log_debug:
+                        print(f"[FSDP_TO_VLLM_SYNC] WARN: could not build vLLM param cache: {_e}", flush=True)
+            else:
+                self._sync_vllm_param_cache = {}
+
         if visited is None:
             visited = set()
         for child_name, child_module in module.named_children():
@@ -1205,7 +1235,144 @@ class LMLMGRPOTrainer(BaseTrainer):
                         self.vllm_client.update_named_param(full_name, param.data)
                     elif self.vllm_mode == "colocate":
                         llm_model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
+                        is_critical = ('lm_head' in full_name) or ('embed_tokens' in full_name)
+
+                        # Capture FSDP source tensor (always, cheap) and vLLM before (only if critical)
+                        fsdp_norm = param.data.float().norm().item()
+                        vllm_param_ref = self._sync_vllm_param_cache.get(full_name)
+                        vllm_before_norm = vllm_param_ref.data.float().norm().item() if vllm_param_ref is not None else float('nan')
+
+                        # Snapshot FULL tensors for element-wise compare on critical params
+                        fsdp_tensor = None
+                        vllm_before_tensor = None
+                        if is_critical:
+                            fsdp_tensor = param.data.detach().float().clone()
+                            if vllm_param_ref is not None:
+                                vllm_before_tensor = vllm_param_ref.data.detach().float().clone()
+
+                        # NOTE: vLLM's VocabParallelEmbedding.weight_loader asserts
+                        # loaded_weight.shape[0] == org_vocab_size (the un-padded vocab size).
+                        # vLLM internally pads to num_embeddings (151680) but the API takes the
+                        # un-padded shape. So we pass param.data AS-IS (shape [151673, ...]) and
+                        # let vLLM stripe it into its internal padded storage.
+                        # If you previously thought there was a SHAPE MISMATCH, that was the
+                        # debug code comparing fsdp_tensor vs the cached padded vllm tensor.
+                        # The actual load_weights call accepts unpadded weight just fine.
+
+                        # Perform the sync
                         llm_model.load_weights([(full_name, param.data)])
+
+                        # vLLM after (from same cached tensor reference, mutated in-place by load_weights)
+                        vllm_after_norm = vllm_param_ref.data.float().norm().item() if vllm_param_ref is not None else float('nan')
+
+                        self._sync_debug_count += 1
+                        diff_after_vs_fsdp = abs(fsdp_norm - vllm_after_norm)
+
+                        # -- ELEMENT-WISE COMPARISON for critical params --
+                        if is_critical and log_debug and vllm_param_ref is not None and fsdp_tensor is not None:
+                            vllm_after_tensor_full = vllm_param_ref.data.detach().float().clone()
+                            # vLLM tensor may be padded; compare only the first FSDP rows
+                            if vllm_after_tensor_full.shape[0] > fsdp_tensor.shape[0]:
+                                vllm_after_tensor = vllm_after_tensor_full[:fsdp_tensor.shape[0]]
+                            else:
+                                vllm_after_tensor = vllm_after_tensor_full
+                            shape_match = (vllm_after_tensor.shape == fsdp_tensor.shape)
+
+                            if shape_match:
+                                diff = (vllm_after_tensor - fsdp_tensor).abs()
+                                max_abs_diff = diff.max().item()
+                                mean_abs_diff = diff.mean().item()
+
+                                v1 = vllm_after_tensor.flatten()
+                                v2 = fsdp_tensor.flatten()
+                                cos_sim = F.cosine_similarity(v1.unsqueeze(0), v2.unsqueeze(0)).item()
+
+                                if vllm_before_tensor is not None:
+                                    # vllm_before_tensor may also be padded; slice to FSDP rows
+                                    if vllm_before_tensor.shape[0] > fsdp_tensor.shape[0]:
+                                        vllm_before_cmp = vllm_before_tensor[:fsdp_tensor.shape[0]]
+                                    else:
+                                        vllm_before_cmp = vllm_before_tensor
+                                    changed = not torch.allclose(vllm_before_cmp, vllm_after_tensor, atol=1e-8)
+                                    before_vs_after_max = (vllm_after_tensor - vllm_before_cmp).abs().max().item()
+                                else:
+                                    changed = "unknown"
+                                    before_vs_after_max = float('nan')
+
+                                self._sync_critical_results[full_name] = {
+                                    'shape': tuple(fsdp_tensor.shape),
+                                    'max_abs_diff': max_abs_diff,
+                                    'mean_abs_diff': mean_abs_diff,
+                                    'cos_sim': cos_sim,
+                                    'load_weights_changed_vllm': changed,
+                                    'before_vs_after_max_diff': before_vs_after_max,
+                                    'fsdp_norm': fsdp_norm,
+                                    'vllm_after_norm': vllm_after_norm,
+                                }
+
+                                print(
+                                    f"[ELEMENT_WISE_CMP] {full_name}:\n"
+                                    f"  shape           : {tuple(fsdp_tensor.shape)}\n"
+                                    f"  max_abs_diff    : {max_abs_diff:.8f}   (vllm_after - fsdp)\n"
+                                    f"  mean_abs_diff   : {mean_abs_diff:.8f}\n"
+                                    f"  cosine_sim      : {cos_sim:.10f}\n"
+                                    f"  load_weights changed vLLM: {changed} (before_vs_after_max={before_vs_after_max:.8f})\n"
+                                    f"  fsdp_norm={fsdp_norm:.6f}  vllm_after_norm={vllm_after_norm:.6f}",
+                                    flush=True,
+                                )
+
+                                if max_abs_diff > 1e-2:
+                                    print(f"[ELEMENT_WISE_CMP] !!!! HARD MISMATCH on {full_name}: max_abs_diff={max_abs_diff:.6f} (> 0.01)", flush=True)
+                                elif max_abs_diff > 1e-4:
+                                    print(f"[ELEMENT_WISE_CMP] !!  SOFT MISMATCH on {full_name}: max_abs_diff={max_abs_diff:.6f} (> 0.0001, likely bf16 noise)", flush=True)
+                                else:
+                                    print(f"[ELEMENT_WISE_CMP] OK  {full_name}: identical to ~bf16 precision", flush=True)
+                            else:
+                                print(f"[ELEMENT_WISE_CMP] !!!! SHAPE MISMATCH on {full_name}: fsdp={fsdp_tensor.shape}  vllm={vllm_after_tensor.shape}", flush=True)
+
+                        # Also log norm-based for non-critical params if hard mismatch
+                        if log_debug and not is_critical and diff_after_vs_fsdp > 0.01:
+                            print(
+                                f"[FSDP_TO_VLLM_SYNC] !!! NORM MISMATCH {full_name}: "
+                                f"fsdp={fsdp_norm:.6f} vllm_after={vllm_after_norm:.6f} "
+                                f"diff={diff_after_vs_fsdp:.6f}",
+                                flush=True,
+                            )
+
+        # -- DEBUG: print summary on root call exit --
+        if is_root_call and log_debug:
+            print(f"\n[FSDP_TO_VLLM_SYNC] ===== SUMMARY =====", flush=True)
+            print(f"[FSDP_TO_VLLM_SYNC] Total params synced: {self._sync_debug_count}", flush=True)
+            print(f"[FSDP_TO_VLLM_SYNC] Total unique names in visited: {len(visited)}", flush=True)
+
+            # Check if key params were synced
+            for key in ['lm_head.weight', 'model.embed_tokens.weight']:
+                found = key in visited
+                print(f"[FSDP_TO_VLLM_SYNC] '{key}' synced: {found}", flush=True)
+
+            # Diff vLLM params vs visited
+            vllm_param_names = set(self._sync_vllm_param_cache.keys())
+            missed = vllm_param_names - visited
+            if missed:
+                print(f"[FSDP_TO_VLLM_SYNC] !!! {len(missed)} vLLM params NOT synced:", flush=True)
+                for m in sorted(missed):
+                    print(f"[FSDP_TO_VLLM_SYNC]   MISSED: {m}", flush=True)
+            else:
+                print(f"[FSDP_TO_VLLM_SYNC] All {len(vllm_param_names)} vLLM params synced OK", flush=True)
+
+            # Critical params element-wise verdict
+            print(f"\n[ELEMENT_WISE_CMP] ===== CRITICAL PARAMS SUMMARY =====", flush=True)
+            for name, r in self._sync_critical_results.items():
+                if r['max_abs_diff'] > 1e-2:
+                    verdict = "HARD_MISMATCH"
+                elif r['max_abs_diff'] > 1e-4:
+                    verdict = "SOFT_MISMATCH (bf16 noise?)"
+                else:
+                    verdict = "OK"
+                print(f"  {name}: {verdict}", flush=True)
+                print(f"    max_abs_diff={r['max_abs_diff']:.8f}  cos_sim={r['cos_sim']:.10f}  load_weights_changed_vllm={r['load_weights_changed_vllm']}", flush=True)
+            print(f"[ELEMENT_WISE_CMP] ===== END =====\n", flush=True)
+            print(f"[FSDP_TO_VLLM_SYNC] ===== END =====\n", flush=True)
 
     def _sync_fsdp2_params_to_vllm(self, module: nn.Module):
         # For FSDP2, module.state_dict() already covers all parameters, so no need for recursion
@@ -1223,7 +1390,36 @@ class LMLMGRPOTrainer(BaseTrainer):
                 self.vllm_client.update_named_param(name, param)
             elif self.vllm_mode == "colocate":
                 llm_model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
+
+                # -- DEBUG: dump lm_head & embed_tokens norms (FSDP2 path) --
+                debug_keys = ("lm_head", "embed_tokens")
+                is_debug = any(k in name for k in debug_keys) and self.accelerator.is_main_process
+                if is_debug:
+                    fsdp_norm = param.float().norm().item()
+                    try:
+                        vllm_param_before = dict(llm_model.named_parameters()).get(name)
+                        vllm_norm_before = vllm_param_before.float().norm().item() if vllm_param_before is not None else None
+                    except Exception as e:
+                        vllm_norm_before = f"ERR: {e}"
+
                 llm_model.load_weights([(name, param)])
+
+                if is_debug:
+                    try:
+                        vllm_param_after = dict(llm_model.named_parameters()).get(name)
+                        vllm_norm_after = vllm_param_after.float().norm().item() if vllm_param_after is not None else None
+                    except Exception as e:
+                        vllm_norm_after = f"ERR: {e}"
+                    print(
+                        f"[FSDP2_TO_VLLM_SYNC] step={getattr(self.state, 'global_step', '?')} "
+                        f"name={name} "
+                        f"fsdp_norm={fsdp_norm:.6f} "
+                        f"vllm_before={vllm_norm_before} "
+                        f"vllm_after={vllm_norm_after} "
+                        f"diff_after_vs_fsdp={(vllm_norm_after - fsdp_norm) if isinstance(vllm_norm_after, float) else 'N/A'}",
+                        flush=True,
+                    )
+                # -- END DEBUG --
 
     @profiling_decorator
     def _move_model_to_vllm(self):

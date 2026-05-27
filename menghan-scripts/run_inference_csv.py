@@ -28,6 +28,7 @@ Usage:
 
 import argparse
 import csv
+import json
 import os
 import sys
 import logging
@@ -188,6 +189,9 @@ def main():
     parser.add_argument("--top-k", type=int, default=4)
     parser.add_argument("--similarity-threshold", type=float, default=0.6)
     parser.add_argument("--max-model-len", type=int, default=8192)
+    parser.add_argument("--log-jsonl", default=None,
+                        help="If set, write one JSON-line per chain with full per-lookup retrieval metadata "
+                             "(retrieved triplets w/ source_row+source_tidx, text_after_db_end, selected_value, etc).")
     args = parser.parse_args()
 
     sampling = dict(TRAINING_SAMPLING_PARAMS) if args.use_train_params else {
@@ -278,6 +282,13 @@ def main():
     write_header = not os.path.exists(args.output)
     total_em, total_examples = 0, 0
 
+    # Optional rich logging to JSONL (per chain). CSV format is unchanged either way.
+    jsonl_file = None
+    if args.log_jsonl:
+        os.makedirs(os.path.dirname(os.path.abspath(args.log_jsonl)) or ".", exist_ok=True)
+        jsonl_file = open(args.log_jsonl, "w", encoding="utf-8")
+        logger.info("JSONL log: %s", args.log_jsonl)
+
     with open(args.output, "a", newline="", encoding="utf-8") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=CSV_COLUMNS, quoting=csv.QUOTE_ALL)
         if write_header:
@@ -336,6 +347,48 @@ def main():
             writer.writerows(rows)
             csvfile.flush()
 
+            # ── Optional: write JSONL with rich per-chain logging ──────────────
+            if jsonl_file is not None:
+                batch_lookup_logs = getattr(agent, "_lookup_logs", [[]] * len(questions))
+                batch_stop_reasons = getattr(agent, "_stop_reasons", ["unknown"] * len(questions))
+                for idx_in_batch in range(len(questions)):
+                    row_idx = args.start_index + batch_start + idx_in_batch
+                    p1_info = batch_phase1_infos[idx_in_batch] if idx_in_batch < len(batch_phase1_infos) else {}
+                    p1_triplets = p1_info.get("triplets", [])
+                    p2_completion_text = rows[idx_in_batch]["phase2_completion_0_0"]
+                    # Parse final_answer from <answer>...</answer>
+                    final_answer = None
+                    if "<answer>" in p2_completion_text and "</answer>" in p2_completion_text:
+                        try:
+                            final_answer = p2_completion_text.split("<answer>")[1].split("</answer>")[0].strip()
+                        except Exception:
+                            final_answer = None
+
+                    chain_log = {
+                        "row_idx": row_idx,
+                        "question": questions[idx_in_batch],
+                        "gold_answer": gold_answers[idx_in_batch],
+                        "em_accuracy": rows[idx_in_batch]["em_accuracy_0_0"],
+                        "phase1": {
+                            "raw_completion": p1_info.get("raw_text", ""),
+                            "parsed_triplets": [
+                                {"source_tidx": ti, "entity": t[0], "relation": t[1], "value": t[2]}
+                                for ti, t in enumerate(p1_triplets)
+                            ],
+                            "num_triplets": len(p1_triplets),
+                        },
+                        "phase2": {
+                            "raw_completion": p2_completion_text,
+                            "final_answer": final_answer,
+                            "stop_reason": (batch_stop_reasons[idx_in_batch]
+                                            if idx_in_batch < len(batch_stop_reasons) else "unknown"),
+                            "n_turns": len(batch_lookup_logs[idx_in_batch]) if idx_in_batch < len(batch_lookup_logs) else 0,
+                            "lookups": batch_lookup_logs[idx_in_batch] if idx_in_batch < len(batch_lookup_logs) else [],
+                        },
+                    }
+                    jsonl_file.write(json.dumps(chain_log, ensure_ascii=False) + "\n")
+                jsonl_file.flush()
+
             batch_em = [r["em_accuracy_0_0"] for r in rows if r["em_accuracy_0_0"] is not None]
             total_em += sum(batch_em)
             total_examples += len(rows)
@@ -346,10 +399,15 @@ def main():
                 total_em / total_examples, int(total_em), total_examples,
             )
 
+    if jsonl_file is not None:
+        jsonl_file.close()
+
     logger.info("=" * 60)
     logger.info("FINAL EM: %.4f  (%d / %d correct)", total_em / total_examples if total_examples else 0.0,
                 int(total_em), total_examples)
     logger.info("CSV: %s", args.output)
+    if args.log_jsonl:
+        logger.info("JSONL: %s", args.log_jsonl)
     logger.info("=" * 60)
 
 

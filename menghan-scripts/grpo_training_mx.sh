@@ -181,6 +181,13 @@ if [ "$GPU_TYPE" == "B200" ]; then
         PER_DEVICE_TRAIN_BATCH_SIZE=16
         GRADIENT_ACCUMULATION_STEPS=8
         VLLM_GPU_MEMORY_UTILIZATION=0.15
+    elif [[ "${MODEL_PATH}" == *"8B"* ]]; then
+        NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
+        echo "  8B detected — using ${NUM_GPUS} GPU(s)"
+        NUM_GENERATIONS=8
+        PER_DEVICE_TRAIN_BATCH_SIZE=8
+        GRADIENT_ACCUMULATION_STEPS=8
+        VLLM_GPU_MEMORY_UTILIZATION=0.15
     elif [[ "${MODEL_PATH}" == *"382M"* ]]; then
         NUM_GPUS=1
         NUM_GENERATIONS=8

@@ -39,7 +39,7 @@ from llm import get_llm
 from data import get_dataset
 from data.hotpotqa import load_hotpotqa_rag_corpus
 from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
-from multi_lmlm.database.database_manager import build_databases_from_triplets_batch
+from multi_lmlm.database.database_manager import DatabaseManager, build_databases_from_triplets_batch
 
 # Import for TriviaQA sentence splitting
 from nltk.tokenize import PunktSentenceTokenizer
@@ -499,6 +499,15 @@ def main() -> None:
         help="Build a single unified database from all examples (two_phase only)",
     )
     parser.add_argument(
+        "--edc-kb-path",
+        default=None,
+        help=(
+            "Pre-built EDC unified KB JSON (schema: entities/relationships/return_values/triplets). "
+            "When set with --concat-all-db, Phase-1 extraction is skipped and this KB is loaded directly. "
+            "Used for the EDC static-KG baseline (extractor != Phase-2 reasoner)."
+        ),
+    )
+    parser.add_argument(
         "--confiqa-setting",
         default="orig",
         choices=["orig", "cf", "cf_100", "cf_500"],
@@ -900,7 +909,24 @@ def main() -> None:
 
     # Build unified database if concat_all_db is enabled (two_phase only)
     unified_db_path = None
-    if args.concat_all_db and args.method == "two_phase":
+    if args.concat_all_db and args.method == "two_phase" and args.edc_kb_path:
+        # EDC baseline: skip Phase-1, load pre-built KB built by an external extractor.
+        logger.info(f"[EDC baseline] Loading pre-built KB from {args.edc_kb_path}")
+        unified_db = DatabaseManager()
+        unified_db.load_database(
+            args.edc_kb_path,
+            top_k=agent.top_k,
+            default_threshold=agent.similarity_threshold,
+            use_inverses=agent.use_inverses,
+        )
+        agent._unified_db = unified_db
+        agent._phase1_info = []
+        agent._unified_db_stats = {
+            "total_triplets": len(unified_db.database["triplets"]),
+        }
+        args.unified_db_path = args.edc_kb_path
+        logger.info(f"[EDC baseline] Loaded {len(unified_db.database['triplets'])} triplets")
+    elif args.concat_all_db and args.method == "two_phase":
         logger.info("Building unified database from entire dataset...")
         logger.info(f"use_contexts={args.use_contexts}, contexts_are_split={args.use_contexts == 'all'}")
 

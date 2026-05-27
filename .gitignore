@@ -51,3 +51,12 @@ mlruns/
 *.json
 
 core
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Large experiment artifacts — do not commit
+KG_results_v2/
+kb_baselines/

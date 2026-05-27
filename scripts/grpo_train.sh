@@ -90,6 +90,9 @@ while [[ $# -gt 0 ]]; do
         --dataset_name)          DATASET_NAME="$2";           shift 2 ;;
         --num_train_epochs)      NUM_TRAIN_EPOCHS="$2";       shift 2 ;;
         --max_steps)             MAX_STEPS="$2";              shift 2 ;;
+        --max_completion_length) MAX_COMPLETION_LENGTH="$2";  shift 2 ;;
+        --vllm_max_model_length) VLLM_MAX_MODEL_LENGTH="$2";  shift 2 ;;
+        --output_dir_suffix)     OUTPUT_DIR_SUFFIX="$2";      shift 2 ;;
         --train_size)            TRAIN_SIZE="$2";             shift 2 ;;
         --total_batch_size)      TOTAL_BATCH_SIZE="$2";       shift 2 ;;
         --per_device_batch_size) PER_DEVICE_TRAIN_BATCH_SIZE="$2"; shift 2 ;;
@@ -98,6 +101,7 @@ while [[ $# -gt 0 ]]; do
         --learning_rate)         LEARNING_RATE="$2";          shift 2 ;;
         --retrieval_threshold)   RETRIEVAL_THRESHOLD="$2";    shift 2 ;;
         --top_k)                 TOP_K="$2";                  shift 2 ;;
+        --save_steps)            SAVE_STEPS="$2";             shift 2 ;;
         --reward_func)           REWARD_FUNC="$2";            shift 2 ;;
         --phase1_reward_type)    PHASE1_REWARD_TYPE="$2";     shift 2 ;;
         --phase1_prompt_type)    PHASE1_PROMPT_TYPE="$2";     shift 2 ;;
@@ -195,6 +199,7 @@ OUTPUT_DIR="${OUTPUT_DIR}-th${RETRIEVAL_THRESHOLD}-topk${TOP_K}"
 [ -n "${USE_INVERSES}" ]          && OUTPUT_DIR="${OUTPUT_DIR}-inv"
 [ -n "${VANILLA_GRPO}" ]          && OUTPUT_DIR="${OUTPUT_DIR}-vanilla"
 [ -n "${DEBUG}" ]                 && OUTPUT_DIR="${OUTPUT_DIR}-debug"
+[ -n "${OUTPUT_DIR_SUFFIX}" ]     && OUTPUT_DIR="${OUTPUT_DIR}${OUTPUT_DIR_SUFFIX}"
 
 # ── Flag resolution ───────────────────────────────────────────────────────────
 [ "${USE_ADAPTIVE_K}" = "True" ] && ADAPTIVE_K="--adaptive_k" || ADAPTIVE_K=""
@@ -239,7 +244,7 @@ accelerate launch \
   --max_grad_norm=1.0 \
   --warmup_ratio=0.1 \
   --lr_scheduler_type=cosine \
-  --vllm_max_model_length=4096 \
+  --vllm_max_model_length=${VLLM_MAX_MODEL_LENGTH:-4096} \
   --train_size=${TRAIN_SIZE} \
   --eval_size=${EVAL_SIZE} \
   --top_p=${TOP_P} \
@@ -258,8 +263,7 @@ accelerate launch \
   --phase1_prompt_type=${PHASE1_PROMPT_TYPE} \
   --num_db_rollouts=${NUM_DB_ROLLOUTS} \
   --phase1_db_weight_mode=${PHASE1_DB_WEIGHT_MODE} \
-  --tier_min_score=${TIER_MIN_SCORE} \
-  --tier_max_score=${TIER_MAX_SCORE} \
+  $([ -n "${TIER_PATH}" ] && echo "--tier_min_score=${TIER_MIN_SCORE} --tier_max_score=${TIER_MAX_SCORE}") \
   ${TWO_PHASE} \
   ${TOOLS} \
   ${USE_CHAT_TEMPLATE} \

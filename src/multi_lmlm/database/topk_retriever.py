@@ -191,7 +191,14 @@ class TopkRetriever:
         rels = self._entity_to_rels.get(matched_entity, [])
         return [rel for rel, val in rels][:max_relationships]
 
-    def retrieve_top_k(self, entity: str, relation: str, threshold: Optional[float] = None, return_triplets: bool = False) -> List[str]:
+    def retrieve_top_k(self, entity: str, relation: str, threshold: Optional[float] = None,
+                       return_triplets: bool = False, return_metadata: bool = False):
+        """Top-k retrieval over the FAISS index.
+
+        Backward-compatible default: returns list[str] (top-k value strings).
+        When return_metadata=True, ALSO returns a parallel list of dicts with
+        kb_idx + entity + relation + value + cosine_sim for each result.
+        """
         query_text = f"{self._normalize_text(entity)} {self._normalize_text(relation)}"
         query_embedding = self.model.encode([query_text], convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=False)
 
@@ -200,14 +207,15 @@ class TopkRetriever:
         # Use per-query threshold if passed, otherwise fallback to default
         th = threshold if threshold is not None else self.default_threshold
 
+        # Each result tracks (kb_idx, entity, relation, value, sim) so we can emit metadata if asked.
         results = []
         for dist, idx in zip(distances[0], indices[0]):
             if idx != -1 and idx in self.id_to_triplet and dist >= th:
                 assert 1.001 >= dist >= -1.001, f"FAISS dot product with normalized vectors should lie in [-1, 1]"
 
                 triplet = self.id_to_triplet[idx]
-                results.append((triplet[0], triplet[1], triplet[2], float(dist)))
-        
+                results.append((int(idx), triplet[0], triplet[1], triplet[2], float(dist)))
+
         results.sort(key=lambda x: x[-1], reverse=True)
 
         if self.is_adaptive and len(results) > 1:
@@ -219,12 +227,21 @@ class TopkRetriever:
                     max_diff = differences[i]
             results = results[:max_idx + 1]
 
-        if return_triplets:
-            return_values = [f"({r[0]}, {r[1]}, {r[2]})" for r in results]
-            return return_values[:self.top_k]
+        results = results[:self.top_k]
 
-        return_values = [r[2] for r in results]
-        return return_values[:self.top_k]
+        if return_triplets:
+            return_values = [f"({r[1]}, {r[2]}, {r[3]})" for r in results]
+        else:
+            return_values = [r[3] for r in results]
+
+        if return_metadata:
+            metadata = [
+                {"kb_idx": r[0], "entity": r[1], "relation": r[2], "value": r[3], "cosine_sim": r[4]}
+                for r in results
+            ]
+            return return_values, metadata
+
+        return return_values
 
     @staticmethod
     def _normalize_text(text: str) -> str:

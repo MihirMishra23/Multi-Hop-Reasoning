@@ -199,7 +199,34 @@ class TwoPhaseAgent(Agent):
             "total_triplets": len(all_triplets),
             "num_examples": len(all_queries),
         }
-        print(f"[Unified DB] Built successfully with {len(all_triplets)} triplets")
+
+        # Build kb_idx -> (source_row, source_tidx_in_csv) map for retrieval metadata logging.
+        #
+        # IMPORTANT: both the per-row DBs (which become CSV's generated_db_0) and the unified
+        # DB go through dedup inside build_database_from_triplets_with_embeddings, but the
+        # dedup is INDEPENDENT (per-row dedup vs global dedup), so positional indices do NOT
+        # align across them. We must therefore map by triplet content.
+        #
+        # Strategy:
+        #   1. Build a canonical map {(e,r,v) -> (row, tidx)} from the per-row DBs
+        #      (= CSV's generated_db_0), keeping the FIRST occurrence across rows.
+        #   2. For each triplet in the unified DB's deduplicated list, look up its
+        #      (row, tidx) by content. This makes source_tidx directly usable as the
+        #      triplet_index in phase1 evaluation results for the source row.
+        canonical: dict[tuple, tuple[int, int]] = {}
+        for row_idx, db in enumerate(self._phase1_dbs):
+            for tidx, t in enumerate(db.database["triplets"]):
+                key = (str(t[0]), str(t[1]), str(t[2]))
+                if key not in canonical:
+                    canonical[key] = (row_idx, tidx)
+
+        self._unified_kb_idx_to_source: dict[int, tuple[int | None, int | None]] = {}
+        for kb_idx, t in enumerate(unified_db.database["triplets"]):
+            key = (str(t[0]), str(t[1]), str(t[2]))
+            self._unified_kb_idx_to_source[kb_idx] = canonical.get(key, (None, None))
+
+        print(f"[Unified DB] Built successfully with {len(all_triplets)} raw / "
+              f"{len(unified_db.database['triplets'])} unique triplets")
 
     # ------------------------------------------------------------------
     # Internal phases
@@ -422,30 +449,125 @@ class TwoPhaseAgent(Agent):
 
                 if DB_RETRIEVE_TOKEN in generated:
                     return_value = "unknown"
-                    log = {"query": None, "success": False, "returned_count": 0, "error": None}
+                    log = {
+                        "lookup_idx": len(self._lookup_logs[i]),
+                        "query": None,
+                        "query_entity": None,
+                        "query_relationship": None,
+                        "retrieved": [],
+                        "returned_values_concat": "",
+                        "retrieval_status": "ok",
+                        "success": False,
+                        "returned_count": 0,
+                        "error": None,
+                    }
                     try:
                         db_query = prompts[i].rsplit(DB_START_TOKEN)[-1]
                         log["query"] = db_query
                         # Use unified DB if set, otherwise use per-example DB
                         db_to_use = unified_db if unified_db is not None else per_example_dbs[i]
-                        values = db_to_use.retrieve_from_database(
+                        values, metadata, (q_entity, q_relationship) = db_to_use.retrieve_from_database(
                             DB_START_TOKEN + db_query,
                             threshold=self.similarity_threshold,
                             top_k=self.top_k,
                             return_triplets=self.return_triplets,
+                            return_metadata=True,
                         )
+                        log["query_entity"] = q_entity
+                        log["query_relationship"] = q_relationship
+                        # Resolve kb_idx -> (source_row, source_tidx) for unified DB; otherwise (i, kb_idx).
+                        for m in metadata:
+                            if unified_db is not None and hasattr(self, "_unified_kb_idx_to_source"):
+                                src = self._unified_kb_idx_to_source.get(m["kb_idx"], (None, m["kb_idx"]))
+                            else:
+                                src = (i, m["kb_idx"])
+                            log["retrieved"].append({
+                                "source_row": src[0],
+                                "source_tidx": src[1],
+                                "entity": m["entity"],
+                                "relation": m["relation"],
+                                "value": m["value"],
+                                "cosine_sim": m["cosine_sim"],
+                            })
                         log["returned_count"] = len(values)
                         log["success"] = bool(values)
                         return_value = ", ".join(values)
+                        log["returned_values_concat"] = return_value
                     except Exception as e:
                         log["error"] = str(e)
+                        # Classify the failure for downstream analysis
+                        msg = str(e)
+                        if "no_match_found" in msg:
+                            log["retrieval_status"] = "no_query_match"
+                        elif "multiple_matches" in msg:
+                            log["retrieval_status"] = "multiple_query_matches"
+                        elif "no_retrieval_data_found" in msg:
+                            log["retrieval_status"] = "no_results_above_threshold"
+                        else:
+                            log["retrieval_status"] = "error"
                     self._lookup_logs[i].append(log)
                     prompts[i] += return_value + DB_END_TOKEN
 
         # Finalize any queries that never emitted ANSWER_END_TOKEN
+        # Also: capture per-query stop_reason for downstream analysis.
+        self._stop_reasons: list[str] = ["unknown"] * B
         for i in range(B):
+            final_prompt = prompts[i] if results[i][1] is None else results[i][1][0].prompt
             if results[i][0] is None:
+                # Never emitted </answer>. Could be: hit max_turns / hit max_model_len / generation ended without answer
                 results[i] = ("", [AgentStep(prompts[i], "", "generate")])
+                self._stop_reasons[i] = "no_answer_emitted"
+            else:
+                self._stop_reasons[i] = "answer_emitted"
+
+        # Post-process: for each lookup, extract text_after_db_end and selected_value.
+        # Split the final completion by DB_END_TOKEN markers; the text following each
+        # DB_END_TOKEN up to (next DB_START_TOKEN | ANSWER_END_TOKEN | end-of-text | 200 chars)
+        # is treated as the model's post-lookup continuation.
+        for i in range(B):
+            final_text = prompts[i]
+            # Split into segments at DB_END_TOKEN. The first segment is pre-first-lookup;
+            # subsequent segments start AFTER a DB_END_TOKEN.
+            parts = final_text.split(DB_END_TOKEN)
+            for lk_idx, lk_log in enumerate(self._lookup_logs[i]):
+                # The (lk_idx + 1)-th segment (0-indexed lk_idx + 1) is the text after the lk_idx-th DB_END.
+                if lk_idx + 1 < len(parts):
+                    post = parts[lk_idx + 1]
+                else:
+                    post = ""
+                # Cut at next lookup start, answer end, or 200 chars
+                cuts = []
+                for tok_ in (DB_START_TOKEN, ANSWER_END_TOKEN, ANSWER_START_TOKEN):
+                    j = post.find(tok_)
+                    if j != -1:
+                        cuts.append(j)
+                if cuts:
+                    post = post[: min(cuts)]
+                post = post[:200]
+                lk_log["text_after_db_end"] = post
+
+                # Determine selected_value: longest substring match from retrieved values.
+                retrieved_values = [r["value"] for r in lk_log.get("retrieved", [])]
+                lk_log["selected_value"] = None
+                lk_log["selected_retrieved_idx"] = None
+                lk_log["selection_method"] = "no_match"
+                if retrieved_values:
+                    post_norm = post.lower()
+                    # Prefer longest substring match (least ambiguous).
+                    best_match = None
+                    best_len = 0
+                    best_idx = None
+                    for idx, v in enumerate(retrieved_values):
+                        if not v:
+                            continue
+                        if v.lower() in post_norm and len(v) > best_len:
+                            best_match = v
+                            best_len = len(v)
+                            best_idx = idx
+                    if best_match is not None:
+                        lk_log["selected_value"] = best_match
+                        lk_log["selected_retrieved_idx"] = best_idx
+                        lk_log["selection_method"] = "longest_substring_match"
 
         answers = [r[0] for r in results]
         traces = [r[1] for r in results]

@@ -219,7 +219,7 @@ def main():
     parser = HfArgumentParser((ScriptArguments, LMLMArguments, AblationArguments, GRPOConfig))
     script_args, lmlm_args, ablation_args, grpo_config = parser.parse_args_into_dataclasses()
 
-    grpo_config.run_name = os.path.basename(grpo_config.output_dir)
+    grpo_config.run_name = os.environ.get("WANDB_NAME") or os.path.basename(grpo_config.output_dir)
     os.makedirs(grpo_config.output_dir, exist_ok=True)
     if wandb.run is not None:
         wandb.run.name = grpo_config.run_name

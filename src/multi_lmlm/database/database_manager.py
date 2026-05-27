@@ -162,8 +162,12 @@ class DatabaseManager:
             raise RuntimeError("TopkRetriever is not initialized. Call init_topk_retriever() first.")
         return self.topk_retriever.retrieve_all_relationships_for_entity(entity, threshold, max_relationships)
 
-    def retrieve_from_database(self, prompt: str, threshold: Optional[float] = None, top_k : int  = 4, return_triplets : bool = False):
-        """Retrieve a single top-1 database result from a prompt containing dblookup. If lookup fails, raise an error."""
+    def retrieve_from_database(self, prompt: str, threshold: Optional[float] = None, top_k : int  = 4, return_triplets : bool = False, return_metadata: bool = False):
+        """Retrieve a single top-1 database result from a prompt containing dblookup. If lookup fails, raise an error.
+
+        When return_metadata=True, returns (results, metadata, (entity, relationship)) instead of just results.
+        metadata is a list of dicts with kb_idx/entity/relation/value/cosine_sim per retrieved triplet.
+        """
         pattern_lst = [
             r"\[dblookup\('((?:[^'\\]|\\.)+)',\s*'((?:[^'\\]|\\.)+)'\)\s*->",
             r"\[dblookup\('(.+?)',\s*'(.+?)'\)\s*->",
@@ -173,17 +177,31 @@ class DatabaseManager:
         matches = {tuple(match) for pattern in pattern_lst for match in re.findall(pattern, prompt)}
         if not matches:
             raise DatabaseLookupError(
-                f"[dblookup_fail_5] No valid dblookup pattern found in prompt: {prompt}", 
+                f"[dblookup_fail_5] No valid dblookup pattern found in prompt: {prompt}",
                 "no_match_found"
             )
 
         if len(matches) > 1:
             raise DatabaseLookupError(
-                f"[dblookup_fail_1] Multiple dblookup matches found: {matches} in prompt: {prompt}", 
+                f"[dblookup_fail_1] Multiple dblookup matches found: {matches} in prompt: {prompt}",
                 "multiple_matches"
             )
-       
+
         entity, relationship = matches.pop()
+
+        if return_metadata:
+            results, metadata = self.topk_retriever.retrieve_top_k(
+                entity, relationship, threshold=threshold,
+                return_triplets=return_triplets, return_metadata=True,
+            )
+            if not results:
+                raise DatabaseLookupError(
+                    f"[dblookup_fail_3] No retrieval results for entity='{entity}', relationship='{relationship}'",
+                    "no_retrieval_data_found",
+                )
+            self._queried_pairs.add((entity.strip(), relationship.strip()))
+            return results, metadata, (entity.strip(), relationship.strip())
+
         results = self.topk_retriever.retrieve_top_k(entity, relationship, threshold=threshold, return_triplets = return_triplets)
 
         if not results:
