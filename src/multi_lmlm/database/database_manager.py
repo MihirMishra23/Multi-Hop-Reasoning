@@ -14,6 +14,30 @@ from sentence_transformers import SentenceTransformer
 # Setup logger
 logger = logging.getLogger(__name__)
 
+
+def _deduplicate_triplets(triplets: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+    """Return triplets in first-seen order with duplicates removed."""
+    return list(dict.fromkeys(tuple(triplet) for triplet in triplets))
+
+
+def _add_inverse_triplets(triplets: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+    """Add ``(value, relationship, entity)`` triplets without duplicates."""
+    unique_triplets = _deduplicate_triplets(triplets)
+    inverse_triplets = [
+        (return_value, relationship, entity)
+        for entity, relationship, return_value in unique_triplets
+    ]
+    return _deduplicate_triplets(unique_triplets + inverse_triplets)
+
+
+def _triplet_search_text(triplet: tuple[str, str, str]) -> str:
+    """Build the normalized entity-relation text embedded by TopkRetriever."""
+    entity, relationship, _ = triplet
+    return (
+        f"{TopkRetriever._normalize_text(entity)} "
+        f"{TopkRetriever._normalize_text(relationship)}"
+    )
+
 def extract_lookups(text, pattern=None):
     """Extract (entity, attribute, answer) triplets from annotated text."""
     if pattern is None:
@@ -77,15 +101,23 @@ def build_databases_from_triplets_batch(triplets_batch: list[list[tuple[str, str
     device = "cuda" if torch.cuda.is_available() else "cpu"
     embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device=device, local_files_only=True)
 
+    # Inverse entries need their own (value, relationship) embeddings. Augment
+    # each example before flattening so all embeddings are still computed in a
+    # single model call and split at the correct per-example boundaries.
+    database_triplets_batch = [
+        _add_inverse_triplets(triplet_list) if use_inverses else [tuple(t) for t in triplet_list]
+        for triplet_list in triplets_batch
+    ]
+
     # Flatten all triplets and compute embeddings at once
-    combined_triplets = [t for triplet_list in triplets_batch for t in triplet_list]
+    combined_triplets = [t for triplet_list in database_triplets_batch for t in triplet_list]
 
     if not combined_triplets:
         logger.warning("No triplets provided to build_databases_from_triplets_batch")
         return [DatabaseManager() for _ in triplets_batch]
 
     logger.info(f"Encoding {len(combined_triplets)} triplets from {len(triplets_batch)} examples in batch...")
-    texts = [f"{TopkRetriever._normalize_text(ent)} {TopkRetriever._normalize_text(rel)}" for ent, rel, _ in combined_triplets]
+    texts = [_triplet_search_text(triplet) for triplet in combined_triplets]
     embeddings = embedding_model.encode(
         texts,
         batch_size=batch_size,
@@ -98,7 +130,7 @@ def build_databases_from_triplets_batch(triplets_batch: list[list[tuple[str, str
     database_managers = []
     start_idx = 0
 
-    for triplet_list in triplets_batch:
+    for triplet_list in database_triplets_batch:
         end_idx = start_idx + len(triplet_list)
         example_embeddings = embeddings[start_idx:end_idx]
 
@@ -110,7 +142,8 @@ def build_databases_from_triplets_batch(triplets_batch: list[list[tuple[str, str
             top_k=top_k,
             default_threshold=default_threshold,
             adaptive=adaptive,
-            use_inverses=use_inverses,
+            # Triplets and embeddings were augmented together above.
+            use_inverses=False,
             embedding_model = embedding_model
         )
         database_managers.append(db_manager)
@@ -216,12 +249,13 @@ class DatabaseManager:
         logger.info(f"Built database with {len(self)} triplets.")
 
     def build_database_from_triplets(self, triplets : list[tuple[str,str,str]], top_k : int = 4, default_threshold : float = 0.6, adaptive : bool = False, use_inverses : bool = False ) -> None:
+        triplets = _add_inverse_triplets(triplets) if use_inverses else [tuple(t) for t in triplets]
         self.database["entities"] = [t[0] for t in triplets]
         self.database["relationships"] = [t[1] for t in triplets]
         self.database["return_values"] = [t[2] for t in triplets]
         self.database["triplets"] = triplets
         logger.info(f"Loaded database from triplets.")
-        self.init_topk_retriever(top_k=top_k, default_threshold=default_threshold, adaptive = adaptive, use_inverses = use_inverses)
+        self.init_topk_retriever(top_k=top_k, default_threshold=default_threshold, adaptive = adaptive, use_inverses = False)
 
     def build_database_from_triplets_with_embeddings(self, triplets: list[tuple[str, str, str]], embeddings, top_k: int = 4, default_threshold: float = 0.6, adaptive: bool = False, use_inverses: bool = False, embedding_model : Optional[SentenceTransformer] = None) -> None:
         """Build database from triplets with pre-computed embeddings.
@@ -234,6 +268,12 @@ class DatabaseManager:
             adaptive: Whether to use adaptive threshold
             use_inverses: Whether to include inverse relationships
         """
+        if len(triplets) != len(embeddings):
+            raise ValueError(
+                f"Expected one embedding per triplet, got {len(embeddings)} embeddings "
+                f"for {len(triplets)} triplets."
+            )
+
         # Deduplicate triplets (keep first occurrence), selecting matching embeddings
         seen = set()
         unique_indices = []
@@ -244,6 +284,32 @@ class DatabaseManager:
                 unique_indices.append(i)
         triplets = [triplets[i] for i in unique_indices]
         embeddings = embeddings[unique_indices]
+
+        if use_inverses:
+            inverse_triplets = []
+            for entity, relationship, return_value in triplets:
+                inverse_triplet = (return_value, relationship, entity)
+                if inverse_triplet not in seen:
+                    seen.add(inverse_triplet)
+                    inverse_triplets.append(inverse_triplet)
+
+            if inverse_triplets:
+                if embedding_model is None:
+                    device = "cuda" if torch.cuda.is_available() else "cpu"
+                    embedding_model = SentenceTransformer(
+                        "sentence-transformers/all-MiniLM-L6-v2",
+                        device=device,
+                        local_files_only=True,
+                    )
+                inverse_texts = [_triplet_search_text(triplet) for triplet in inverse_triplets]
+                inverse_embeddings = embedding_model.encode(
+                    inverse_texts,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                )
+                triplets.extend(inverse_triplets)
+                embeddings = np.concatenate((np.asarray(embeddings), inverse_embeddings), axis=0)
 
         self.database["entities"] = [t[0] for t in triplets]
         self.database["relationships"] = [t[1] for t in triplets]
@@ -256,7 +322,9 @@ class DatabaseManager:
             top_k=top_k,
             threshold=default_threshold,
             adaptive=adaptive,
-            use_inverses=use_inverses,
+            # DatabaseManager owns inverse augmentation so the triplets and
+            # their precomputed embeddings always remain aligned.
+            use_inverses=False,
             database_name=self.database_name,
             use_hf_cache=False,
             precomputed_embeddings=embeddings,
@@ -284,11 +352,13 @@ class DatabaseManager:
         self.database["triplets"].update(tuple(triplet) for triplet in data["triplets"])
 
         if use_inverses:
-            self.database["triplets"].update([(t[2], t[1], t[0]) for t in self.database["triplets"]])
+            self.database["triplets"] = set(_add_inverse_triplets(list(self.database["triplets"])))
+            self.database["entities"] = {triplet[0] for triplet in self.database["triplets"]}
+            self.database["return_values"] = {triplet[2] for triplet in self.database["triplets"]}
 
         logger.info(f"Loaded database from {load_path}.")
 
-        self.init_topk_retriever(top_k=top_k, default_threshold=default_threshold, adaptive = adaptive, use_inverses = use_inverses)
+        self.init_topk_retriever(top_k=top_k, default_threshold=default_threshold, adaptive = adaptive, use_inverses = False)
 
     def save_database(self, save_path: str):
         """Save current database to a JSON file."""
