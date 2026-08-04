@@ -94,6 +94,7 @@ bash scripts/eval_lmlm_multihop.sh \
     --save_version "${RUN_TAG}" \
     --top-k 4 \
     --similarity-threshold 0.6 \
+    --embedding-batch-size "${EMBEDDING_BATCH_SIZE:-2048}" \
     --ircot-retrieval-k 6 \
     --ircot-max-evidence 15 \
     --ircot-max-steps 8 \

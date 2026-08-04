@@ -495,6 +495,7 @@ def save_results_to_file(
             "phase1_prompt_type": args.phase1_prompt_type,
             "top_k": args.top_k,
             "similarity_threshold": args.similarity_threshold,
+            "embedding_batch_size": args.embedding_batch_size,
             "concat_all_db": args.concat_all_db,
             "use_contexts": args.use_contexts,
         }
@@ -590,6 +591,15 @@ def main() -> None:
         default=0.9,
         type=float,
         help="cosine similarity threshold for lmlm retrieval",
+    )
+    parser.add_argument(
+        "--embedding-batch-size",
+        default=2048,
+        type=int,
+        help=(
+            "Sentence-transformer batch size used while building two_phase databases. "
+            "This is a memory/performance control and does not change the retrieval recipe."
+        ),
     )
     parser.add_argument(
         "--return-triplets",
@@ -701,6 +711,8 @@ def main() -> None:
 
     if args.method == "ircot" and args.batch_size != 1:
         raise ValueError("--method=ircot requires --batch-size=1")
+    if args.embedding_batch_size <= 0:
+        raise ValueError("--embedding-batch-size must be positive")
 
     # Validate use-contexts flag
     if args.use_contexts == "all" and args.method != "two_phase":
@@ -1008,6 +1020,7 @@ def main() -> None:
         "use_inverses" : args.use_inverses,
         "top_k": args.top_k,
         "similarity_threshold": args.similarity_threshold,
+        "embedding_batch_size": args.embedding_batch_size,
         "phase1_prompt_type": args.phase1_prompt_type,
         "concat_all_db": args.concat_all_db if args.method == "two_phase" else False,
         "contexts_are_split": args.use_contexts == "all" if args.method == "two_phase" else False,
