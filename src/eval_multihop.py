@@ -475,7 +475,10 @@ def save_results_to_file(
             "total_examples": len(all_results),
             "type": args.method,
             "seed": args.seed if args.seed is not None else None,
-            "code_commit": _get_git_commit(),
+            # Resolve this once when the evaluator starts.  A long-running job
+            # may outlive worktree updates, and resolving HEAD at save time can
+            # incorrectly attribute already-running code to a later commit.
+            "code_commit": args.code_commit,
             "generated_at_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
             "resolved_model_id": getattr(args, "resolved_model_id", None),
             "model_revision": getattr(args, "model_revision", None),
@@ -719,6 +722,7 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    args.code_commit = _get_git_commit()
 
     if args.method == "ircot" and args.batch_size != 1:
         raise ValueError("--method=ircot requires --batch-size=1")
