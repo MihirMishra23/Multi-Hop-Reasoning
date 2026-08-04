@@ -18,6 +18,7 @@ Notes:
 - Context splitting (sentence grouping >= 800 chars) is handled by eval_multihop.py, not here.
 """
 
+import gzip
 import json
 import os
 from typing import Any, Dict, List, Optional
@@ -25,8 +26,18 @@ from typing import Any, Dict, List, Optional
 from datasets import Dataset as HFDataset  # type: ignore
 from datasets import load_dataset  # type: ignore
 
-# Path to the PopQA Wikipedia corpus
-POPQA_CORPUS_PATH = "/share/j_sun/lmlm_multihop/popqa/popqa_corpus_1000_ex_seed_42.json"
+from .provenance import hf_source
+
+POPQA_CORPUS_PATH = os.path.abspath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "..",
+        "data",
+        "artifacts",
+        "popqa_corpus_1000_ex_seed_42.json.gz",
+    )
+)
 
 
 def _normalize_split(split: str) -> str:
@@ -49,7 +60,8 @@ def _load_popqa_corpus(corpus_path: str = POPQA_CORPUS_PATH) -> List[Dict[str, A
     if not os.path.exists(corpus_path):
         raise FileNotFoundError(f"PopQA corpus not found: {corpus_path}")
 
-    with open(corpus_path, "r", encoding="utf-8") as f:
+    opener = gzip.open if corpus_path.endswith(".gz") else open
+    with opener(corpus_path, "rt", encoding="utf-8") as f:
         corpus = json.load(f)
 
     return corpus
@@ -212,7 +224,10 @@ def load_popqa(
     # Load from Hugging Face
     # PopQA is available on HF as "akariasai/PopQA"
     try:
-        raw = load_dataset("akariasai/PopQA", split=split_norm)  # type: ignore
+        pinned_source = hf_source("popqa")
+        raw = load_dataset(
+            pinned_source["path"], split=split_norm, revision=pinned_source["revision"]
+        )  # type: ignore
     except Exception as e:
         raise RuntimeError(
             f"Failed to load PopQA from Hugging Face (split={split_norm}): {e}"

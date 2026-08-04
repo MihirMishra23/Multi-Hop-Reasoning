@@ -27,6 +27,8 @@ from typing import Any, Dict, List, Optional
 from datasets import Dataset as HFDataset  # type: ignore
 from datasets import load_dataset  # type: ignore
 
+from .provenance import hf_source
+
 
 def _repo_root() -> str:
     this_dir = os.path.dirname(os.path.abspath(__file__))
@@ -366,16 +368,20 @@ def load_hotpotqa(
 
     # Fallback to Hugging Face
     hf_split = split_norm
+    pinned_source = hf_source("hotpotqa")
     try:
-        raw = load_dataset("hotpot_qa", setting, split=hf_split)  # type: ignore
+        raw = load_dataset(
+            pinned_source["path"], setting, split=hf_split, revision=pinned_source["revision"]
+        )  # type: ignore
     except Exception as e:
         # Common failure mode: stale/incompatible cached dataset metadata across datasets versions.
         # Retry with forced redownload, then with a fresh isolated cache directory.
         try:
             raw = load_dataset(
-                "hotpot_qa",
+                pinned_source["path"],
                 setting,
                 split=hf_split,
+                revision=pinned_source["revision"],
                 download_mode="force_redownload",
             )  # type: ignore
         except Exception:
@@ -383,9 +389,10 @@ def load_hotpotqa(
                 isolated_cache_dir = os.path.join(tempfile.gettempdir(), "hf_datasets_hotpotqa_clean_cache")
                 os.makedirs(isolated_cache_dir, exist_ok=True)
                 raw = load_dataset(
-                    "hotpot_qa",
+                    pinned_source["path"],
                     setting,
                     split=hf_split,
+                    revision=pinned_source["revision"],
                     cache_dir=isolated_cache_dir,
                     download_mode="force_redownload",
                 )  # type: ignore
