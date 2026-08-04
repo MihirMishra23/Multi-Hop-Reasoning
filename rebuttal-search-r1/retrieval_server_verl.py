@@ -23,6 +23,8 @@ Output:
 """
 
 import argparse
+import os
+import sys
 from typing import Optional
 
 import datasets
@@ -127,6 +129,38 @@ app = FastAPI()
 retriever: Optional[DenseRetriever] = None
 
 
+@app.on_event("startup")
+def _init_retriever():
+    # Idempotent: in single-worker mode main() already populates retriever; skip then.
+    # In multi-worker mode, each forked worker re-imports the module with retriever=None,
+    # so this fires per-worker and loads its own FAISS index + encoder from env-var config.
+    global retriever
+    if retriever is not None:
+        return
+    index_path = os.environ.get("RETRIEVAL_INDEX_PATH")
+    corpus_path = os.environ.get("RETRIEVAL_CORPUS_PATH")
+    if not index_path or not corpus_path:
+        # Direct import (e.g. tests) without going through main(): leave retriever=None.
+        return
+    name = os.environ.get("RETRIEVAL_NAME", "e5")
+    model = os.environ.get("RETRIEVAL_MODEL", "intfloat/e5-base-v2")
+    topk = int(os.environ.get("RETRIEVAL_TOPK", "3"))
+    faiss_gpu = os.environ.get("RETRIEVAL_FAISS_GPU", "0") == "1"
+    encoder = Encoder(model_name=name, model_path=model)
+    retriever = DenseRetriever(
+        index_path=index_path,
+        corpus_path=corpus_path,
+        encoder=encoder,
+        topk=topk,
+        faiss_gpu=faiss_gpu,
+    )
+    print(
+        f"✓ [pid={os.getpid()}] loaded {len(retriever.corpus)} passages; "
+        f"FAISS on {'GPU' if faiss_gpu else 'CPU'}",
+        flush=True,
+    )
+
+
 @app.post("/retrieve")
 def retrieve(req: QueryRequest):
     topk = req.topk or retriever.topk
@@ -156,20 +190,45 @@ def main():
                         help="Move FAISS index to GPU. NOT supported on Blackwell with current faiss-gpu-cu12.")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Number of uvicorn workers. >1 forks worker processes; each loads its own FAISS index + encoder.")
     args = parser.parse_args()
 
-    global retriever
-    encoder = Encoder(model_name=args.retriever_name, model_path=args.retriever_model)
-    retriever = DenseRetriever(
-        index_path=args.index_path,
-        corpus_path=args.corpus_path,
-        encoder=encoder,
-        topk=args.topk,
-        faiss_gpu=args.faiss_gpu,
-    )
-    print(f"✓ loaded {len(retriever.corpus)} passages; FAISS on {'GPU' if args.faiss_gpu else 'CPU'}")
-    print(f"✓ serving on {args.host}:{args.port}")
-    uvicorn.run(app, host=args.host, port=args.port)
+    # Expose init params to the @app.on_event("startup") handler. In multi-worker
+    # mode uvicorn re-imports the module per worker, so each forked worker reads
+    # these env vars and constructs its own retriever.
+    os.environ["RETRIEVAL_INDEX_PATH"] = args.index_path
+    os.environ["RETRIEVAL_CORPUS_PATH"] = args.corpus_path
+    os.environ["RETRIEVAL_TOPK"] = str(args.topk)
+    os.environ["RETRIEVAL_NAME"] = args.retriever_name
+    os.environ["RETRIEVAL_MODEL"] = args.retriever_model
+    os.environ["RETRIEVAL_FAISS_GPU"] = "1" if args.faiss_gpu else "0"
+
+    if args.workers > 1:
+        # Worker processes need to find this module via module:app import string.
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        os.environ["PYTHONPATH"] = script_dir + os.pathsep + os.environ.get("PYTHONPATH", "")
+        print(f"✓ serving on {args.host}:{args.port} with {args.workers} workers")
+        uvicorn.run(
+            "retrieval_server_verl:app",
+            host=args.host,
+            port=args.port,
+            workers=args.workers,
+        )
+    else:
+        # Single-worker: keep the eager init path so behaviour matches the original.
+        global retriever
+        encoder = Encoder(model_name=args.retriever_name, model_path=args.retriever_model)
+        retriever = DenseRetriever(
+            index_path=args.index_path,
+            corpus_path=args.corpus_path,
+            encoder=encoder,
+            topk=args.topk,
+            faiss_gpu=args.faiss_gpu,
+        )
+        print(f"✓ loaded {len(retriever.corpus)} passages; FAISS on {'GPU' if args.faiss_gpu else 'CPU'}")
+        print(f"✓ serving on {args.host}:{args.port}")
+        uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
