@@ -12,7 +12,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
 #SBATCH --time=12:00:00
-#SBATCH --partition=aimi,default_partition
+#SBATCH --partition=default_partition
 #SBATCH --gres=gpu:nvidia_rtx_a6000:1
 #SBATCH --output=/home/rtn27/table3_%x_%j.out
 #SBATCH --error=/home/rtn27/table3_%x_%j.err
@@ -98,4 +98,3 @@ bash scripts/eval_lmlm_multihop.sh \
     --ircot-max-steps 8 \
     --ircot-step-max-tokens 96 \
     "${EXTRA_ARGS[@]}"
-
