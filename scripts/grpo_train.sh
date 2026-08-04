@@ -135,10 +135,27 @@ if [ "$GPU_TYPE" == "B200" ]; then
         PER_DEVICE_TRAIN_BATCH_SIZE=16
         LEARNING_RATE=5e-6
         VLLM_GPU_MEMORY_UTILIZATION=0.4
+    elif [[ "${MODEL_PATH}" == *"1.5B"* ]]; then
+        PER_DEVICE_TRAIN_BATCH_SIZE=16
+        LEARNING_RATE=5e-6
+        VLLM_GPU_MEMORY_UTILIZATION=0.4
+    elif [[ "${MODEL_PATH}" == *"3B"* ]]; then
+        LEARNING_RATE=5e-6
+        PER_DEVICE_TRAIN_BATCH_SIZE=8
+        VLLM_GPU_MEMORY_UTILIZATION=0.25
     elif [[ "${MODEL_PATH}" == *"4B"* ]]; then
         LEARNING_RATE=5e-6
         PER_DEVICE_TRAIN_BATCH_SIZE=8
         VLLM_GPU_MEMORY_UTILIZATION=0.15
+    elif [[ "${MODEL_PATH}" == *"-7B"* ]]; then
+        # Anchored on "-7B" to avoid matching "1.7B".
+        # 7B in DDP replicates ~84GB of params+grads+AdamW on every GPU, which
+        # OOMs even on B200 once vLLM's KV cache joins the party. FSDP shards
+        # the training state across ranks (paired with vLLM colocate TP).
+        LEARNING_RATE=5e-6
+        PER_DEVICE_TRAIN_BATCH_SIZE=4
+        VLLM_GPU_MEMORY_UTILIZATION=0.2
+        ACCEL_CONFIG="configs/accelerate/fsdp_${NUM_GPUS}.yaml"
     elif [[ "${MODEL_PATH}" == *"8B"* ]]; then
         LEARNING_RATE=5e-6
         PER_DEVICE_TRAIN_BATCH_SIZE=4
@@ -155,6 +172,17 @@ elif [ "$GPU_TYPE" == "H100" ]; then
     PER_DEVICE_TRAIN_BATCH_SIZE=8
     VLLM_GPU_MEMORY_UTILIZATION=0.15
 fi
+
+# ── Debug overrides (env vars) ────────────────────────────────────────────────
+# FORCE_DDP=1            → use DDP (multi_gpu) regardless of the model branch
+# FORCE_FSDP=1           → use FSDP regardless of the model branch
+# PER_DEVICE_OVERRIDE=N  → override PER_DEVICE_TRAIN_BATCH_SIZE
+# VLLM_UTIL_OVERRIDE=F   → override VLLM_GPU_MEMORY_UTILIZATION (0.0-1.0)
+# Useful for isolating FSDP+vLLM weight-sync issues vs. tuning memory headroom.
+[ -n "${FORCE_DDP}" ]            && ACCEL_CONFIG="configs/accelerate/multi_gpu_${NUM_GPUS}.yaml" && echo "FORCE_DDP=1: using ${ACCEL_CONFIG}"
+[ -n "${FORCE_FSDP}" ]           && ACCEL_CONFIG="configs/accelerate/fsdp_${NUM_GPUS}.yaml"      && echo "FORCE_FSDP=1: using ${ACCEL_CONFIG}"
+[ -n "${PER_DEVICE_OVERRIDE}" ]  && PER_DEVICE_TRAIN_BATCH_SIZE="${PER_DEVICE_OVERRIDE}"          && echo "PER_DEVICE_OVERRIDE: PER_DEVICE_TRAIN_BATCH_SIZE=${PER_DEVICE_TRAIN_BATCH_SIZE}"
+[ -n "${VLLM_UTIL_OVERRIDE}" ]   && VLLM_GPU_MEMORY_UTILIZATION="${VLLM_UTIL_OVERRIDE}"           && echo "VLLM_UTIL_OVERRIDE: VLLM_GPU_MEMORY_UTILIZATION=${VLLM_GPU_MEMORY_UTILIZATION}"
 
 if [ -n "${DEBUG}" ]; then
     echo "Debug mode enabled"
@@ -198,6 +226,14 @@ OUTPUT_DIR="${OUTPUT_DIR}-th${RETRIEVAL_THRESHOLD}-topk${TOP_K}"
 [ -n "${USE_INVERSES}" ]          && OUTPUT_DIR="${OUTPUT_DIR}-inv"
 [ -n "${VANILLA_GRPO}" ]          && OUTPUT_DIR="${OUTPUT_DIR}-vanilla"
 [ -n "${DEBUG}" ]                 && OUTPUT_DIR="${OUTPUT_DIR}-debug"
+
+# Parallelism-strategy suffix: keeps DDP and FSDP runs in distinct output dirs,
+# because FSDP-saved checkpoints can't be resumed by DDP (and vice versa).
+if [[ "${ACCEL_CONFIG}" == *fsdp* ]]; then
+    OUTPUT_DIR="${OUTPUT_DIR}-fsdp"
+else
+    OUTPUT_DIR="${OUTPUT_DIR}-ddp"
+fi
 
 # ── Flag resolution ───────────────────────────────────────────────────────────
 [ "${USE_ADAPTIVE_K}" = "True" ] && ADAPTIVE_K="--adaptive_k" || ADAPTIVE_K=""

@@ -241,6 +241,7 @@ is_valid_combo() {
         2wiki|two_wiki)     [[ "${sp}" == "dev" ]] ;;
         mquake*)            [[ "${sp}" =~ ^(eval-edit|eval-edit-new|eval-original|train)$ ]] ;;
         trivia_qa)          [[ "${sp}" == "dev" ]] ;;
+        popqa)              [[ "${sp}" == "dev" ]] ;;
         synthworlds)        [[ "${sp}" == "dev" ]] ;;
         *)                  return 1 ;;
     esac

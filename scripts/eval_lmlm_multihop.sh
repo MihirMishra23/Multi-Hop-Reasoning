@@ -113,8 +113,15 @@ elif [ "${DATASET}" = "trivia_qa" ]; then
         echo "Error: trivia_qa SPLIT must be 'dev', got '${SPLIT}'"
         exit 1
     fi
+elif [ "${DATASET}" = "popqa" ]; then
+    if [ "${SPLIT}" = "dev" ]; then
+        START_IDX=0
+    else
+        echo "Error: popqa SPLIT must be 'dev', got '${SPLIT}'"
+        exit 1
+    fi
 else
-    echo "Error: DATASET must be 'hotpotqa', 'musique', 'mquake', '2wiki', 'synthworlds', or 'trivia_qa', got '${DATASET}'"
+    echo "Error: DATASET must be 'hotpotqa', 'musique', 'mquake', '2wiki', 'synthworlds', 'trivia_qa', or 'popqa', got '${DATASET}'"
     exit 1
 fi
 

@@ -2,9 +2,9 @@
 
 
 # SLURM Directives
-#SBATCH -J sft_train                           # Job name
-#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/sft_train_%j.out   # Standard output file
-#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/sft_train_%j.err   # Standard error file
+#SBATCH -J sft_train_qwen2.5_3b                 # Job name
+#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/sft_train_qwen2.5_3b_%j.out   # Standard output file
+#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/sft_train_qwen2.5_3b_%j.err   # Standard error file
 #SBATCH -N 1                                    # Number of nodes
 #SBATCH -n 1                                    # Number of tasks (or cores)
 #SBATCH --get-user-env                          # Retrieve the user's login environment
@@ -12,7 +12,7 @@
 #SBATCH --mem=256G                              # Memory requested (2GB per node)
 #SBATCH -t infinite                              # Time limit (2 hours)
 #SBATCH --partition=aimi,kilian,jjs533,default_partition          # Request partition
-#SBATCH --gres=gpu:nvidia_b200:1                # Request 1 NVIDIA A6000 GPU
+#SBATCH --gres=gpu:nvidia_b200:1                # Request 1 NVIDIA B200 GPU
 
 
 # Load the required environmentt
@@ -22,12 +22,12 @@ source activate mem
 cd /home/lz586/icl/Multi-Hop-Reasoning/
 
 
-echo "Starting SFT training..."
+echo "Starting SFT training (Qwen2.5-3B ablation)..."
 
 # Linxi: max_seq_length 2048 for 1.7B, 1024 for 4B, 1024 for 8B
-# Ryan: max_seq_length 8192 for 1.7B
+# 3B (Qwen2.5) ablation: 2048 fits on B200 with bsz=12, grad_accum=4 (eff bsz 48).
 bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/sft_train.sh \
-    --model_size 1.7B \
+    --model_size 3B \
     --threshold -1 \
     --dataset hotpotqa \
     --two_phase True \
