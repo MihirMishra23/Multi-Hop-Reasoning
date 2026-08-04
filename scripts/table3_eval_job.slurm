@@ -13,8 +13,8 @@
 #SBATCH --mem=128G
 #SBATCH --time=12:00:00
 #SBATCH --partition=default_partition
-#SBATCH --nodelist=unicorn-compute-[01-02]
-#SBATCH --gres=gpu:nvidia_a40:1
+#SBATCH --constraint=gpu-high
+#SBATCH --gres=gpu:1
 #SBATCH --output=/home/rtn27/table3_%x_%j.out
 #SBATCH --error=/home/rtn27/table3_%x_%j.err
 
