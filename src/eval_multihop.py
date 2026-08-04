@@ -1141,10 +1141,14 @@ def main() -> None:
                 all_results.update(batch_results)
                 if batch_results:  # Only count as successful if we actually processed
                     successful_batches += 1
-
-                # Save based on save_every flag
-                if args.save_every and successful_batches % args.save_every == 0:
-                    save_results_to_file(all_results, save_path, args)
+                    # Checkpoint only after newly generated batches.  In resume
+                    # mode, an empty/skipped batch must not repeatedly rewrite
+                    # the same large artifact just because 0 % save_every == 0.
+                    if (
+                        args.save_every > 0
+                        and successful_batches % args.save_every == 0
+                    ):
+                        save_results_to_file(all_results, save_path, args)
 
                 pbar.update(1)
             except Exception as e:
