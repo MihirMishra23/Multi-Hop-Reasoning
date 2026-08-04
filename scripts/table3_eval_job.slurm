@@ -95,6 +95,7 @@ bash scripts/eval_lmlm_multihop.sh \
     --top-k 4 \
     --similarity-threshold 0.6 \
     --embedding-batch-size "${EMBEDDING_BATCH_SIZE:-2048}" \
+    --vllm-gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION:-0.6}" \
     --ircot-retrieval-k 6 \
     --ircot-max-evidence 15 \
     --ircot-max-steps 8 \

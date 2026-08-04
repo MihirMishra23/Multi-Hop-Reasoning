@@ -22,6 +22,7 @@ CONCAT_ALL_DB=""        # set to "--concat-all-db" to build unified database (tw
 USE_CONTEXTS="golden"   # "golden" | "all" (two_phase only)
 SIMILARITY_THRESHOLD=0.6
 EMBEDDING_BATCH_SIZE=2048
+VLLM_GPU_MEMORY_UTILIZATION=0.6
 IRCOT_RETRIEVAL_K=6
 IRCOT_MAX_EVIDENCE=15
 IRCOT_MAX_STEPS=8
@@ -48,6 +49,7 @@ while [[ $# -gt 0 ]]; do
         --use-contexts)     USE_CONTEXTS="$2";      shift 2 ;;
         --similarity-threshold) SIMILARITY_THRESHOLD="$2"; shift 2 ;;
         --embedding-batch-size) EMBEDDING_BATCH_SIZE="$2"; shift 2 ;;
+        --vllm-gpu-memory-utilization) VLLM_GPU_MEMORY_UTILIZATION="$2"; shift 2 ;;
         --ircot-retrieval-k) IRCOT_RETRIEVAL_K="$2"; shift 2 ;;
         --ircot-max-evidence) IRCOT_MAX_EVIDENCE="$2"; shift 2 ;;
         --ircot-max-steps) IRCOT_MAX_STEPS="$2"; shift 2 ;;
@@ -171,6 +173,7 @@ for METHOD in "${METHODS[@]}"; do
             --top-k ${TOP_K} \
             --similarity-threshold ${SIMILARITY_THRESHOLD} \
             --embedding-batch-size ${EMBEDDING_BATCH_SIZE} \
+            --vllm-gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION} \
             ${ADAPTIVE_K} \
             ${RETURN_TRIPLETS} \
             ${USE_INVERSES} \

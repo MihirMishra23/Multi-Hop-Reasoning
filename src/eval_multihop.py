@@ -496,6 +496,8 @@ def save_results_to_file(
             "top_k": args.top_k,
             "similarity_threshold": args.similarity_threshold,
             "embedding_batch_size": args.embedding_batch_size,
+            "vllm_gpu_memory_utilization": args.vllm_gpu_memory_utilization,
+            "pytorch_cuda_alloc_conf": os.environ.get("PYTORCH_CUDA_ALLOC_CONF"),
             "concat_all_db": args.concat_all_db,
             "use_contexts": args.use_contexts,
         }
@@ -599,6 +601,15 @@ def main() -> None:
         help=(
             "Sentence-transformer batch size used while building two_phase databases. "
             "This is a memory/performance control and does not change the retrieval recipe."
+        ),
+    )
+    parser.add_argument(
+        "--vllm-gpu-memory-utilization",
+        default=0.6,
+        type=float,
+        help=(
+            "Fraction of GPU memory reserved by the two_phase vLLM engine. Lower values "
+            "leave room for the sentence-transformer database builder."
         ),
     )
     parser.add_argument(
@@ -713,6 +724,8 @@ def main() -> None:
         raise ValueError("--method=ircot requires --batch-size=1")
     if args.embedding_batch_size <= 0:
         raise ValueError("--embedding-batch-size must be positive")
+    if not 0.0 < args.vllm_gpu_memory_utilization <= 1.0:
+        raise ValueError("--vllm-gpu-memory-utilization must be in (0, 1]")
 
     # Validate use-contexts flag
     if args.use_contexts == "all" and args.method != "two_phase":
@@ -1021,6 +1034,7 @@ def main() -> None:
         "top_k": args.top_k,
         "similarity_threshold": args.similarity_threshold,
         "embedding_batch_size": args.embedding_batch_size,
+        "vllm_gpu_memory_utilization": args.vllm_gpu_memory_utilization,
         "phase1_prompt_type": args.phase1_prompt_type,
         "concat_all_db": args.concat_all_db if args.method == "two_phase" else False,
         "contexts_are_split": args.use_contexts == "all" if args.method == "two_phase" else False,
