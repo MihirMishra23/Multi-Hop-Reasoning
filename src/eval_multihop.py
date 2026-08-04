@@ -182,6 +182,12 @@ def _normalize_title(title: Any) -> str:
 def _extract_retrieved_title(doc: Any) -> str:
     if isinstance(doc, dict):
         return _normalize_title(doc.get("title", ""))
+    if isinstance(doc, str):
+        first_line = doc.splitlines()[0].strip() if doc.strip() else ""
+        if first_line.lower().startswith("wikipedia title:"):
+            return _normalize_title(first_line.split(":", 1)[1])
+        if ": " in first_line:
+            return _normalize_title(first_line.split(": ", 1)[0])
     return ""
 
 
