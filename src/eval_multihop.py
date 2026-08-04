@@ -24,6 +24,7 @@ import sys
 import logging
 import gc
 import subprocess
+import fcntl
 from typing import Dict, Any, List
 from tqdm import tqdm
 from datetime import datetime
@@ -791,13 +792,26 @@ def main() -> None:
             hf_split,
             rag_corpus_path,
         )
-        count = write_musique_rag_corpus_jsonl(
-            path=rag_corpus_path,
-            split=hf_split,
-            limit=None,
-            seed=args.seed,
-        )
-        logger.info("Wrote %d unique RAG paragraphs to %s", count, rag_corpus_path)
+        os.makedirs(os.path.dirname(rag_corpus_path), exist_ok=True)
+        lock_path = f"{rag_corpus_path}.lock"
+        with open(lock_path, "w", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            if os.path.isfile(rag_corpus_path) and os.path.getsize(rag_corpus_path) > 0:
+                logger.info("Reusing existing MuSiQue RAG corpus at %s", rag_corpus_path)
+            else:
+                temporary_path = f"{rag_corpus_path}.tmp.{os.getpid()}"
+                try:
+                    count = write_musique_rag_corpus_jsonl(
+                        path=temporary_path,
+                        split=hf_split,
+                        limit=None,
+                        seed=args.seed,
+                    )
+                    os.replace(temporary_path, rag_corpus_path)
+                finally:
+                    if os.path.exists(temporary_path):
+                        os.unlink(temporary_path)
+                logger.info("Wrote %d unique RAG paragraphs to %s", count, rag_corpus_path)
         rag_scope = f"hf_{hf_split}"
 
     if args.method in ("rag", "ircot") and rag_corpus_path:
