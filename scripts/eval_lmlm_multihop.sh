@@ -1,5 +1,5 @@
 #
-# eval_lmlm_multihop.sh — Evaluate lmlm / two_phase / direct / icl / rag methods
+# eval_lmlm_multihop.sh — Evaluate lmlm / two_phase / direct / icl / rag / ircot methods
 #
 # Usage:
 #   bash scripts/eval_lmlm_multihop.sh --method lmlm --dataset hotpotqa --split dev
@@ -21,6 +21,10 @@ USE_TRAIN_PARAMS=""     # set to "--use-train-params" to use training sampling p
 CONCAT_ALL_DB=""        # set to "--concat-all-db" to build unified database (two_phase only)
 USE_CONTEXTS="golden"   # "golden" | "all" (two_phase only)
 SIMILARITY_THRESHOLD=0.6
+IRCOT_RETRIEVAL_K=6
+IRCOT_MAX_EVIDENCE=15
+IRCOT_MAX_STEPS=8
+IRCOT_STEP_MAX_TOKENS=96
 METHODS=("lmlm")
 OUTPUT_DIR=./output/main_tables
 SETTING=${SETTING:-distractor}
@@ -42,6 +46,10 @@ while [[ $# -gt 0 ]]; do
         --concat-all-db)    CONCAT_ALL_DB="--concat-all-db"; shift ;;
         --use-contexts)     USE_CONTEXTS="$2";      shift 2 ;;
         --similarity-threshold) SIMILARITY_THRESHOLD="$2"; shift 2 ;;
+        --ircot-retrieval-k) IRCOT_RETRIEVAL_K="$2"; shift 2 ;;
+        --ircot-max-evidence) IRCOT_MAX_EVIDENCE="$2"; shift 2 ;;
+        --ircot-max-steps) IRCOT_MAX_STEPS="$2"; shift 2 ;;
+        --ircot-step-max-tokens) IRCOT_STEP_MAX_TOKENS="$2"; shift 2 ;;
         --save_version)     SAVE_VERSION="$2";      shift 2 ;;
         --output-dir)       OUTPUT_DIR="$2";        shift 2 ;;
         --setting)          SETTING="$2";          shift 2 ;;
@@ -106,7 +114,7 @@ elif [ "${DATASET}" = "synthworlds" ]; then
         echo "Error: synthworlds SPLIT must be 'dev', got '${SPLIT}'"
         exit 1
     fi
-elif [ "${DATASET}" = "trivia_qa" ]; then
+elif [ "${DATASET}" = "trivia_qa" ] || [ "${DATASET}" = "popqa" ]; then
     if [ "${SPLIT}" = "dev" ]; then
         START_IDX=0
     else
@@ -123,6 +131,7 @@ MAX_TOKENS=1024
 BATCH_SIZE_DIRECT=32
 BATCH_SIZE_ICL=1
 BATCH_SIZE_RAG=1
+BATCH_SIZE_IRCOT=1
 BATCH_SIZE_LMLM=64
 SAVE_EVERY=64
 SEED=42
@@ -195,6 +204,8 @@ for METHOD in "${METHODS[@]}"; do
             BATCH_SIZE=${BATCH_SIZE_ICL}
         elif [ "${METHOD}" = "rag" ]; then
             BATCH_SIZE=${BATCH_SIZE_RAG}
+        elif [ "${METHOD}" = "ircot" ]; then
+            BATCH_SIZE=${BATCH_SIZE_IRCOT}
         else
             BATCH_SIZE=${BATCH_SIZE_DIRECT}
         fi
@@ -211,6 +222,12 @@ for METHOD in "${METHODS[@]}"; do
             --seed ${SEED} \
             --save-every ${SAVE_EVERY} \
             --start-index ${START_IDX} \
+            --rag-k ${TOP_K} \
+            --ircot-retrieval-k ${IRCOT_RETRIEVAL_K} \
+            --ircot-max-evidence ${IRCOT_MAX_EVIDENCE} \
+            --ircot-step-max-tokens ${IRCOT_STEP_MAX_TOKENS} \
+            --max-steps ${IRCOT_MAX_STEPS} \
+            --save-version "_${SAVE_VERSION}" \
             --eval \
             --resume
     fi

@@ -6,6 +6,7 @@ from .agent_class import Agent
 from .rag_agent import RAGAgent
 from .icl_agent import ICLAgent
 from .cot_agent import CotAgent
+from .ircot_agent import IRCoTAgent
 from .lmlm_agent import LMLMAgent
 from .two_phase_agent import TwoPhaseAgent
 
@@ -14,7 +15,7 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
     """Return an Agent instance for the given method.
 
     Args:
-        method: Agent method type ("rag", "icl", "db", "lmlm", "two_phase")
+        method: Agent method type ("rag", "ircot", "icl", "db", "lmlm", "two_phase")
         agent_kwargs: Dictionary containing agent-specific parameters
 
     Returns:
@@ -54,6 +55,17 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
             agent = RAGAgent(
                 **agent_kwargs,
             )
+        case "ircot":
+            retrieval = agent_kwargs.get("retrieval", "bm25")
+            if retrieval != "bm25":
+                raise NotImplementedError("Only --retrieval bm25 is supported currently.")
+            agent = IRCoTAgent(
+                **agent_kwargs,
+                retriever_type=retrieval,
+                retrieval_k=agent_kwargs.get("ircot_retrieval_k", 6),
+                max_evidence=agent_kwargs.get("ircot_max_evidence", 15),
+                step_max_tokens=agent_kwargs.get("ircot_step_max_tokens", 96),
+            )
         case "lmlm":
             # Extract parameters
             model_path = agent_kwargs.get("model_path")
@@ -89,4 +101,4 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
     return agent
 
 
-__all__ = ["Agent", "RAGAgent", "ICLAgent", "CotAgent", "LMLMAgent", "TwoPhaseAgent", "get_agent"]
+__all__ = ["Agent", "RAGAgent", "IRCoTAgent", "ICLAgent", "CotAgent", "LMLMAgent", "TwoPhaseAgent", "get_agent"]

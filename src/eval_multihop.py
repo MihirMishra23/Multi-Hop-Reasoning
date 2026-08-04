@@ -23,6 +23,7 @@ import random
 import sys
 import logging
 import gc
+import subprocess
 from typing import Dict, Any, List
 from tqdm import tqdm
 from datetime import datetime
@@ -40,6 +41,7 @@ from data import get_dataset
 from data.hotpotqa import load_hotpotqa_rag_corpus
 from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
 from multi_lmlm.database.database_manager import build_databases_from_triplets_batch
+from agent.ircot_agent import OFFICIAL_IRCOT_COMMIT, OFFICIAL_IRCOT_URL
 
 # Import for TriviaQA sentence splitting
 from nltk.tokenize import PunktSentenceTokenizer
@@ -114,6 +116,18 @@ def split_trivia_qa_contexts(contexts: List[str], titles: List[str], min_chunk_l
     return result_contexts
 
 DEFAULT_FULLWIKI_CORPUS_PATH = "/share/j_sun/lmlm_multihop/datasets/hotpot_dev_fullwiki_v1.json"
+
+
+def _get_git_commit() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO_ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return None
 
 
 def _load_training_config(model_path: str) -> dict:
@@ -317,6 +331,25 @@ def process_single_batch(
             temperature=args.temperature,
             max_tokens=args.max_tokens,
         )
+    elif args.method == "ircot":
+        answers = []
+        traces = []
+        ircot_run_info = []
+        for query, metadata in zip(queries, examples_metadata):
+            agent.reset(metadata["contexts"])  # type: ignore
+            answer_list, trace_list = agent.run(
+                [query],
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+            )
+            answers.append(answer_list[0] if answer_list else None)
+            traces.append(trace_list[0] if trace_list else None)
+            ircot_run_info.append(
+                {
+                    "retrieval_rounds": list(getattr(agent, "_retrieval_rounds", [])),
+                    "evidence": list(getattr(agent, "_evidence_docs", [])),
+                }
+            )
     else:
         answers, traces = agent.run(
             queries,
@@ -334,6 +367,8 @@ def process_single_batch(
         evidence_docs = []
         if args.method == "rag":
             evidence_docs = getattr(agent, "_evidence_docs", [])
+        elif args.method == "ircot":
+            evidence_docs = ircot_run_info[idx]["evidence"]
         logger.debug("Answer: %s", answer)
         logger.debug("Trace: %s", trace)
 
@@ -381,12 +416,20 @@ def process_single_batch(
             if idx < len(phase1_info):
                 results[str(metadata["qid"])]["phase1"] = phase1_info[idx]
         if args.method == "rag":
-            results[str(qid)]["retrieval"] = _compute_retrieval_stats(
+            results[str(metadata["qid"])]["retrieval"] = _compute_retrieval_stats(
                 evidence_docs=evidence_docs,
-                supporting_facts=ex.get("supporting_facts") or [],
+                supporting_facts=metadata.get("supporting_facts") or [],
             )
         if args.method == "rag" and args.debug_evidence:
             results[str(metadata["qid"])]["evidence"] = evidence_docs
+        if args.method == "ircot":
+            results[str(metadata["qid"])]["retrieval_rounds"] = ircot_run_info[idx]["retrieval_rounds"]
+            results[str(metadata["qid"])]["retrieval"] = _compute_retrieval_stats(
+                evidence_docs=evidence_docs,
+                supporting_facts=metadata.get("supporting_facts") or [],
+            )
+            if args.debug_evidence:
+                results[str(metadata["qid"])]["evidence"] = evidence_docs
 
     logger.info("Generated %d predictions for batch %d", len(results), batch_number)
 
@@ -425,6 +468,10 @@ def save_results_to_file(
             "total_examples": len(all_results),
             "type": args.method,
             "seed": args.seed if args.seed is not None else None,
+            "code_commit": _get_git_commit(),
+            "generated_at_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "resolved_model_id": getattr(args, "resolved_model_id", None),
+            "model_revision": getattr(args, "model_revision", None),
         },
         "inference_params": {
             "seed": args.seed,
@@ -444,12 +491,21 @@ def save_results_to_file(
             "concat_all_db": args.concat_all_db,
             "use_contexts": args.use_contexts,
         }
-    # Add retrieval metadata for RAG
-    if args.method == "rag":
+    # Add retrieval metadata for text retrieval methods.
+    if args.method in ("rag", "ircot"):
         output["metadata"]["retrieval"] = {
             "backend": args.retrieval,
-            "scope": args.setting,
-            "k": args.rag_k,
+            "scope": args.rag_scope,
+            "corpus_path": args.rag_corpus_path,
+            "k": args.rag_k if args.method == "rag" else args.ircot_retrieval_k,
+        }
+    if args.method == "ircot":
+        output["metadata"]["ircot"] = {
+            "max_steps": args.max_steps,
+            "max_evidence": args.ircot_max_evidence,
+            "step_max_tokens": args.ircot_step_max_tokens,
+            "official_repository": OFFICIAL_IRCOT_URL,
+            "official_commit": OFFICIAL_IRCOT_COMMIT,
         }
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -478,7 +534,7 @@ def main() -> None:
     parser.add_argument(
         "--method",
         default="icl",
-        choices=["db", "rag", "icl", "lmlm", "direct", "two_phase"],
+        choices=["db", "rag", "ircot", "icl", "lmlm", "direct", "two_phase"],
         help="Agent method label (for output path)",
     )
     parser.add_argument(
@@ -536,9 +592,30 @@ def main() -> None:
     )
     # RAG-related flags
     parser.add_argument(
-        "--retrieval", default="bm25", choices=["bm25"], help="Retrieval backend for --method rag"
+        "--retrieval",
+        default="bm25",
+        choices=["bm25"],
+        help="Retrieval backend for --method rag or ircot",
     )
     parser.add_argument("--rag-k", type=int, default=4, help="Top-k documents to retrieve")
+    parser.add_argument(
+        "--ircot-retrieval-k",
+        type=int,
+        default=6,
+        help="Documents retrieved per IRCoT round (official default: 6)",
+    )
+    parser.add_argument(
+        "--ircot-max-evidence",
+        type=int,
+        default=15,
+        help="Maximum cumulative IRCoT evidence paragraphs (official default: 15)",
+    )
+    parser.add_argument(
+        "--ircot-step-max-tokens",
+        type=int,
+        default=96,
+        help="Maximum tokens for each sentence-level IRCoT reasoning step",
+    )
     parser.add_argument(
         "--debug-evidence",
         action="store_true",
@@ -615,6 +692,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.method == "ircot" and args.batch_size != 1:
+        raise ValueError("--method=ircot requires --batch-size=1")
+
     # Validate use-contexts flag
     if args.use_contexts == "all" and args.method != "two_phase":
         raise ValueError("--use-contexts=all is only supported for --method=two_phase")
@@ -675,13 +755,13 @@ def main() -> None:
     }
 
     if (
-        args.method == "rag"
+        args.method in ("rag", "ircot")
         and args.dataset == "hotpotqa"
         and args.setting == "fullwiki"
         and not args.rag_corpus_path
     ):
         args.rag_corpus_path = DEFAULT_FULLWIKI_CORPUS_PATH
-    if args.method == "rag" and args.dataset == "musique" and not args.rag_corpus_path:
+    if args.method in ("rag", "ircot") and args.dataset == "musique" and not args.rag_corpus_path:
         args.rag_corpus_path = f"hf:{args.split}"
         logger.info(
             "MuSiQue RAG requires a global corpus; defaulting to %s",
@@ -692,7 +772,7 @@ def main() -> None:
     rag_corpus_path = args.rag_corpus_path
     rag_scope = None
     if (
-        args.method == "rag"
+        args.method in ("rag", "ircot")
         and args.dataset == "musique"
         and isinstance(rag_corpus_path, str)
         and rag_corpus_path.startswith("hf:")
@@ -714,7 +794,7 @@ def main() -> None:
         logger.info("Wrote %d unique RAG paragraphs to %s", count, rag_corpus_path)
         rag_scope = f"hf_{hf_split}"
 
-    if args.method == "rag" and rag_corpus_path:
+    if args.method in ("rag", "ircot") and rag_corpus_path:
         logger.info("Loading RAG corpus from %s", rag_corpus_path)
         if args.dataset == "hotpotqa":
             rag_corpus = load_hotpotqa_rag_corpus(rag_corpus_path)
@@ -737,7 +817,7 @@ def main() -> None:
             )
 
     if rag_scope is None:
-        if args.method == "rag" and rag_corpus_path:
+        if args.method in ("rag", "ircot") and rag_corpus_path:
             rag_scope = _infer_rag_scope(rag_corpus_path)
         else:
             rag_scope = args.setting
@@ -804,8 +884,27 @@ def main() -> None:
         save_results_path = os.path.join(output_dir, f"results{args.save_version}", f"results_{save_postfix}")
     else:
         model_name = args.model or "unknown-model"
-        save_path = os.path.join(base_output_dir, args.method, f"{args.dataset}_{args.setting}", model_name, "generations")
-        save_results_path = os.path.join(base_output_dir, args.method, f"{args.dataset}_{args.setting}", model_name, "results")
+        output_dir = os.path.join(
+            base_output_dir,
+            args.method,
+            f"{args.dataset}_{args.setting}",
+            model_name,
+        )
+        retrieval_suffix = ""
+        if args.method == "rag":
+            retrieval_suffix = f"_k{args.rag_k}"
+        elif args.method == "ircot":
+            retrieval_suffix = (
+                f"_k{args.ircot_retrieval_k}_steps{args.max_steps}"
+                f"_evidence{args.ircot_max_evidence}"
+            )
+        version = args.save_version or ""
+        save_postfix = (
+            f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}"
+            f"_i{args.start_index}_seed{args.seed}{retrieval_suffix}{version}.json"
+        )
+        save_path = os.path.join(output_dir, "generations", f"eval_{save_postfix}")
+        save_results_path = os.path.join(output_dir, "results", f"results_{save_postfix}")
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     os.makedirs(os.path.dirname(save_results_path), exist_ok=True)
@@ -866,6 +965,9 @@ def main() -> None:
     llm = None
     if args.method not in ("lmlm", "two_phase"):
         llm = get_llm(model_name=args.model)
+        args.resolved_model_id = getattr(llm, "hf_model_id", args.model)
+        model_config = getattr(getattr(llm, "model", None), "config", None)
+        args.model_revision = getattr(model_config, "_commit_hash", None)
 
 
     # Build agent_kwargs dictionary
@@ -876,6 +978,9 @@ def main() -> None:
         "setting": args.setting,
         "retrieval": args.retrieval,
         "rag_k": args.rag_k,
+        "ircot_retrieval_k": args.ircot_retrieval_k,
+        "ircot_max_evidence": args.ircot_max_evidence,
+        "ircot_step_max_tokens": args.ircot_step_max_tokens,
         "max_steps": args.max_steps,
         "model_path": args.model_path,
         "database_path": args.database_path,
@@ -889,7 +994,7 @@ def main() -> None:
     }
 
     # Add RAG corpus if available (for fullwiki setting)
-    if args.method == "rag" and rag_corpus:
+    if args.method in ("rag", "ircot") and rag_corpus:
         agent_kwargs["corpus"] = rag_corpus
         logger.info(f"Added RAG corpus to agent_kwargs: {len(rag_corpus)} documents")
 
