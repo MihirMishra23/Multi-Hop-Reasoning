@@ -378,8 +378,15 @@ def process_single_batch(
             if idx < len(lookup_logs):
                 results[str(metadata["qid"])]["lookup_logs"] = lookup_logs[idx]
             phase1_info = getattr(agent, "_phase1_info", [])
-            if idx < len(phase1_info):
-                results[str(metadata["qid"])]["phase1"] = phase1_info[idx]
+            # In concat_all_db mode, _phase1_info is built once over the full
+            # dataset slice (args.start_index..end_index) and indexed globally.
+            # In per-batch mode, it is rebuilt for each batch and indexed locally.
+            if getattr(agent, "_unified_db", None) is not None:
+                phase1_idx = (batch_number - 1) * args.batch_size + idx
+            else:
+                phase1_idx = idx
+            if phase1_idx < len(phase1_info):
+                results[str(metadata["qid"])]["phase1"] = phase1_info[phase1_idx]
         if args.method == "rag":
             results[str(qid)]["retrieval"] = _compute_retrieval_stats(
                 evidence_docs=evidence_docs,
