@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -64,6 +65,25 @@ def _effective_top_k(top_k: int, document_count: int) -> int:
     evaluator must handle this at the wrapper boundary.
     """
     return max(0, min(int(top_k), int(document_count)))
+
+
+def _search_bm25(retriever: Any, query: str, top_k: int) -> List[Any]:
+    """Search BM25, treating an out-of-vocabulary query as no retrieval.
+
+    The pinned FlashRAG/bm25s stack raises ``ValueError`` when every query
+    token is absent from the index vocabulary.  That is a valid zero-hit
+    retrieval round, especially for model-generated IRCoT queries.  Preserve
+    all other errors so corpus or index failures remain visible.
+    """
+    try:
+        return retriever.search(query=query, num=top_k, return_score=False)
+    except ValueError as exc:
+        if "query_tokens must be a list of list of tokens" not in str(exc):
+            raise
+        logging.getLogger(__name__).warning(
+            "BM25 query contained no indexed tokens; returning no evidence"
+        )
+        return []
 
 
 def _map_results_to_docs(
@@ -159,11 +179,7 @@ class FlashRAGBM25Retriever:
                 "use_reranker": False,
             }
             retriever = BM25Retriever(config=config)
-            results = retriever.search(
-                query=query,
-                num=effective_top_k,
-                return_score=False,
-            )
+            results = _search_bm25(retriever, query, effective_top_k)
 
             # results may be dicts with 'contents' or id integers; normalize to contents strings
             if isinstance(results, list):
@@ -252,11 +268,7 @@ class FlashRAGBM25CorpusRetriever:
         if effective_top_k == 0:
             return []
 
-        results = self._retriever.search(
-            query=query,
-            num=effective_top_k,
-            return_score=False,
-        )
+        results = _search_bm25(self._retriever, query, effective_top_k)
         if isinstance(results, list):
             return _map_results_to_docs(
                 results,

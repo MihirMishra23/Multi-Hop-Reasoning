@@ -71,6 +71,27 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(instance.search_calls, [("question", 2, False)])
         self.assertEqual(result, ["First: text", "Second: text"])
 
+    def test_empty_tokenized_query_is_a_zero_hit_retrieval(self):
+        class EmptyQueryRetriever:
+            def search(self, query, num, return_score):
+                raise ValueError(
+                    "The query_tokens must be a list of list of tokens "
+                    "(str for stemmed words, int for token ids matching corpus)"
+                )
+
+        self.assertEqual(
+            retrieval._search_bm25(EmptyQueryRetriever(), "out of vocab", 4),
+            [],
+        )
+
+    def test_unrelated_bm25_value_error_is_not_suppressed(self):
+        class BrokenRetriever:
+            def search(self, query, num, return_score):
+                raise ValueError("corrupt index")
+
+        with self.assertRaisesRegex(ValueError, "corrupt index"):
+            retrieval._search_bm25(BrokenRetriever(), "question", 4)
+
 
 if __name__ == "__main__":
     unittest.main()
