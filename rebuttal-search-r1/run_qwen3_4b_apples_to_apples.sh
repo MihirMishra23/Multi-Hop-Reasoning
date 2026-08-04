@@ -23,8 +23,8 @@ CONFIG_PATH="${CONFIG_PATH:-${SCRIPT_DIR}/verl_config}"
 TOOL_CONFIG="${TOOL_CONFIG:-${CONFIG_PATH}/tool_config/search_tool_config.yaml}"
 REWARD_PATH="${SCRIPT_DIR}/rewards/hotpotqa_f1.py"
 
-TRAIN_DATA="${SCRIPT_DIR}/data/train_verl.parquet"
-VAL_DATA="${SCRIPT_DIR}/data/test_verl.parquet"
+TRAIN_DATA="${TRAIN_DATA:-${SCRIPT_DIR}/data/train_verl.parquet}"
+VAL_DATA="${VAL_DATA:-${SCRIPT_DIR}/data/test_verl.parquet}"
 
 MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-4B}"
 NUM_GPUS="${NUM_GPUS:-4}"
@@ -51,8 +51,8 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_batch_size=16 \
     data.val_batch_size=100 \
-    data.max_prompt_length=4096 \
-    data.max_response_length=1024 \
+    data.max_prompt_length=1024 \
+    data.max_response_length=2048 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
@@ -61,10 +61,10 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     +actor_rollout_ref.model.override_config.attn_implementation=sdpa \
     actor_rollout_ref.actor.optim.lr=${LR} \
-    actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
+    actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.285 \
     actor_rollout_ref.actor.optim.lr_scheduler_type=cosine \
     actor_rollout_ref.model.use_remove_padding=False \
-    actor_rollout_ref.actor.ppo_mini_batch_size=16 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=8 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.actor.clip_ratio=0.2 \
     actor_rollout_ref.actor.use_kl_loss=True \
@@ -74,7 +74,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    actor_rollout_ref.rollout.max_model_len=4096 \
+    actor_rollout_ref.rollout.max_model_len=3072 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=sglang \
@@ -85,7 +85,9 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.top_k=4 \
     actor_rollout_ref.rollout.temperature=1.0 \
-    actor_rollout_ref.rollout.multi_turn.max_assistant_turns=4 \
+    actor_rollout_ref.rollout.multi_turn.max_assistant_turns=5 \
+    actor_rollout_ref.rollout.multi_turn.max_tool_response_length=1024 \
+    actor_rollout_ref.rollout.multi_turn.tool_response_truncate_side=left \
     actor_rollout_ref.rollout.multi_turn.tool_config_path="${TOOL_CONFIG}" \
     actor_rollout_ref.rollout.agent.default_agent_loop=tool_agent \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
@@ -100,9 +102,10 @@ python3 -m verl.trainer.main_ppo \
     trainer.experiment_name="${EXPERIMENT_NAME}" \
     trainer.n_gpus_per_node="${NUM_GPUS}" \
     trainer.nnodes=1 \
-    trainer.save_freq=100 \
+    trainer.save_freq=50 \
     trainer.test_freq=25 \
     trainer.log_val_generations=10 \
+    trainer.default_local_dir="/share/j_sun/lmlm_multihop/searchr1_checkpoints/${WANDB_PROJECT}/${EXPERIMENT_NAME}" \
     trainer.rollout_data_dir="${SCRIPT_DIR}/outputs/rollouts_${EXPERIMENT_NAME}_${RUN_TAG}" \
     trainer.total_training_steps=500 \
     trainer.total_epochs=10 $@
