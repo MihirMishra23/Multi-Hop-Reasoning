@@ -45,6 +45,19 @@ scripts/account/
 scripts/local/
 
 output/
+outputs/
 
 mlruns/
 core
+
+# Claude Code per-user settings (do not commit)
+.claude/
+
+# Watcher / auto-resume runtime logs
+scripts/watcher_logs/
+
+# rebuttal-search-r1: large / regeneratable artifacts
+rebuttal-search-r1/merged_ckpts/
+rebuttal-search-r1/eval_results/
+rebuttal-search-r1/hallucination_analysis*.json
+
