@@ -197,6 +197,8 @@ for METHOD in "${METHODS[@]}"; do
             --start-index ${START_IDX} \
             --top-k ${TOP_K} \
             --similarity-threshold ${SIMILARITY_THRESHOLD} \
+            --embedding-batch-size ${EMBEDDING_BATCH_SIZE} \
+            --vllm-gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION} \
             ${RETURN_TRIPLETS} \
             ${USE_INVERSES} \
             ${USE_TRAIN_PARAMS} \
