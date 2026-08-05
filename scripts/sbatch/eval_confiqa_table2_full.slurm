@@ -5,11 +5,12 @@
 #SBATCH --job-name=confiqa_t2_full
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=128G
-#SBATCH --time=12:00:00
-#SBATCH --partition=default_partition
-#SBATCH --gres=gpu:nvidia_b200:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=08:00:00
+#SBATCH --partition=gpu-interactive
+#SBATCH --nodelist=awang-compute-01,kim-compute-03,kim-compute-04,kim-compute-05,nlplarge-compute-01
+#SBATCH --gres=gpu:1
 #SBATCH --requeue
 #SBATCH --output=/home/rtn27/slurm_output/%x_%j.out
 #SBATCH --error=/home/rtn27/slurm_output/%x_%j.err
@@ -65,7 +66,9 @@ elif [[ "${MODE}" == "searchr1" ]]; then
         --output-dir "${WORK_DIR}"
     "${PYTHON}" rebuttal-search-r1/build_retrieval_index.py \
         --corpus "${WORK_DIR}/corpus.jsonl" \
-        --output "${WORK_DIR}/e5_Flat.index"
+        --output "${WORK_DIR}/e5_Flat.index" \
+        --batch-size 128 \
+        --device cuda
     "${PYTHON}" rebuttal-search-r1/eval_search_r1_qwen25.py \
         --model-path "${MODEL_PATH}" \
         --confiqa-setting "${CONFIQA_SETTING}" \
@@ -73,6 +76,7 @@ elif [[ "${MODE}" == "searchr1" ]]; then
         --seed "${SEED}" \
         --retrieval-corpus "${WORK_DIR}/corpus.jsonl" \
         --retrieval-index "${WORK_DIR}/e5_Flat.index" \
+        --retriever-device cuda \
         --output "${WORK_DIR}/results.json"
 else
     echo "Unsupported MODE=${MODE}" >&2
