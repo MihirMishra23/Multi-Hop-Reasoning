@@ -17,6 +17,7 @@ The JSON format uses deduplicated metadata at the top level:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -133,6 +134,14 @@ def _get_git_commit() -> str | None:
         ).strip()
     except Exception:
         return None
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _load_training_config(model_path: str) -> dict:
@@ -530,6 +539,8 @@ def save_results_to_file(
             "prompt_sha256": getattr(args, "ircot_prompt_sha256", None),
             "retriever_url": args.ircot_retriever_url,
             "corpus_name": OFFICIAL_CORPUS_NAMES.get(args.dataset),
+            "index_manifest": args.ircot_index_manifest,
+            "index_manifest_sha256": getattr(args, "ircot_index_manifest_sha256", None),
             "official_repository": OFFICIAL_IRCOT_URL,
             "official_commit": OFFICIAL_IRCOT_COMMIT,
         }
@@ -686,6 +697,11 @@ def main() -> None:
         help="Official IRCoT retrieval service root or /retrieve endpoint",
     )
     parser.add_argument(
+        "--ircot-index-manifest",
+        default=None,
+        help="Versioned JSON manifest for the corpus/index served by --ircot-retriever-url",
+    )
+    parser.add_argument(
         "--debug-evidence",
         action="store_true",
         help="Include retrieved evidence in saved preds for debugging",
@@ -783,6 +799,12 @@ def main() -> None:
                 f"Missing official IRCoT prompt {args.ircot_prompt_file}; "
                 "run scripts/fetch_ircot_assets.py"
             )
+        if args.ircot_index_manifest:
+            if not os.path.isfile(args.ircot_index_manifest):
+                raise FileNotFoundError(
+                    f"IRCoT index manifest does not exist: {args.ircot_index_manifest}"
+                )
+            args.ircot_index_manifest_sha256 = _sha256_file(args.ircot_index_manifest)
     if args.embedding_batch_size <= 0:
         raise ValueError("--embedding-batch-size must be positive")
     if not 0.0 < args.vllm_gpu_memory_utilization <= 1.0:

@@ -49,6 +49,7 @@ python src/eval_multihop.py \
   --batch-size 1 \
   --total-count 2 \
   --ircot-retriever-url http://RETRIEVER_HOST:8000 \
+  --ircot-index-manifest provenance/ircot/hotpotqa_index.json \
   --ircot-retrieval-k 6 \
   --ircot-distractor-count 2 \
   --ircot-max-evidence 15 \
@@ -63,6 +64,12 @@ set, then record the selected values for the held-out evaluation. The saved
 JSON records the prompt hash, upstream commit, model revision, retrieval
 service URL, corpus name, raw prompts/responses, and cumulative retrieval
 traces.
+
+`--ircot-index-manifest` is optional for a control-flow smoke test, but required
+for any reportable run. The manifest should record the raw corpus URL/version,
+license, file SHA-256 values, preprocessing/index command, Elasticsearch
+version and settings, final index document count, and a content hash or hashes
+for the archived index. Its own SHA-256 is stored in every prediction file.
 
 ## Faithfulness boundary
 
