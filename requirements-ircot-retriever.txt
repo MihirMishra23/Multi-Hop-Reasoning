@@ -3,6 +3,7 @@
 # bound required by its Elasticsearch 7.x client.
 elasticsearch==7.9.1
 urllib3<2
+numpy<2
 dill
 base58
 beautifulsoup4
