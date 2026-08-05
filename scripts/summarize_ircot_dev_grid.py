@@ -44,6 +44,18 @@ def main() -> None:
             continue
         if len(results) != args.expected_count:
             continue
+        trace_errors = [
+            (qid, step.get("error"))
+            for qid, result in results.items()
+            for step in (result.get("trace") or [])
+            if step.get("error")
+        ]
+        if trace_errors:
+            qid, error = trace_errors[0]
+            raise SystemExit(
+                f"Invalid IRCoT artifact {path}: {len(trace_errors)} trace errors; "
+                f"first error for {qid}: {error}"
+            )
         metrics = evaluate_predictions(results.values())
         rows.append(
             {
@@ -70,12 +82,27 @@ def main() -> None:
         grouped.setdefault((row["dataset"], row["model"]), []).append(row)
 
     expected_grid = {(k, distractors) for k in (2, 4, 6, 8) for distractors in (1, 2, 3)}
+    expected_groups = {
+        (dataset, model)
+        for dataset in ("hotpotqa", "2wiki", "musique")
+        for model in ("qwen3-1.7b", "qwen3-4b")
+    }
+    observed_groups = set(grouped)
+    if observed_groups != expected_groups:
+        missing = sorted(expected_groups - observed_groups)
+        extra = sorted(observed_groups - expected_groups)
+        raise SystemExit(f"Incomplete grid groups; missing={missing}, extra={extra}")
     best = []
     for (dataset, model), group in sorted(grouped.items()):
         observed = {(row["retrieval_k"], row["distractor_count"]) for row in group}
         if observed != expected_grid:
             missing = sorted(expected_grid - observed)
             raise SystemExit(f"Incomplete grid for {dataset}/{model}; missing {missing}")
+        if len(group) != len(expected_grid):
+            raise SystemExit(
+                f"Duplicate completed cells for {dataset}/{model}: "
+                f"expected {len(expected_grid)}, found {len(group)}"
+            )
         # Upstream rounds F1 percentage to one decimal before comparing, then
         # iterates k first and distractor count second and replaces the current
         # best only on a strict increase.

@@ -14,6 +14,9 @@
 
 set -euo pipefail
 
+# The launcher overrides the default constraint for Qwen3-4B so that the
+# longest official prompts run on >=48 GiB Ampere devices.
+
 : "${DATASET:?Set DATASET to hotpotqa, 2wiki, or musique}"
 : "${MODEL:?Set MODEL to qwen3-1.7b or qwen3-4b}"
 : "${IRCOT_RETRIEVER_URL:?Set IRCOT_RETRIEVER_URL}"

@@ -97,6 +97,12 @@ python scripts/summarize_ircot_dev_grid.py /path/to/predictions/dev_grid \
   --output /path/to/dev_grid_summary.json
 ```
 
+The launcher requests `gpu-mid` for Qwen3-1.7B and 48 GiB-or-larger Ampere
+`gpu-high` devices for Qwen3-4B. The longer MuSiQue prompts can exhaust a
+24 GiB device with Qwen3-4B. The summary command refuses completed artifacts
+that contain any generation trace error, as well as missing or duplicate grid
+cells, so an OOM cannot silently become a reported score.
+
 ## Faithfulness boundary
 
 The evaluator preserves the released prompt reader and 8,000-token fitting
