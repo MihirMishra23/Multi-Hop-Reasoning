@@ -33,7 +33,7 @@ DATASET=hotpotqa-v2
 MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-184
 # MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
 RETRIEVAL_THRESHOLD=0.6
-TOP_K=4
+RETRIEVAL_TOP_K=4
 NUM_GENERATIONS=32
 NUM_DB_ROLLOUTS=4
 
@@ -98,7 +98,7 @@ ${USE_CHAT_TEMPLATE} \
 ${TWO_PHASE} \
 ${DEBUG} \
 --retrieval_threshold ${RETRIEVAL_THRESHOLD} \
---top_k ${TOP_K} \
+--retrieval_top_k ${RETRIEVAL_TOP_K} \
 --num_generations ${NUM_GENERATIONS} \
 --num_db_rollouts ${NUM_DB_ROLLOUTS}
 

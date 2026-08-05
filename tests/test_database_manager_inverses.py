@@ -26,11 +26,32 @@ class FakeSentenceTransformer:
 
 
 class FakeTopkRetriever:
-    def __init__(self, database, *args, **kwargs):
+    def __init__(
+        self,
+        database,
+        model_name=None,
+        top_k=5,
+        adaptive=False,
+        threshold=0.6,
+        *args,
+        **kwargs,
+    ):
         self.database = list(database)
+        self.top_k = top_k
+        self.is_adaptive = adaptive
         self.precomputed_embeddings = kwargs.get("precomputed_embeddings")
         self.use_inverses = kwargs.get("use_inverses")
-        self.default_threshold = kwargs.get("threshold", 0.6)
+        self.default_threshold = threshold
+
+    def retrieve_top_k(self, entity, relationship, threshold=None, return_triplets=False):
+        matches = [
+            triplet
+            for triplet in self.database
+            if triplet[0] == entity and triplet[1] == relationship
+        ][: self.top_k]
+        if return_triplets:
+            return [f"({entity}, {relationship}, {value})" for _, _, value in matches]
+        return [value for _, _, value in matches]
 
     @staticmethod
     def _normalize_text(text):
@@ -123,6 +144,9 @@ class InverseTripletTests(unittest.TestCase):
                 [("Alice", "parent", "Bob")],
                 [("Paris", "country", "France")],
             ],
+            top_k=3,
+            default_threshold=0.25,
+            adaptive=True,
             use_inverses=True,
         )
 
@@ -141,6 +165,17 @@ class InverseTripletTests(unittest.TestCase):
         np.testing.assert_array_equal(
             managers[1].topk_retriever.precomputed_embeddings,
             np.array([[4, 5], [6, 7]], dtype=np.float32),
+        )
+        self.assertTrue(all(manager.topk_retriever.top_k == 3 for manager in managers))
+        self.assertTrue(
+            all(manager.topk_retriever.default_threshold == 0.25 for manager in managers)
+        )
+        self.assertTrue(all(manager.topk_retriever.is_adaptive for manager in managers))
+        self.assertEqual(
+            managers[0].retrieve_from_database(
+                "<|db_entity|>Bob<|db_relationship|>parent<|db_return|>"
+            ),
+            ["Alice"],
         )
 
     def test_empty_batch_does_not_initialize_a_retriever(self):
@@ -194,7 +229,13 @@ class InverseTripletTests(unittest.TestCase):
             database_path.write_text(json.dumps(data))
             manager = database_manager.DatabaseManager()
 
-            manager.load_database(str(database_path), use_inverses=True)
+            manager.load_database(
+                str(database_path),
+                top_k=7,
+                default_threshold=0.25,
+                adaptive=True,
+                use_inverses=True,
+            )
 
         self.assertEqual(
             manager.database["triplets"],
@@ -202,7 +243,16 @@ class InverseTripletTests(unittest.TestCase):
         )
         self.assertEqual(manager.database["entities"], {"Alice", "Bob"})
         self.assertEqual(manager.database["return_values"], {"Alice", "Bob"})
+        self.assertEqual(manager.topk_retriever.top_k, 7)
+        self.assertEqual(manager.topk_retriever.default_threshold, 0.25)
+        self.assertTrue(manager.topk_retriever.is_adaptive)
         self.assertFalse(manager.topk_retriever.use_inverses)
+        self.assertEqual(
+            manager.retrieve_from_database(
+                "<|db_entity|>Bob<|db_relationship|>parent<|db_return|>"
+            ),
+            ["Alice"],
+        )
 
 
 if __name__ == "__main__":

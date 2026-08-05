@@ -423,6 +423,10 @@ class LMLMGRPOTrainer(BaseTrainer):
         curriculum_schedule: dict | None = None,
     ):
         self.retrieval_top_k = retrieval_top_k
+        if self.retrieval_top_k < 1:
+            raise ValueError(
+                f"retrieval_top_k must be at least 1, got {self.retrieval_top_k}"
+            )
         self.use_chat_template = use_chat_template
         #LMLM db initialization
         self.retrieval_threshold = retrieval_threshold
@@ -471,7 +475,13 @@ class LMLMGRPOTrainer(BaseTrainer):
                 logger.info("No Phase 2 prompt template for '%s'; using bare QA prompt", phase1_prompt_type)
         else:
             self.db = DatabaseManager()
-            self.db.load_database(lmlm_database_path, adaptive= adaptive_k, use_inverses = use_inverses)
+            self.db.load_database(
+                lmlm_database_path,
+                top_k=self.retrieval_top_k,
+                default_threshold=self.retrieval_threshold,
+                adaptive=self.adaptive_k,
+                use_inverses=self.use_inverses,
+            )
 
         # Args
         if args is None:
