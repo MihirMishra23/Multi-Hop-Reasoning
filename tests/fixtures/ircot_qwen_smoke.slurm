@@ -8,8 +8,8 @@
 #SBATCH --mem=64G
 #SBATCH --time=01:00:00
 #SBATCH --partition=default_partition
-#SBATCH --nodelist=unicorn-compute-[01-02]
-#SBATCH --gres=gpu:nvidia_a40:1
+#SBATCH --nodelist=unicorn-compute-03
+#SBATCH --gres=gpu:1
 #SBATCH --output=/home/rtn27/ircot_qwen_smoke_%j.out
 #SBATCH --error=/home/rtn27/ircot_qwen_smoke_%j.err
 
