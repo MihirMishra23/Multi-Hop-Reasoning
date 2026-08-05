@@ -9,6 +9,7 @@
 #SBATCH --time=01:00:00
 #SBATCH --partition=default_partition
 #SBATCH --gres=gpu:1
+#SBATCH --constraint=gpu-mid
 #SBATCH --output=/home/rtn27/ircot_official_smoke_%j.out
 #SBATCH --error=/home/rtn27/ircot_official_smoke_%j.err
 
