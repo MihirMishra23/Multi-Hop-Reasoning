@@ -9,6 +9,7 @@
 #SBATCH --partition=default_partition
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=gpu-mid
+#SBATCH --requeue
 #SBATCH --output=/home/rtn27/ircot_dev_%x_%j.out
 #SBATCH --error=/home/rtn27/ircot_dev_%x_%j.err
 
