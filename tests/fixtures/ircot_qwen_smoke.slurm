@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=64G
+#SBATCH --mem=30G
 #SBATCH --time=01:00:00
 #SBATCH --partition=default_partition
 #SBATCH --nodelist=unicorn-compute-03
