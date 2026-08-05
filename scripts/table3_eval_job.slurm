@@ -78,6 +78,16 @@ else
     EXTRA_ARGS=()
 fi
 
+if [[ "${METHOD}" == "ircot" ]]; then
+    : "${IRCOT_RETRIEVER_URL:?Set IRCOT_RETRIEVER_URL to the official retrieval service}"
+    IRCOT_EXTRA_ARGS=(
+        --ircot-retriever-url "${IRCOT_RETRIEVER_URL}"
+        --ircot-prompt-dir "${IRCOT_PROMPT_DIR:-provenance/ircot/prompts}"
+    )
+else
+    IRCOT_EXTRA_ARGS=()
+fi
+
 echo "code_commit=$(git rev-parse HEAD)"
 echo "method=${METHOD} model_key=${MODEL_KEY} dataset=${DATASET} num_samples=${NUM_SAMPLES}"
 echo "model_path=${MODEL_PATH} llm_model=${LLM_MODEL} run_tag=${RUN_TAG}"
@@ -98,6 +108,8 @@ bash scripts/eval_lmlm_multihop.sh \
     --vllm-gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION:-0.6}" \
     --ircot-retrieval-k 6 \
     --ircot-max-evidence 15 \
-    --ircot-max-steps 8 \
-    --ircot-step-max-tokens 96 \
+    --ircot-max-steps 10 \
+    --ircot-generator-max-tokens 300 \
+    --ircot-distractor-count "${IRCOT_DISTRACTOR_COUNT:-2}" \
+    "${IRCOT_EXTRA_ARGS[@]}" \
     "${EXTRA_ARGS[@]}"

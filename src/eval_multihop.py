@@ -42,7 +42,11 @@ from data import get_dataset
 from data.hotpotqa import load_hotpotqa_rag_corpus
 from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
 from multi_lmlm.database.database_manager import build_databases_from_triplets_batch
-from agent.ircot_agent import OFFICIAL_IRCOT_COMMIT, OFFICIAL_IRCOT_URL
+from agent.ircot_agent import (
+    OFFICIAL_CORPUS_NAMES,
+    OFFICIAL_IRCOT_COMMIT,
+    OFFICIAL_IRCOT_URL,
+)
 
 # Import for TriviaQA sentence splitting
 from nltk.tokenize import PunktSentenceTokenizer
@@ -390,6 +394,7 @@ def process_single_batch(
             {
                 "prompt": step.prompt,
                 "answer": step.answer,
+                "raw_response": step.raw_response,
                 "action": step.action,
                 "error": step.error,
                 "tool_name": step.tool_name,
@@ -507,16 +512,24 @@ def save_results_to_file(
     # Add retrieval metadata for text retrieval methods.
     if args.method in ("rag", "ircot"):
         output["metadata"]["retrieval"] = {
-            "backend": args.retrieval,
+            "backend": "official_elasticsearch_bm25" if args.method == "ircot" else args.retrieval,
             "scope": args.rag_scope,
-            "corpus_path": args.rag_corpus_path,
+            "corpus_path": None if args.method == "ircot" else args.rag_corpus_path,
             "k": args.rag_k if args.method == "rag" else args.ircot_retrieval_k,
         }
     if args.method == "ircot":
         output["metadata"]["ircot"] = {
-            "max_steps": args.max_steps,
+            "implementation": "faithful_port_with_model_substitution",
+            "model_substitution": args.resolved_model_id,
+            "prompt_transport": "raw_completion",
+            "max_steps": args.ircot_max_steps,
             "max_evidence": args.ircot_max_evidence,
-            "step_max_tokens": args.ircot_step_max_tokens,
+            "generator_max_tokens": args.ircot_generator_max_tokens,
+            "distractor_count": args.ircot_distractor_count,
+            "prompt_file": args.ircot_prompt_file,
+            "prompt_sha256": getattr(args, "ircot_prompt_sha256", None),
+            "retriever_url": args.ircot_retriever_url,
+            "corpus_name": OFFICIAL_CORPUS_NAMES.get(args.dataset),
             "official_repository": OFFICIAL_IRCOT_URL,
             "official_commit": OFFICIAL_IRCOT_COMMIT,
         }
@@ -642,10 +655,35 @@ def main() -> None:
         help="Maximum cumulative IRCoT evidence paragraphs (official default: 15)",
     )
     parser.add_argument(
-        "--ircot-step-max-tokens",
+        "--ircot-max-steps",
         type=int,
-        default=96,
-        help="Maximum tokens for each sentence-level IRCoT reasoning step",
+        default=10,
+        help="Maximum sentence-level reasoning generations (official default: 10)",
+    )
+    parser.add_argument(
+        "--ircot-generator-max-tokens",
+        "--ircot-step-max-tokens",
+        dest="ircot_generator_max_tokens",
+        type=int,
+        default=300,
+        help="Generation budget for reasoning and final reader calls (official default: 300)",
+    )
+    parser.add_argument(
+        "--ircot-distractor-count",
+        type=int,
+        choices=[1, 2, 3],
+        default=2,
+        help="Released IRCoT prompt variant; this is a tuned hyperparameter",
+    )
+    parser.add_argument(
+        "--ircot-prompt-dir",
+        default=os.path.join(REPO_ROOT, "provenance", "ircot", "prompts"),
+        help="Root containing checksum-verified prompts from scripts/fetch_ircot_assets.py",
+    )
+    parser.add_argument(
+        "--ircot-retriever-url",
+        default=None,
+        help="Official IRCoT retrieval service root or /retrieve endpoint",
     )
     parser.add_argument(
         "--debug-evidence",
@@ -726,6 +764,25 @@ def main() -> None:
 
     if args.method == "ircot" and args.batch_size != 1:
         raise ValueError("--method=ircot requires --batch-size=1")
+    if args.method == "ircot":
+        if args.dataset not in OFFICIAL_CORPUS_NAMES:
+            raise ValueError("Faithful IRCoT supports --dataset hotpotqa, 2wiki, or musique")
+        if not args.ircot_retriever_url:
+            raise ValueError(
+                "Faithful IRCoT requires --ircot-retriever-url pointing to the official "
+                "Elasticsearch retrieval service"
+            )
+        prompt_dataset = "2wikimultihopqa" if args.dataset == "2wiki" else args.dataset
+        args.ircot_prompt_file = os.path.join(
+            args.ircot_prompt_dir,
+            prompt_dataset,
+            f"gold_with_{args.ircot_distractor_count}_distractors_context_cot_qa_codex.txt",
+        )
+        if not os.path.isfile(args.ircot_prompt_file):
+            raise FileNotFoundError(
+                f"Missing official IRCoT prompt {args.ircot_prompt_file}; "
+                "run scripts/fetch_ircot_assets.py"
+            )
     if args.embedding_batch_size <= 0:
         raise ValueError("--embedding-batch-size must be positive")
     if not 0.0 < args.vllm_gpu_memory_utilization <= 1.0:
@@ -791,13 +848,13 @@ def main() -> None:
     }
 
     if (
-        args.method in ("rag", "ircot")
+        args.method == "rag"
         and args.dataset == "hotpotqa"
         and args.setting == "fullwiki"
         and not args.rag_corpus_path
     ):
         args.rag_corpus_path = DEFAULT_FULLWIKI_CORPUS_PATH
-    if args.method in ("rag", "ircot") and args.dataset == "musique" and not args.rag_corpus_path:
+    if args.method == "rag" and args.dataset == "musique" and not args.rag_corpus_path:
         args.rag_corpus_path = f"hf:{args.split}"
         logger.info(
             "MuSiQue RAG requires a global corpus; defaulting to %s",
@@ -808,7 +865,7 @@ def main() -> None:
     rag_corpus_path = args.rag_corpus_path
     rag_scope = None
     if (
-        args.method in ("rag", "ircot")
+        args.method == "rag"
         and args.dataset == "musique"
         and isinstance(rag_corpus_path, str)
         and rag_corpus_path.startswith("hf:")
@@ -843,7 +900,7 @@ def main() -> None:
                 logger.info("Wrote %d unique RAG paragraphs to %s", count, rag_corpus_path)
         rag_scope = f"hf_{hf_split}"
 
-    if args.method in ("rag", "ircot") and rag_corpus_path:
+    if args.method == "rag" and rag_corpus_path:
         logger.info("Loading RAG corpus from %s", rag_corpus_path)
         if args.dataset == "hotpotqa":
             rag_corpus = load_hotpotqa_rag_corpus(rag_corpus_path)
@@ -866,8 +923,10 @@ def main() -> None:
             )
 
     if rag_scope is None:
-        if args.method in ("rag", "ircot") and rag_corpus_path:
+        if args.method == "rag" and rag_corpus_path:
             rag_scope = _infer_rag_scope(rag_corpus_path)
+        elif args.method == "ircot":
+            rag_scope = f"official_{OFFICIAL_CORPUS_NAMES[args.dataset]}_index"
         else:
             rag_scope = args.setting
     args.rag_scope = rag_scope
@@ -944,8 +1003,8 @@ def main() -> None:
             retrieval_suffix = f"_k{args.rag_k}"
         elif args.method == "ircot":
             retrieval_suffix = (
-                f"_k{args.ircot_retrieval_k}_steps{args.max_steps}"
-                f"_evidence{args.ircot_max_evidence}"
+                f"_k{args.ircot_retrieval_k}_steps{args.ircot_max_steps}"
+                f"_evidence{args.ircot_max_evidence}_prompt{args.ircot_distractor_count}"
             )
         version = args.save_version or ""
         save_postfix = (
@@ -1029,8 +1088,11 @@ def main() -> None:
         "rag_k": args.rag_k,
         "ircot_retrieval_k": args.ircot_retrieval_k,
         "ircot_max_evidence": args.ircot_max_evidence,
-        "ircot_step_max_tokens": args.ircot_step_max_tokens,
-        "max_steps": args.max_steps,
+        "ircot_max_steps": args.ircot_max_steps,
+        "ircot_generator_max_tokens": args.ircot_generator_max_tokens,
+        "ircot_prompt_file": getattr(args, "ircot_prompt_file", None),
+        "ircot_retriever_url": args.ircot_retriever_url,
+        "max_steps": args.ircot_max_steps if args.method == "ircot" else args.max_steps,
         "model_path": args.model_path,
         "database_path": args.database_path,
         "return_triplets" : args.return_triplets,
@@ -1045,7 +1107,7 @@ def main() -> None:
     }
 
     # Add RAG corpus if available (for fullwiki setting)
-    if args.method in ("rag", "ircot") and rag_corpus:
+    if args.method == "rag" and rag_corpus:
         agent_kwargs["corpus"] = rag_corpus
         logger.info(f"Added RAG corpus to agent_kwargs: {len(rag_corpus)} documents")
 
@@ -1053,6 +1115,8 @@ def main() -> None:
 
     # Get agent instance using factory function
     agent: Agent = get_agent(method=args.method, agent_kwargs=agent_kwargs)
+    if args.method == "ircot":
+        args.ircot_prompt_sha256 = getattr(agent, "prompt_sha256", None)
 
     # Build unified database if concat_all_db is enabled (two_phase only)
     unified_db_path = None

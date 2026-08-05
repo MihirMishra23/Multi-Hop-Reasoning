@@ -59,13 +59,16 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
             retrieval = agent_kwargs.get("retrieval", "bm25")
             if retrieval != "bm25":
                 raise NotImplementedError("Only --retrieval bm25 is supported currently.")
-            agent = IRCoTAgent(
-                **agent_kwargs,
-                retriever_type=retrieval,
+            ircot_kwargs = dict(agent_kwargs)
+            ircot_kwargs.update(
                 retrieval_k=agent_kwargs.get("ircot_retrieval_k", 6),
                 max_evidence=agent_kwargs.get("ircot_max_evidence", 15),
-                step_max_tokens=agent_kwargs.get("ircot_step_max_tokens", 96),
+                max_steps=agent_kwargs.get("ircot_max_steps", 10),
+                generator_max_tokens=agent_kwargs.get("ircot_generator_max_tokens", 300),
+                prompt_file=agent_kwargs["ircot_prompt_file"],
+                retriever_url=agent_kwargs["ircot_retriever_url"],
             )
+            agent = IRCoTAgent(**ircot_kwargs)
         case "lmlm":
             # Extract parameters
             model_path = agent_kwargs.get("model_path")

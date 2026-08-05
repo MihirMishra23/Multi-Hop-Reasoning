@@ -23,9 +23,14 @@ KBEVO_MODELS=(kbevo-sft-1.7b kbevo-grpo-1.7b kbevo-sft-4b kbevo-grpo-4b)
 submit() {
     local method="$1" model_key="$2" dataset="$3"
     local job_name="t3_${MODE}_${method}_${model_key}_${dataset}"
+    local ircot_exports=""
+    if [[ "${method}" == "ircot" ]]; then
+        : "${IRCOT_RETRIEVER_URL:?Set IRCOT_RETRIEVER_URL before launching IRCoT}"
+        ircot_exports=",IRCOT_RETRIEVER_URL=${IRCOT_RETRIEVER_URL},IRCOT_PROMPT_DIR=${IRCOT_PROMPT_DIR:-provenance/ircot/prompts},IRCOT_DISTRACTOR_COUNT=${IRCOT_DISTRACTOR_COUNT:-2}"
+    fi
     "${SBATCH_BIN}" \
         --job-name "${job_name:0:120}" \
-        --export="ALL,METHOD=${method},MODEL_KEY=${model_key},DATASET=${dataset},NUM_SAMPLES=${NUM_SAMPLES},RUN_TAG=${RUN_TAG},OUTPUT_DIR=${OUTPUT_DIR}" \
+        --export="ALL,METHOD=${method},MODEL_KEY=${model_key},DATASET=${dataset},NUM_SAMPLES=${NUM_SAMPLES},RUN_TAG=${RUN_TAG},OUTPUT_DIR=${OUTPUT_DIR}${ircot_exports}" \
         scripts/table3_eval_job.slurm
 }
 
@@ -34,9 +39,11 @@ for dataset in "${DATASETS[@]}"; do
         submit two_phase "${model_key}" "${dataset}"
     done
     for method in "${BASELINE_METHODS[@]}"; do
+        if [[ "${method}" == "ircot" && "${dataset}" == "popqa" ]]; then
+            continue
+        fi
         for model_key in "${BASELINE_MODELS[@]}"; do
             submit "${method}" "${model_key}" "${dataset}"
         done
     done
 done
-

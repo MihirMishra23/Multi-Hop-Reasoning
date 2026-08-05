@@ -25,8 +25,11 @@ EMBEDDING_BATCH_SIZE=2048
 VLLM_GPU_MEMORY_UTILIZATION=0.6
 IRCOT_RETRIEVAL_K=6
 IRCOT_MAX_EVIDENCE=15
-IRCOT_MAX_STEPS=8
-IRCOT_STEP_MAX_TOKENS=96
+IRCOT_MAX_STEPS=10
+IRCOT_GENERATOR_MAX_TOKENS=300
+IRCOT_DISTRACTOR_COUNT=2
+IRCOT_PROMPT_DIR="${IRCOT_PROMPT_DIR:-provenance/ircot/prompts}"
+IRCOT_RETRIEVER_URL="${IRCOT_RETRIEVER_URL:-}"
 METHODS=("lmlm")
 OUTPUT_DIR=./output/main_tables
 SETTING=${SETTING:-distractor}
@@ -53,7 +56,10 @@ while [[ $# -gt 0 ]]; do
         --ircot-retrieval-k) IRCOT_RETRIEVAL_K="$2"; shift 2 ;;
         --ircot-max-evidence) IRCOT_MAX_EVIDENCE="$2"; shift 2 ;;
         --ircot-max-steps) IRCOT_MAX_STEPS="$2"; shift 2 ;;
-        --ircot-step-max-tokens) IRCOT_STEP_MAX_TOKENS="$2"; shift 2 ;;
+        --ircot-generator-max-tokens|--ircot-step-max-tokens) IRCOT_GENERATOR_MAX_TOKENS="$2"; shift 2 ;;
+        --ircot-distractor-count) IRCOT_DISTRACTOR_COUNT="$2"; shift 2 ;;
+        --ircot-prompt-dir) IRCOT_PROMPT_DIR="$2"; shift 2 ;;
+        --ircot-retriever-url) IRCOT_RETRIEVER_URL="$2"; shift 2 ;;
         --save_version)     SAVE_VERSION="$2";      shift 2 ;;
         --output-dir)       OUTPUT_DIR="$2";        shift 2 ;;
         --setting)          SETTING="$2";          shift 2 ;;
@@ -233,8 +239,11 @@ for METHOD in "${METHODS[@]}"; do
             --rag-k ${TOP_K} \
             --ircot-retrieval-k ${IRCOT_RETRIEVAL_K} \
             --ircot-max-evidence ${IRCOT_MAX_EVIDENCE} \
-            --ircot-step-max-tokens ${IRCOT_STEP_MAX_TOKENS} \
-            --max-steps ${IRCOT_MAX_STEPS} \
+            --ircot-max-steps ${IRCOT_MAX_STEPS} \
+            --ircot-generator-max-tokens ${IRCOT_GENERATOR_MAX_TOKENS} \
+            --ircot-distractor-count ${IRCOT_DISTRACTOR_COUNT} \
+            --ircot-prompt-dir "${IRCOT_PROMPT_DIR}" \
+            --ircot-retriever-url "${IRCOT_RETRIEVER_URL}" \
             --save-version "_${SAVE_VERSION}" \
             --eval \
             --resume

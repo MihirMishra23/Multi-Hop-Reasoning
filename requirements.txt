@@ -7,3 +7,6 @@ transformers>=4.30.0
 torch>=2.0.0
 sentence-transformers>=5.1.2
 google-genai
+rapidfuzz
+requests
+spacy
