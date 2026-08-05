@@ -27,6 +27,7 @@ class QwenLLM(LLM):
         device: Optional[str] = None,
         device_map: Optional[str] = None,
         dtype: Optional[str] = None,
+        revision: Optional[str] = None,
     ):
         super().__init__(model_name=model_name, timeout_s=timeout_s, max_retries=max_retries)
 
@@ -38,6 +39,7 @@ class QwenLLM(LLM):
                 f"Supported models: {list(MODEL_MAP.keys())}"
             )
         self.hf_model_id = hf_model_id
+        self.requested_revision = revision
 
         # Device configuration
         if device is None:
@@ -63,6 +65,7 @@ class QwenLLM(LLM):
         self.tokenizer = AutoTokenizer.from_pretrained(
             hf_model_id,
             trust_remote_code=True,
+            revision=revision,
         )
 
         # Load model
@@ -79,6 +82,7 @@ class QwenLLM(LLM):
 
         self.model = AutoModelForCausalLM.from_pretrained(
             hf_model_id,
+            revision=revision,
             **model_kwargs,
         )
         self.model.eval()  # Set to evaluation mode

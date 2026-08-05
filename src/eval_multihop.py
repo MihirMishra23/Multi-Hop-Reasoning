@@ -40,6 +40,7 @@ import torch
 from agent import get_agent, Agent
 from llm import get_llm
 from data import get_dataset
+from data.ircot_official import load_ircot_official_evaluation
 from data.hotpotqa import load_hotpotqa_rag_corpus
 from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
 from multi_lmlm.database.database_manager import build_databases_from_triplets_batch
@@ -315,6 +316,7 @@ def process_single_batch(
             "qid": qid,
             "question": question,
             "answers": ex["answers"],
+            "answer_objects": ex.get("answer_objects"),
             "supporting_facts": ex.get("supporting_facts"),
             "contexts": contexts,
         }
@@ -420,6 +422,8 @@ def process_single_batch(
             "question": metadata["question"],
             "trace": serialized_trace,
         }
+        if metadata.get("answer_objects") is not None:
+            results[str(metadata["qid"])]["gold_answer_objects"] = metadata["answer_objects"]
         # For MQuAKE, also save new_gold_answer and split type for knowledge editing evaluation
         if "new_answers" in metadata:
             results[str(metadata["qid"])]["new_gold_answer"] = metadata["new_answers"]
@@ -534,13 +538,18 @@ def save_results_to_file(
             "max_steps": args.ircot_max_steps,
             "max_evidence": args.ircot_max_evidence,
             "generator_max_tokens": args.ircot_generator_max_tokens,
+            "retrieval_k": args.ircot_retrieval_k,
             "distractor_count": args.ircot_distractor_count,
+            "prompt_set": args.ircot_prompt_set,
             "prompt_file": args.ircot_prompt_file,
             "prompt_sha256": getattr(args, "ircot_prompt_sha256", None),
             "retriever_url": args.ircot_retriever_url,
             "corpus_name": OFFICIAL_CORPUS_NAMES.get(args.dataset),
             "index_manifest": args.ircot_index_manifest,
             "index_manifest_sha256": getattr(args, "ircot_index_manifest_sha256", None),
+            "evaluation_file": args.ircot_evaluation_file,
+            "evaluation_file_sha256": getattr(args, "ircot_evaluation_file_sha256", None),
+            "evaluation_ids_sha256": getattr(args, "ircot_evaluation_ids_sha256", None),
             "official_repository": OFFICIAL_IRCOT_URL,
             "official_commit": OFFICIAL_IRCOT_COMMIT,
         }
@@ -687,6 +696,12 @@ def main() -> None:
         help="Released IRCoT prompt variant; this is a tuned hyperparameter",
     )
     parser.add_argument(
+        "--ircot-prompt-set",
+        choices=["1", "2", "3"],
+        default="1",
+        help="Released IRCoT demonstration set (paper development tuning uses set 1)",
+    )
+    parser.add_argument(
         "--ircot-prompt-dir",
         default=os.path.join(REPO_ROOT, "provenance", "ircot", "prompts"),
         help="Root containing checksum-verified prompts from scripts/fetch_ircot_assets.py",
@@ -700,6 +715,11 @@ def main() -> None:
         "--ircot-index-manifest",
         default=None,
         help="Versioned JSON manifest for the corpus/index served by --ircot-retriever-url",
+    )
+    parser.add_argument(
+        "--ircot-evaluation-file",
+        default=None,
+        help="Exact released IRCoT dev/test subsample JSONL; row order is preserved",
     )
     parser.add_argument(
         "--debug-evidence",
@@ -719,6 +739,11 @@ def main() -> None:
                         help="vLLM max model length for two_phase (default 8192 > training 4096 to handle multi-turn context growth)")
 
     parser.add_argument("--model", default=None, help="LLM model name")
+    parser.add_argument(
+        "--model-revision",
+        default=None,
+        help="Optional immutable Hugging Face model revision for local model adapters",
+    )
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature (two_phase greedy default; overridden by --use-train-params)")
     parser.add_argument("--max-tokens", type=int, default=1024, help="Max completion tokens (two_phase greedy default; overridden by --use-train-params)")
     parser.add_argument(
@@ -805,6 +830,12 @@ def main() -> None:
                     f"IRCoT index manifest does not exist: {args.ircot_index_manifest}"
                 )
             args.ircot_index_manifest_sha256 = _sha256_file(args.ircot_index_manifest)
+        if args.ircot_evaluation_file:
+            if not os.path.isfile(args.ircot_evaluation_file):
+                raise FileNotFoundError(
+                    f"IRCoT evaluation file does not exist: {args.ircot_evaluation_file}"
+                )
+            args.ircot_evaluation_file_sha256 = _sha256_file(args.ircot_evaluation_file)
     if args.embedding_batch_size <= 0:
         raise ValueError("--embedding-batch-size must be positive")
     if not 0.0 < args.vllm_gpu_memory_utilization <= 1.0:
@@ -969,7 +1000,12 @@ def main() -> None:
     dataset_setting = args.confiqa_setting if args.dataset == "confiqa" else args.setting
     if args.dataset == "confiqa":
         logger.info(f"DEBUG: Loading ConFiQA with setting='{dataset_setting}' (args.confiqa_setting='{args.confiqa_setting}')")
-    full_dataset = get_dataset(name = args.dataset, setting = dataset_setting, split =  args.split, seed=args.seed)
+    if args.method == "ircot" and args.ircot_evaluation_file:
+        full_dataset = load_ircot_official_evaluation(args.ircot_evaluation_file)
+        evaluation_ids = "\n".join(str(row["id"]) for row in full_dataset) + "\n"
+        args.ircot_evaluation_ids_sha256 = hashlib.sha256(evaluation_ids.encode("utf-8")).hexdigest()
+    else:
+        full_dataset = get_dataset(name = args.dataset, setting = dataset_setting, split =  args.split, seed=args.seed)
     total_dataset_size = len(full_dataset)
 
     print(f"examples in dataset: {full_dataset[0]}")
@@ -1026,7 +1062,8 @@ def main() -> None:
         elif args.method == "ircot":
             retrieval_suffix = (
                 f"_k{args.ircot_retrieval_k}_steps{args.ircot_max_steps}"
-                f"_evidence{args.ircot_max_evidence}_prompt{args.ircot_distractor_count}"
+                f"_evidence{args.ircot_max_evidence}_d{args.ircot_distractor_count}"
+                f"_ps{args.ircot_prompt_set}"
             )
         version = args.save_version or ""
         save_postfix = (
@@ -1094,10 +1131,18 @@ def main() -> None:
 
     llm = None
     if args.method not in ("lmlm", "two_phase"):
-        llm = get_llm(model_name=args.model)
+        llm_kwargs = {"model_name": args.model}
+        if args.model_revision:
+            llm_kwargs["revision"] = args.model_revision
+        llm = get_llm(**llm_kwargs)
         args.resolved_model_id = getattr(llm, "hf_model_id", args.model)
         model_config = getattr(getattr(llm, "model", None), "config", None)
-        args.model_revision = getattr(model_config, "_commit_hash", None)
+        resolved_revision = getattr(model_config, "_commit_hash", None)
+        if args.model_revision and resolved_revision and resolved_revision != args.model_revision:
+            raise RuntimeError(
+                f"Loaded model revision {resolved_revision}, expected {args.model_revision}"
+            )
+        args.model_revision = resolved_revision or args.model_revision
 
 
     # Build agent_kwargs dictionary
@@ -1112,6 +1157,7 @@ def main() -> None:
         "ircot_max_evidence": args.ircot_max_evidence,
         "ircot_max_steps": args.ircot_max_steps,
         "ircot_generator_max_tokens": args.ircot_generator_max_tokens,
+        "ircot_prompt_set": args.ircot_prompt_set,
         "ircot_prompt_file": getattr(args, "ircot_prompt_file", None),
         "ircot_retriever_url": args.ircot_retriever_url,
         "max_steps": args.ircot_max_steps if args.method == "ircot" else args.max_steps,

@@ -44,43 +44,102 @@ _ARITHMETIC_REASONING_REGEX = re.compile(
 _REASONING_STARTERS = ["thus ", "thus,", "so ", "so,", "that is,", "therefore", "hence"]
 _WH_WORDS = {"who", "what", "when", "where", "why", "which", "how", "does", "is"}
 
-# These are the 20 demonstrations selected in the official Codex configs.
-OFFICIAL_PROMPT_QIDS: Dict[str, List[str]] = {
-    "hotpotqa": [
-        "5ab92dba554299131ca422a2", "5a7bbc50554299042af8f7d0",
-        "5add363c5542990dbb2f7dc8", "5a835abe5542996488c2e426",
-        "5ae0185b55429942ec259c1b", "5a790e7855429970f5fffe3d",
-        "5a754ab35542993748c89819", "5a89c14f5542993b751ca98a",
-        "5abb14bd5542992ccd8e7f07", "5a89d58755429946c8d6e9d9",
-        "5a88f9d55542995153361218", "5a90620755429933b8a20508",
-        "5a77acab5542992a6e59df76", "5abfb3435542990832d3a1c1",
-        "5a8f44ab5542992414482a25", "5adfad0c554299603e41835a",
-        "5a7fc53555429969796c1b55", "5a8ed9f355429917b4a5bddd",
-        "5ac2ada5554299657fa2900d", "5a758ea55542992db9473680",
-    ],
-    "2wiki": [
-        "5811079c0bdc11eba7f7acde48001122", "97954d9408b011ebbd84ac1f6bf848b6",
-        "35bf3490096d11ebbdafac1f6bf848b6", "c6805b2908a911ebbd80ac1f6bf848b6",
-        "5897ec7a086c11ebbd61ac1f6bf848b6", "e5150a5a0bda11eba7f7acde48001122",
-        "a5995da508ab11ebbd82ac1f6bf848b6", "cdbb82ec0baf11ebab90acde48001122",
-        "f44939100bda11eba7f7acde48001122", "4724c54e08e011ebbda1ac1f6bf848b6",
-        "f86b4a28091711ebbdaeac1f6bf848b6", "13cda43c09b311ebbdb0ac1f6bf848b6",
-        "228546780bdd11eba7f7acde48001122", "c6f63bfb089e11ebbd78ac1f6bf848b6",
-        "1ceeab380baf11ebab90acde48001122", "8727d1280bdc11eba7f7acde48001122",
-        "f1ccdfee094011ebbdaeac1f6bf848b6", "79a863dc0bdc11eba7f7acde48001122",
-        "028eaef60bdb11eba7f7acde48001122", "af8c6722088b11ebbd6fac1f6bf848b6",
-    ],
-    "musique": [
-        "2hop__323282_79175", "2hop__292995_8796", "2hop__439265_539716",
-        "4hop3__703974_789671_24078_24137", "2hop__154225_727337",
-        "2hop__861128_15822", "3hop1__858730_386977_851569",
-        "2hop__642271_608104", "2hop__387702_20661", "2hop__131516_53573",
-        "2hop__496817_701819", "2hop__804754_52230",
-        "3hop1__61746_67065_43617", "3hop1__753524_742157_573834",
-        "2hop__427213_79175", "3hop1__443556_763924_573834",
-        "2hop__782642_52667", "2hop__102217_58400", "2hop__195347_20661",
-        "4hop3__463724_100414_35260_54090",
-    ],
+# Exact 15-demonstration prompt sets from upstream ``run.py``.  The paper tunes
+# hyperparameters using prompt set 1, then reuses the selected hyperparameters
+# for prompt sets 2 and 3 on the test set.
+OFFICIAL_PROMPT_QIDS: Dict[str, Dict[str, List[str]]] = {
+    "hotpotqa": {
+        "1": [
+            "5abb14bd5542992ccd8e7f07", "5ac2ada5554299657fa2900d",
+            "5a758ea55542992db9473680", "5ae0185b55429942ec259c1b",
+            "5a8ed9f355429917b4a5bddd", "5abfb3435542990832d3a1c1",
+            "5ab92dba554299131ca422a2", "5a835abe5542996488c2e426",
+            "5a89c14f5542993b751ca98a", "5a90620755429933b8a20508",
+            "5a7bbc50554299042af8f7d0", "5a8f44ab5542992414482a25",
+            "5add363c5542990dbb2f7dc8", "5a7fc53555429969796c1b55",
+            "5a790e7855429970f5fffe3d",
+        ],
+        "2": [
+            "5a90620755429933b8a20508", "5a88f9d55542995153361218",
+            "5a758ea55542992db9473680", "5a89c14f5542993b751ca98a",
+            "5abfb3435542990832d3a1c1", "5a7bbc50554299042af8f7d0",
+            "5a77acab5542992a6e59df76", "5a7fc53555429969796c1b55",
+            "5a8f44ab5542992414482a25", "5a835abe5542996488c2e426",
+            "5ac2ada5554299657fa2900d", "5a8ed9f355429917b4a5bddd",
+            "5a754ab35542993748c89819", "5add363c5542990dbb2f7dc8",
+            "5abb14bd5542992ccd8e7f07",
+        ],
+        "3": [
+            "5a89d58755429946c8d6e9d9", "5a758ea55542992db9473680",
+            "5a7fc53555429969796c1b55", "5a7bbc50554299042af8f7d0",
+            "5a77acab5542992a6e59df76", "5a90620755429933b8a20508",
+            "5a89c14f5542993b751ca98a", "5ab92dba554299131ca422a2",
+            "5a8f44ab5542992414482a25", "5ae0185b55429942ec259c1b",
+            "5a835abe5542996488c2e426", "5a754ab35542993748c89819",
+            "5ac2ada5554299657fa2900d", "5a790e7855429970f5fffe3d",
+            "5adfad0c554299603e41835a",
+        ],
+    },
+    "2wiki": {
+        "1": [
+            "228546780bdd11eba7f7acde48001122", "97954d9408b011ebbd84ac1f6bf848b6",
+            "a5995da508ab11ebbd82ac1f6bf848b6", "1ceeab380baf11ebab90acde48001122",
+            "35bf3490096d11ebbdafac1f6bf848b6", "f86b4a28091711ebbdaeac1f6bf848b6",
+            "f44939100bda11eba7f7acde48001122", "e5150a5a0bda11eba7f7acde48001122",
+            "c6805b2908a911ebbd80ac1f6bf848b6", "13cda43c09b311ebbdb0ac1f6bf848b6",
+            "f1ccdfee094011ebbdaeac1f6bf848b6", "028eaef60bdb11eba7f7acde48001122",
+            "8727d1280bdc11eba7f7acde48001122", "79a863dc0bdc11eba7f7acde48001122",
+            "c6f63bfb089e11ebbd78ac1f6bf848b6",
+        ],
+        "2": [
+            "c6805b2908a911ebbd80ac1f6bf848b6", "5897ec7a086c11ebbd61ac1f6bf848b6",
+            "028eaef60bdb11eba7f7acde48001122", "af8c6722088b11ebbd6fac1f6bf848b6",
+            "1ceeab380baf11ebab90acde48001122", "5811079c0bdc11eba7f7acde48001122",
+            "228546780bdd11eba7f7acde48001122", "e5150a5a0bda11eba7f7acde48001122",
+            "f44939100bda11eba7f7acde48001122", "f1ccdfee094011ebbdaeac1f6bf848b6",
+            "13cda43c09b311ebbdb0ac1f6bf848b6", "79a863dc0bdc11eba7f7acde48001122",
+            "a5995da508ab11ebbd82ac1f6bf848b6", "cdbb82ec0baf11ebab90acde48001122",
+            "c6f63bfb089e11ebbd78ac1f6bf848b6",
+        ],
+        "3": [
+            "028eaef60bdb11eba7f7acde48001122", "8727d1280bdc11eba7f7acde48001122",
+            "79a863dc0bdc11eba7f7acde48001122", "4724c54e08e011ebbda1ac1f6bf848b6",
+            "e5150a5a0bda11eba7f7acde48001122", "35bf3490096d11ebbdafac1f6bf848b6",
+            "a5995da508ab11ebbd82ac1f6bf848b6", "228546780bdd11eba7f7acde48001122",
+            "97954d9408b011ebbd84ac1f6bf848b6", "f44939100bda11eba7f7acde48001122",
+            "1ceeab380baf11ebab90acde48001122", "f86b4a28091711ebbdaeac1f6bf848b6",
+            "c6f63bfb089e11ebbd78ac1f6bf848b6", "af8c6722088b11ebbd6fac1f6bf848b6",
+            "5897ec7a086c11ebbd61ac1f6bf848b6",
+        ],
+    },
+    "musique": {
+        "1": [
+            "2hop__804754_52230", "2hop__292995_8796", "2hop__496817_701819",
+            "2hop__154225_727337", "2hop__642271_608104", "2hop__439265_539716",
+            "2hop__195347_20661", "2hop__131516_53573", "2hop__427213_79175",
+            "3hop1__443556_763924_573834", "2hop__782642_52667",
+            "2hop__861128_15822", "4hop3__703974_789671_24078_24137",
+            "3hop1__61746_67065_43617", "4hop3__463724_100414_35260_54090",
+        ],
+        "2": [
+            "2hop__292995_8796", "2hop__154225_727337", "2hop__642271_608104",
+            "2hop__195347_20661", "3hop1__61746_67065_43617", "2hop__861128_15822",
+            "3hop1__753524_742157_573834", "2hop__496817_701819",
+            "4hop3__703974_789671_24078_24137", "3hop1__858730_386977_851569",
+            "2hop__804754_52230", "2hop__782642_52667", "2hop__102217_58400",
+            "2hop__387702_20661", "3hop1__443556_763924_573834",
+        ],
+        "3": [
+            "2hop__427213_79175", "3hop1__753524_742157_573834",
+            "2hop__782642_52667", "2hop__496817_701819",
+            "3hop1__443556_763924_573834", "4hop3__463724_100414_35260_54090",
+            "2hop__292995_8796", "2hop__804754_52230",
+            "3hop1__858730_386977_851569", "2hop__131516_53573",
+            "2hop__387702_20661", "4hop3__703974_789671_24078_24137",
+            "2hop__154225_727337", "3hop1__61746_67065_43617",
+            "2hop__642271_608104",
+        ],
+    },
 }
 
 OFFICIAL_CORPUS_NAMES = {
@@ -117,6 +176,7 @@ def _token_length(text: str, tokenizer_model_name: str = "gpt2") -> int:
 def read_official_prompt(
     file_path: str,
     dataset: str,
+    prompt_set: str = "1",
     estimated_generation_length: int = OFFICIAL_GENERATOR_MAX_TOKENS,
     model_length_limit: int = OFFICIAL_MODEL_LENGTH_LIMIT,
     tokenizer_model_name: str = "gpt2",
@@ -124,6 +184,8 @@ def read_official_prompt(
     """Port of the official prompt reader for the released Codex prompts."""
     if dataset not in OFFICIAL_PROMPT_QIDS:
         raise ValueError(f"Official IRCoT prompts are unavailable for dataset={dataset!r}")
+    if prompt_set not in OFFICIAL_PROMPT_QIDS[dataset]:
+        raise ValueError(f"Official IRCoT prompt_set must be 1, 2, or 3; got {prompt_set!r}")
     if not os.path.isfile(file_path):
         raise FileNotFoundError(
             f"IRCoT prompt file not found: {file_path}. Run scripts/fetch_ircot_assets.py."
@@ -146,7 +208,7 @@ def read_official_prompt(
         else:
             example["lines"].append(line)
 
-    qids = OFFICIAL_PROMPT_QIDS[dataset]
+    qids = OFFICIAL_PROMPT_QIDS[dataset][prompt_set]
     examples = [example for example in examples if example.get("qid") in qids and example["lines"]]
     examples = sorted(examples, key=lambda item: qids.index(item["qid"]))
     texts = ["".join(example["lines"]).strip() for example in examples]
@@ -340,6 +402,7 @@ class IRCoTAgent(Agent):
         max_evidence: int = OFFICIAL_MAX_NUM_PARAS,
         max_steps: int = OFFICIAL_MAX_NUM_SENTENCES,
         generator_max_tokens: int = OFFICIAL_GENERATOR_MAX_TOKENS,
+        prompt_set: str = "1",
         sentence_segmenter: Callable[[str], str] = first_spacy_sentence,
         verify_prompt_hash: bool = True,
         **kwargs: Any,
@@ -354,6 +417,7 @@ class IRCoTAgent(Agent):
         self.retrieval_k = retrieval_k
         self.max_evidence = max_evidence
         self.generator_max_tokens = generator_max_tokens
+        self.prompt_set = str(prompt_set)
         self.sentence_segmenter = sentence_segmenter
         self.prompt_file = prompt_file
         with open(prompt_file, "rb") as source:
@@ -362,7 +426,7 @@ class IRCoTAgent(Agent):
             raise ValueError(
                 f"IRCoT prompt checksum is not from pinned upstream commit: {self.prompt_sha256}"
             )
-        self.prompt = read_official_prompt(prompt_file, dataset)
+        self.prompt = read_official_prompt(prompt_file, dataset, prompt_set=self.prompt_set)
         self.retriever = retriever or OfficialIRCoTRetriever(
             endpoint=retriever_url or "",
             corpus_name=OFFICIAL_CORPUS_NAMES[dataset],

@@ -65,6 +65,7 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
                 max_evidence=agent_kwargs.get("ircot_max_evidence", 15),
                 max_steps=agent_kwargs.get("ircot_max_steps", 10),
                 generator_max_tokens=agent_kwargs.get("ircot_generator_max_tokens", 300),
+                prompt_set=agent_kwargs.get("ircot_prompt_set", "1"),
                 prompt_file=agent_kwargs["ircot_prompt_file"],
                 retriever_url=agent_kwargs["ircot_retriever_url"],
             )

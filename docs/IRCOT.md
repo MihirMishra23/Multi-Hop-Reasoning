@@ -35,6 +35,16 @@ the document counts from the upstream release:
 Do not substitute the per-question distractor contexts or FlashRAG index for
 these dataset-level indexes and label the result as faithful IRCoT.
 
+The released paper development protocol uses each dataset's exact 100-row
+`processed_data/{dataset}/dev_subsampled.jsonl`, prompt set 1, and the complete
+Cartesian product of retrieval depth `2, 4, 6, 8` with prompt distractor count
+`1, 2, 3`. It selects the best setting by the released DROP F1 evaluator. The
+paper then applies that setting to prompt sets 1, 2, and 3 on the released test
+subsample and reports their mean and sample standard deviation. Do not call an
+arbitrary first-100 slice or a single untuned setting the paper protocol.
+The cluster jobs pin Qwen3-1.7B to `70d244cc...` and Qwen3-4B to
+`1cfa9a72...`; the resolved full revision is stored with every prediction.
+
 ## Smoke evaluation
 
 Run a small subset first:
@@ -50,6 +60,8 @@ python src/eval_multihop.py \
   --total-count 2 \
   --ircot-retriever-url http://RETRIEVER_HOST:8000 \
   --ircot-index-manifest provenance/ircot/hotpotqa_index.json \
+  --ircot-evaluation-file /path/to/processed_data/hotpotqa/dev_subsampled.jsonl \
+  --ircot-prompt-set 1 \
   --ircot-retrieval-k 6 \
   --ircot-distractor-count 2 \
   --ircot-max-evidence 15 \
@@ -70,6 +82,19 @@ for any reportable run. The manifest should record the raw corpus URL/version,
 license, file SHA-256 values, preprocessing/index command, Elasticsearch
 version and settings, final index document count, and a content hash or hashes
 for the archived index. Its own SHA-256 is stored in every prediction file.
+
+For the exact development sweep, start the real index service, run the
+two-example real-corpus smoke, and only then submit the grid:
+
+```bash
+sbatch scripts/ircot_index_service.slurm
+IRCOT_RETRIEVER_URL=http://RETRIEVER_HOST:18000 \
+  sbatch scripts/ircot_official_smoke.slurm
+IRCOT_RETRIEVER_URL=http://RETRIEVER_HOST:18000 \
+  bash scripts/launch_ircot_dev_grid.sh
+python scripts/summarize_ircot_dev_grid.py /path/to/predictions/dev_grid \
+  --output /path/to/dev_grid_summary.json
+```
 
 ## Faithfulness boundary
 

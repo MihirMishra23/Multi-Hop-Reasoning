@@ -10,3 +10,6 @@ google-genai
 rapidfuzz
 requests
 spacy
+ftfy
+numpy
+scipy

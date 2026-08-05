@@ -175,6 +175,27 @@ class IRCoTAgentTests(unittest.TestCase):
         )
         self.assertEqual(query, "The novel was published in 1965.")
 
+    def test_released_prompt_sets_use_the_exact_upstream_qids(self):
+        prompt = (
+            '# METADATA: {"qid": "5ab92dba554299131ca422a2"}\n'
+            "SET ONE\n"
+            '# METADATA: {"qid": "5a88f9d55542995153361218"}\n'
+            "SET TWO\n"
+            '# METADATA: {"qid": "not-selected"}\n'
+            "NEITHER\n"
+        )
+        handle = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+        handle.write(prompt)
+        handle.close()
+
+        set_one = ircot.read_official_prompt(handle.name, "hotpotqa", prompt_set="1")
+        set_two = ircot.read_official_prompt(handle.name, "hotpotqa", prompt_set="2")
+
+        self.assertEqual(set_one, "SET ONE")
+        self.assertEqual(set_two, "SET TWO")
+        with self.assertRaisesRegex(ValueError, "1, 2, or 3"):
+            ircot.read_official_prompt(handle.name, "hotpotqa", prompt_set="4")
+
     def test_fuzzy_title_and_paragraph_duplicate_is_removed(self):
         self.assertTrue(
             ircot.is_para_closely_matching(

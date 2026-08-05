@@ -1,0 +1,10 @@
+# Retrieval-only dependencies from StonyBrookNLP/ircot at
+# 3c1820f698eea5eeddb4fba3c56b64c961e063e4. urllib3<2 is the compatibility
+# bound required by its Elasticsearch 7.x client.
+elasticsearch==7.9.1
+urllib3<2
+dill
+base58
+beautifulsoup4
+fastapi
+uvicorn
