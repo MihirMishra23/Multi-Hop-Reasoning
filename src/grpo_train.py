@@ -37,11 +37,17 @@ class LMLMArguments:
     """Core LMLM arguments."""
     retrieval_threshold: float = field(
         default=0.6,
-        metadata={"help": "Cosine similarity threshold for DB retrieval"}
+        metadata={
+            "help": "Cosine similarity threshold for DB retrieval",
+            "aliases": ["--retrieval-threshold"],
+        }
     )
     retrieval_top_k: int = field(
         default=1,
-        metadata={"help": "Number of examples retrieved from DB"}
+        metadata={
+            "help": "Maximum number of results retrieved from the DB (separate from generation top_k)",
+            "aliases": ["--retrieval-top-k"],
+        }
     )
     use_chat_template: bool = field(
         default=False,
@@ -103,10 +109,19 @@ class AblationArguments:
     )
 
     # --- DB ablations ---
-    adaptive_k: bool = field(default=False, metadata={"help": "Use adaptive k for DB retrieval"})
+    adaptive_k: bool = field(
+        default=False,
+        metadata={
+            "help": "Use adaptive k for DB retrieval",
+            "aliases": ["--adaptive-k"],
+        },
+    )
     use_inverses: bool = field(
         default=False,
-        metadata={"help": "Augment DB with inverse triplets (e,r,v) -> (v,r,e)"}
+        metadata={
+            "help": "Augment DB with inverse triplets (e,r,v) -> (v,r,e)",
+            "aliases": ["--use-inverses"],
+        }
     )
     vanilla_grpo: bool = field(
         default=False,
@@ -251,7 +266,11 @@ def main():
     print(f"  Max grad norm:        {grpo_config.max_grad_norm}")
     print(f"  Use vLLM:             {grpo_config.use_vllm}")
     print(f"  Two phase:            {lmlm_args.two_phase}")
-    print(f"  Adaptive k:           {ablation_args.adaptive_k}")
+    print(f"  Sampling top-k:       {grpo_config.top_k}")
+    print(f"  Retrieval threshold:  {lmlm_args.retrieval_threshold}")
+    print(f"  Retrieval top-k:      {lmlm_args.retrieval_top_k}")
+    print(f"  Adaptive retrieval:   {ablation_args.adaptive_k}")
+    print(f"  Use inverses:         {ablation_args.use_inverses}")
 
     # Build reward functions
     reward_funcs = []

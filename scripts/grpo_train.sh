@@ -50,7 +50,7 @@ MAX_COMPLETION_LENGTH=1024
 # ── Sampling ──────────────────────────────────────────────────────────────────
 TOP_P=0.95
 TEMPERATURE=1
-TOP_K=4
+SAMPLING_TOP_K=4
 
 # ── Logging / checkpointing ───────────────────────────────────────────────────
 LOGGING_STEPS=5
@@ -61,6 +61,7 @@ EVAL_STEPS=100
 TOOLS="--tools"               # tools enabled by default; pass --no_tools to disable
 TWO_PHASE=""
 RETRIEVAL_THRESHOLD=0.6
+RETRIEVAL_TOP_K=1
 REWARD_FUNC="em"
 PHASE1_REWARD_TYPE="binary"
 PHASE1_PROMPT_TYPE="sft"
@@ -96,8 +97,23 @@ while [[ $# -gt 0 ]]; do
         --num_generations)       NUM_GENERATIONS="$2";        shift 2 ;;
         --num_db_rollouts)       NUM_DB_ROLLOUTS="$2";        shift 2 ;;
         --learning_rate)         LEARNING_RATE="$2";          shift 2 ;;
-        --retrieval_threshold)   RETRIEVAL_THRESHOLD="$2";    shift 2 ;;
-        --top_k)                 TOP_K="$2";                  shift 2 ;;
+        --retrieval_threshold|--retrieval-threshold)
+                                  RETRIEVAL_THRESHOLD="$2";    shift 2 ;;
+        --retrieval_top_k|--retrieval-top-k|--top-k)
+                                  RETRIEVAL_TOP_K="$2";        shift 2 ;;
+        --sampling_top_k|--sampling-top-k)
+                                  SAMPLING_TOP_K="$2";         shift 2 ;;
+        # Backward compatibility: this used to control generation sampling while
+        # run names described it as retrieval top-k. Preserve the old sampling
+        # effect and, for positive values, make the advertised retrieval setting
+        # effective too. Values such as 0/-1 remain valid sampling-only controls.
+        --top_k)                 SAMPLING_TOP_K="$2"
+                                  if [[ "$2" =~ ^[1-9][0-9]*$ ]]; then
+                                      RETRIEVAL_TOP_K="$2"
+                                  else
+                                      echo "Warning: legacy --top_k=$2 only sets sampling top-k; use --retrieval-top-k for DB retrieval." >&2
+                                  fi
+                                  shift 2 ;;
         --reward_func)           REWARD_FUNC="$2";            shift 2 ;;
         --phase1_reward_type)    PHASE1_REWARD_TYPE="$2";     shift 2 ;;
         --phase1_prompt_type)    PHASE1_PROMPT_TYPE="$2";     shift 2 ;;
@@ -107,8 +123,25 @@ while [[ $# -gt 0 ]]; do
         --use_chat_template)     USE_CHAT_TEMPLATE="--use_chat_template"; shift 1 ;;
         --no_tools)              TOOLS="";                    shift 1 ;;
         # Ablation flags
-        --use_adaptive_k)        USE_ADAPTIVE_K="$2";         shift 2 ;;
-        --use_inverses)          USE_INVERSES="--use_inverses"; shift 1 ;;
+        --use_adaptive_k)
+                                  if [[ $# -gt 1 && "$2" != --* ]]; then
+                                      case "$2" in
+                                          True|true|TRUE|1|yes|Yes|YES)
+                                              USE_ADAPTIVE_K=True ;;
+                                          False|false|FALSE|0|no|No|NO)
+                                              USE_ADAPTIVE_K=False ;;
+                                          *)
+                                              echo "Invalid value for --use_adaptive_k: $2" >&2
+                                              exit 1 ;;
+                                      esac
+                                      shift 2
+                                  else
+                                      USE_ADAPTIVE_K=True; shift 1
+                                  fi ;;
+        --adaptive_k|--adaptive-k)
+                                  USE_ADAPTIVE_K=True;          shift 1 ;;
+        --use_inverses|--use-inverses)
+                                  USE_INVERSES="--use_inverses"; shift 1 ;;
         --vanilla_grpo)          VANILLA_GRPO="--vanilla_grpo"; shift 1 ;;
         --return_triples)        RETURN_TRIPLES="--return_triples"; shift 1 ;;
         --tier_path)             TIER_PATH="$2";              shift 2 ;;
@@ -189,7 +222,10 @@ if [ -n "${TWO_PHASE}" ]; then
     [ "${PHASE1_REWARD_TYPE}" != "binary" ] && OUTPUT_DIR="${OUTPUT_DIR}-rw${PHASE1_REWARD_TYPE}"
     OUTPUT_DIR="${OUTPUT_DIR}-pr${PHASE1_PROMPT_TYPE}-w${PHASE1_DB_WEIGHT_MODE}"
 fi
-OUTPUT_DIR="${OUTPUT_DIR}-th${RETRIEVAL_THRESHOLD}-topk${TOP_K}"
+# Keep all three values explicit. Besides making runs self-describing, the new
+# naming avoids auto-resuming legacy "topk" checkpoints whose name described
+# retrieval k even though that value was only applied to generation sampling.
+OUTPUT_DIR="${OUTPUT_DIR}-rth${RETRIEVAL_THRESHOLD}-rk${RETRIEVAL_TOP_K}-sk${SAMPLING_TOP_K}"
 
 # Ablation suffix
 [ "${USE_ADAPTIVE_K}" != "True" ] && OUTPUT_DIR="${OUTPUT_DIR}-nak"
@@ -201,6 +237,7 @@ OUTPUT_DIR="${OUTPUT_DIR}-th${RETRIEVAL_THRESHOLD}-topk${TOP_K}"
 
 # ── Flag resolution ───────────────────────────────────────────────────────────
 [ "${USE_ADAPTIVE_K}" = "True" ] && ADAPTIVE_K="--adaptive_k" || ADAPTIVE_K=""
+[ -n "${USE_INVERSES}" ] && INVERSES_STATUS="on" || INVERSES_STATUS="off"
 
 # ── Resume from checkpoint ────────────────────────────────────────────────────
 LAST_CKPT=$(ls -d "${OUTPUT_DIR}"/checkpoint-* 2>/dev/null | sort -V | tail -n 1)
@@ -212,6 +249,9 @@ echo "  Model:       ${MODEL_PATH}"
 echo "  Output:      ${OUTPUT_DIR}"
 echo "  GPUs:        ${NUM_GPUS} (${GPU_TYPE:-default})"
 echo "  Two-phase:   ${TWO_PHASE:-off}"
+echo "  Sampling k:  ${SAMPLING_TOP_K}"
+echo "  Retrieval:   top-k=${RETRIEVAL_TOP_K}, threshold=${RETRIEVAL_THRESHOLD}, adaptive=${USE_ADAPTIVE_K}"
+echo "  Inverses:    ${INVERSES_STATUS}"
 echo "  Checkpoint:  ${RESUME_FROM_CHECKPOINT:-none}"
 
 # ── Launch ────────────────────────────────────────────────────────────────────
@@ -247,7 +287,7 @@ accelerate launch \
   --eval_size=${EVAL_SIZE} \
   --top_p=${TOP_P} \
   --temperature=${TEMPERATURE} \
-  --top_k=${TOP_K} \
+  --top_k=${SAMPLING_TOP_K} \
   --num_train_epochs=${NUM_TRAIN_EPOCHS} \
   --max_steps=${MAX_STEPS} \
   --save_strategy=steps \
@@ -256,6 +296,7 @@ accelerate launch \
   --eval_strategy=steps \
   --eval_steps=${EVAL_STEPS} \
   --retrieval_threshold=${RETRIEVAL_THRESHOLD} \
+  --retrieval_top_k=${RETRIEVAL_TOP_K} \
   --reward_func=${REWARD_FUNC} \
   --phase1_reward_type=${PHASE1_REWARD_TYPE} \
   --phase1_prompt_type=${PHASE1_PROMPT_TYPE} \

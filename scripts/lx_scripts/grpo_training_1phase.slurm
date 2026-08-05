@@ -31,7 +31,7 @@ DATASET=hotpotqa-v2-onlyphase1
 MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_1phase 
 # MODEL_PATH=Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.9_top_k_1
 RETRIEVAL_THRESHOLD=0.6
-TOP_K=4
+RETRIEVAL_TOP_K=4
 # MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_classic_retrieval_6k
 # MODEL_PATH="/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k"
 # MODEL_PATH="Qwen/Qwen3-1.7B"
@@ -93,6 +93,6 @@ ${USE_CHAT_TEMPLATE} \
 ${TWO_PHASE} \
 ${DEBUG} \
 --retrieval_threshold ${RETRIEVAL_THRESHOLD} \
---top_k ${TOP_K}
+--retrieval_top_k ${RETRIEVAL_TOP_K}
 
 echo "GRPO Training complete!"
