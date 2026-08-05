@@ -77,7 +77,7 @@ done
 python "${SLURM_SUBMIT_DIR}/scripts/write_ircot_index_manifests.py" \
     --root "${ROOT}" --elasticsearch-url http://127.0.0.1:9200
 
-uvicorn serve:app \
+python -m uvicorn serve:app \
     --app-dir "${UPSTREAM}/retriever_server" \
     --host 0.0.0.0 \
     --port "${RETRIEVER_PORT}" &
