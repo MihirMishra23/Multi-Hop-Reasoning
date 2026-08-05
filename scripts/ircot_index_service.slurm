@@ -7,7 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
-#SBATCH --time=2-00:00:00
+#SBATCH --time=7-00:00:00
 #SBATCH --partition=default_partition
 #SBATCH --output=/home/rtn27/ircot_index_service_%j.out
 #SBATCH --error=/home/rtn27/ircot_index_service_%j.err
@@ -58,8 +58,11 @@ for dataset in 2wikimultihopqa musique hotpotqa; do
         2wikimultihopqa) expected=430225 ;;
         musique) expected=139416 ;;
     esac
-    current=$(curl -fsS "http://127.0.0.1:9200/${dataset}/_count" 2>/dev/null \
-        | python -c 'import json,sys; print(json.load(sys.stdin)["count"])' || echo 0)
+    if count_json=$(curl -fsS "http://127.0.0.1:9200/${dataset}/_count" 2>/dev/null); then
+        current=$(python -c 'import json,sys; print(json.load(sys.stdin)["count"])' <<< "${count_json}")
+    else
+        current=0
+    fi
     if [[ "${current}" == "${expected}" ]]; then
         echo "Reusing ${dataset} index with ${current} documents"
         continue
