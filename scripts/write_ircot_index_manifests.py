@@ -62,6 +62,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", required=True)
     parser.add_argument("--elasticsearch-url", default="http://127.0.0.1:9200")
+    parser.add_argument(
+        "--dataset",
+        action="append",
+        choices=sorted(DATASETS),
+        help="Write only this completed dataset manifest; repeat as needed",
+    )
     args = parser.parse_args()
     root = Path(args.root).resolve()
     output_dir = root / "manifests"
@@ -75,7 +81,9 @@ def main() -> None:
         )
 
     version = requests.get(args.elasticsearch_url, timeout=30).json()["version"]
-    for dataset, specification in DATASETS.items():
+    selected_datasets = args.dataset or list(DATASETS)
+    for dataset in selected_datasets:
+        specification = DATASETS[dataset]
         count_response = requests.get(f"{args.elasticsearch_url}/{dataset}/_count", timeout=30)
         count_response.raise_for_status()
         count = int(count_response.json()["count"])
