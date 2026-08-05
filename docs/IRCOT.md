@@ -17,6 +17,7 @@ few-shot prompt files at the pinned revision:
 
 ```bash
 pip install -e .
+pip install -r requirements-ircot-retriever.txt
 python -m spacy download en_core_web_sm
 python scripts/fetch_ircot_assets.py
 ```
