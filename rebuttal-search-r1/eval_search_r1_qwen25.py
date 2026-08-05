@@ -234,6 +234,7 @@ def run_eval(args) -> None:
             "retrieval": {
                 "model": E5_MODEL,
                 "model_revision": E5_REVISION,
+                "device": args.retriever_device,
                 "topk": args.retrieval_topk,
                 "corpus": args.retrieval_corpus,
                 "index": args.retrieval_index,
