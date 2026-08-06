@@ -56,6 +56,17 @@ echo "dataset=${DATASET} model=${MODEL} k=${RETRIEVAL_K} distractors=${DISTRACTO
 echo "evaluation_file=${IRCOT_ROOT}/data/processed_data/${upstream_dataset}/dev_subsampled.jsonl"
 nvidia-smi --query-gpu=name,uuid,driver_version,memory.total --format=csv,noheader
 
+MIN_GPU_MEMORY_MIB="${MIN_GPU_MEMORY_MIB:-0}"
+gpu_memory_mib="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -n 1 | tr -d ' ')"
+if ! [[ "${MIN_GPU_MEMORY_MIB}" =~ ^[0-9]+$ && "${gpu_memory_mib}" =~ ^[0-9]+$ ]]; then
+    echo "Invalid GPU memory check: required=${MIN_GPU_MEMORY_MIB} MiB assigned=${gpu_memory_mib} MiB" >&2
+    exit 2
+fi
+if (( gpu_memory_mib < MIN_GPU_MEMORY_MIB )); then
+    echo "Assigned GPU has ${gpu_memory_mib} MiB; this job requires at least ${MIN_GPU_MEMORY_MIB} MiB" >&2
+    exit 78
+fi
+
 python src/eval_multihop.py \
     --method ircot \
     --dataset "${DATASET}" \

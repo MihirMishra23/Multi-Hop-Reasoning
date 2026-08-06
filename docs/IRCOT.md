@@ -97,11 +97,16 @@ python scripts/summarize_ircot_dev_grid.py /path/to/predictions/dev_grid \
   --output /path/to/dev_grid_summary.json
 ```
 
-The launcher requests `gpu-mid` for Qwen3-1.7B and 48 GiB-or-larger Ampere
-`gpu-high` devices for Qwen3-4B. The longer MuSiQue prompts can exhaust a
-24 GiB device with Qwen3-4B. The summary command refuses completed artifacts
-that contain any generation trace error, as well as missing or duplicate grid
-cells, so an OOM cannot silently become a reported score.
+The launcher requests `gpu-mid` for Qwen3-1.7B. For Qwen3-4B it defaults to
+the `gpu-high&a100` node constraint and verifies that the GPU Slurm actually
+assigns has at least 45,000 MiB. This second check is necessary on clusters
+whose nodes mix high- and low-memory cards. Override the node expression with
+`IRCOT_4B_GPU_CONSTRAINT` (for example, for a Hopper partition) and the memory
+floor with `IRCOT_4B_MIN_GPU_MEMORY_MIB` when needed. The longer MuSiQue prompts
+can exhaust a 24 GiB device with Qwen3-4B. The summary command refuses
+completed artifacts that contain any generation trace error, as well as
+missing or duplicate grid cells, so an OOM cannot silently become a reported
+score.
 
 ## Faithfulness boundary
 

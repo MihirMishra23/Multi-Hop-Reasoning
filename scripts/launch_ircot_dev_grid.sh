@@ -15,11 +15,19 @@ DISTRACTOR_COUNTS=(1 2 3)
 for dataset in "${DATASETS[@]}"; do
     for model in "${MODELS[@]}"; do
         case "${model}" in
-            qwen3-1.7b) gpu_constraint="gpu-mid" ;;
+            qwen3-1.7b)
+                gpu_constraint="gpu-mid"
+                min_gpu_memory_mib=0
+                ;;
             # MuSiQue can reach the full 8k-token IRCoT prompt limit.  Qwen3-4B
-            # exhausts 24 GiB devices on those examples, so use 48 GiB Ampere
-            # devices (or larger memory devices with the same features).
-            qwen3-4b) gpu_constraint="gpu-high&ampere" ;;
+            # exhausts 24 GiB devices on those examples.  Some Unicorn nodes
+            # mix high- and low-memory Ampere cards, so a node-level gpu-high
+            # constraint alone is insufficient: prefer A100 nodes and verify
+            # the memory of the GPU Slurm actually assigns inside the job.
+            qwen3-4b)
+                gpu_constraint="${IRCOT_4B_GPU_CONSTRAINT:-gpu-high&a100}"
+                min_gpu_memory_mib="${IRCOT_4B_MIN_GPU_MEMORY_MIB:-45000}"
+                ;;
             *) echo "Unsupported MODEL=${model}" >&2; exit 2 ;;
         esac
         for retrieval_k in "${RETRIEVAL_COUNTS[@]}"; do
@@ -28,7 +36,7 @@ for dataset in "${DATASETS[@]}"; do
                 "${SBATCH_BIN}" \
                     --job-name "${job_name}" \
                     --constraint "${gpu_constraint}" \
-                    --export="ALL,DATASET=${dataset},MODEL=${model},RETRIEVAL_K=${retrieval_k},DISTRACTOR_COUNT=${distractors},RUN_TAG=${RUN_TAG},IRCOT_RETRIEVER_URL=${IRCOT_RETRIEVER_URL}" \
+                    --export="ALL,DATASET=${dataset},MODEL=${model},RETRIEVAL_K=${retrieval_k},DISTRACTOR_COUNT=${distractors},RUN_TAG=${RUN_TAG},IRCOT_RETRIEVER_URL=${IRCOT_RETRIEVER_URL},MIN_GPU_MEMORY_MIB=${min_gpu_memory_mib}" \
                     scripts/ircot_dev_grid_job.slurm
             done
         done
