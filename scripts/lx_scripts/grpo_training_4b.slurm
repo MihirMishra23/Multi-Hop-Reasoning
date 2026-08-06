@@ -9,7 +9,7 @@
 #SBATCH -n 1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=256G
-#SBATCH -t 8:00:00
+#SBATCH -t infinite
 #SBATCH --partition=aimi,kilian,jjs533,default_partition
 #SBATCH --gres=gpu:nvidia_b200:4
 #SBATCH --requeue

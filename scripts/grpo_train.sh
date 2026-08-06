@@ -10,8 +10,10 @@ export VLLM_BATCH_INVARIANT=0
 export CUDA_HOME=/usr/local/cuda
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}
 
-export WANDB_ENTITY=ryan-noonan-cornell-university
-export WANDB_PROJECT=LMLM-Multihop
+# WANDB entity/project — override via env in the slurm wrapper if needed.
+# Defaults keep Ryan's LMLM-Multihop project as the historical destination.
+export WANDB_ENTITY=${WANDB_ENTITY:-ryan-noonan-cornell-university}
+export WANDB_PROJECT=${WANDB_PROJECT:-LMLM-Multihop}
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 GPU_TYPE=""

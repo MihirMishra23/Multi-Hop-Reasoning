@@ -12,7 +12,7 @@
 #SBATCH --mem=256G                              # Memory requested (2GB per node)
 #SBATCH -t infinite                              # Time limit (2 hours)
 #SBATCH --partition=aimi,kilian,jjs533,default_partition          # Request partition
-#SBATCH --gres=gpu:nvidia_b200:1                # Request 1 NVIDIA A6000 GPU
+#SBATCH --gres=gpu:nvidia_b200:4                # Request 1 NVIDIA A6000 GPU
 #SBATCH --requeue
 
 
@@ -51,6 +51,9 @@ REWARD_FUNC="f1"
 TWO_PHASE=""
 DEBUG=""
 
+export TRITON_CACHE_DIR=/home/lz586/.cache/triton
+export TMPDIR=/home/lz586/.tmp
+mkdir -p $TRITON_CACHE_DIR $TMPDIR
 
 if [ "${DATASET}" = "hotpotqa-v2" ]; then
     echo "Training on hotpotqa-v2"
