@@ -553,6 +553,10 @@ def main() -> None:
         ),
     )
 
+    parser.add_argument("--top-p", type=float, default=1.0,
+                        help="lmlm only: nucleus sampling top_p (two_phase resolves this from --use-train-params)")
+    parser.add_argument("--vllm-top-k", type=int, default=0,
+                        help="lmlm only: vLLM sampling top_k, 0 = disabled (distinct from retrieval --top-k)")
     parser.add_argument("--max-model-len", type=int, default=8192,
                         help="vLLM max model length for two_phase (default 8192 > training 4096 to handle multi-turn context growth)")
 
@@ -671,6 +675,8 @@ def main() -> None:
         "max_tokens": args.max_tokens,
         **({k: _extra_agent_kwargs[k] for k in ("top_p", "vllm_top_k", "repetition_penalty", "max_model_len")}
            if args.method == "two_phase" else {}),
+        **({"top_p": args.top_p, "vllm_top_k": args.vllm_top_k, "max_model_len": args.max_model_len}
+           if args.method == "lmlm" else {}),
         "use_train_params": getattr(args, "use_train_params", False),
     }
 
@@ -892,6 +898,15 @@ def main() -> None:
     if args.method == "rag" and rag_corpus:
         agent_kwargs["corpus"] = rag_corpus
         logger.info(f"Added RAG corpus to agent_kwargs: {len(rag_corpus)} documents")
+
+    if args.method == "lmlm":
+        # Mirror the two_phase sampling knobs so lmlm runs can be made
+        # hyperparameter-identical to a two_phase --use-train-params run.
+        agent_kwargs.update({
+            "top_p": args.top_p,
+            "vllm_top_k": args.vllm_top_k,
+            "max_model_len": args.max_model_len,
+        })
 
     agent_kwargs.update(_extra_agent_kwargs)
 

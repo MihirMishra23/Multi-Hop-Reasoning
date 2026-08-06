@@ -14,7 +14,7 @@
 #SBATCH --gres=gpu:nvidia_rtx_a6000:1
 
 source activate mem
-cd /home/lz586/icl/Multi-Hop-Reasoning/
+cd /share/j_sun/mx253_lmlm/
 
 echo "Starting Eval..."
 
@@ -120,9 +120,13 @@ MODEL_PATH_LST=(
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-B32-K2-M4-bs16-s16-b0.0-ep5-n7000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
 
     # ----------------------------
+    # Row 3 (Train w/ Phase-2 Only) rerun, 0806 — static Gemini DB + row-1 sampling
+    0805/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_1phase-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-rth0.6-rk4-sk4-nak-inv
+
+    # ----------------------------
     # Final Runs: SFT
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
-    Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
     # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1
@@ -130,8 +134,8 @@ MODEL_PATH_LST=(
 
     # ----------------------------
     # Final Runs: GRPO
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
-    Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_lr5e-5_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
 
@@ -187,8 +191,11 @@ MODEL_PATH_LST=(
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n90447-f1-2ph-prsft-wcount-th0.6-topk4-nak-tier1_3-curric
 )
 
-# TWO_PHASE_METHOD="lmlm"
-TWO_PHASE_METHOD="two_phase"
+# "lmlm"      → Phase-2 only over the pre-built DB that eval_lmlm_multihop.sh
+#               maps per (dataset, split). Used for the row-3 ablation.
+# "two_phase" → normal co-evolution eval (model builds its own DB).
+TWO_PHASE_METHOD="lmlm"
+# TWO_PHASE_METHOD="two_phase"
 
 # ── Datasets and splits ──────────────────────────────────────────────────────
 # NOTE: train_val1k is only valid for hotpotqa. musique/2wiki/popqa only support "dev".
@@ -199,7 +206,7 @@ DATASET_LST=(
     hotpotqa
     musique
     2wiki
-    popqa
+    # popqa      # NOTE: no pre-built DB → not usable with TWO_PHASE_METHOD="lmlm"
     # mquake
 )
 SPLIT_LST=(
@@ -217,8 +224,11 @@ fi
 
 # ── Eval parameters ──────────────────────────────────────────────────────────
 OUTPUT_DIR="./output/main_tables"
-SAVE_VERSION="_0805_full"
-NUM_SAMPLES=20000    # auto-caps per dataset; > max dev (popqa=14267) → runs full dev
+SAVE_VERSION="_0806_row3_t1.0"
+# The pre-built DBs only cover the first 1000 dev questions (seed 42), so with
+# TWO_PHASE_METHOD="lmlm" NUM_SAMPLES must stay at 1000 — do NOT raise it here.
+# Questions past 1000 would still run, but against a DB with none of their facts.
+NUM_SAMPLES=1000
 
 # Retrieval hyper-parameters (match training)
 TOP_K=4
@@ -229,6 +239,16 @@ USE_INVERSES="--use-inverses"
 # DB settings (two-phase only)
 CONCAT_ALL_DB="--concat-all-db"  # "--concat-all-db" or ""
 USE_CONTEXTS="all"               # "golden" or "all"
+
+# lmlm-only sampling knobs. Set to match row 1's TRAINING_SAMPLING_PARAMS
+# (see TRAINING_SAMPLING_PARAMS in src/eval_multihop.py) so a phase-2-only
+# eval is hyperparameter-identical to a two_phase --use-train-params run.
+# Leave all four empty to get the historical greedy behaviour (T=0.0).
+# Ignored when TWO_PHASE_METHOD="two_phase" (that path uses USE_TRAIN_PARAMS).
+TEMPERATURE="--temperature 1.0"
+TOP_P="--top-p 0.95"
+VLLM_TOP_K="--vllm-top-k 4"
+MAX_MODEL_LEN="--max-model-len 8192"
 
 # Sampling: "" = greedy (temperature=0, recommended); "--use-train-params" = T=1.0, top_p=0.95
 USE_TRAIN_PARAMS="--use-train-params"
@@ -334,7 +354,7 @@ for MODEL_DIR in "${MODEL_PATH_LST[@]}"; do
 #!/bin/bash
 source \$(conda info --base)/etc/profile.d/conda.sh
 conda activate mem
-cd /home/lz586/icl/Multi-Hop-Reasoning/
+cd /share/j_sun/mx253_lmlm/
 SCRIPT_EOF
             fi
             TMP_SCRIPT="${GROUPED_SCRIPTS[${GROUP_KEY}]}"
@@ -358,7 +378,7 @@ SCRIPT_EOF
 
                     cat >> "${TMP_SCRIPT}" << SCRIPT_EOF
 echo "========== ${MODEL_PATH} | ${DATASET} | ${SPLIT} | ${METHOD} =========="
-bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
+bash /share/j_sun/mx253_lmlm/scripts/eval_lmlm_multihop.sh \
     --model_path "${MODEL_PATH}" \
     --dataset "${DATASET}" \
     --split "${SPLIT}" \
@@ -372,6 +392,10 @@ bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
     ${USE_INVERSES} \
     ${USE_TRAIN_PARAMS} \
     ${CONCAT_ALL_DB} \
+    ${TEMPERATURE} \
+    ${TOP_P} \
+    ${VLLM_TOP_K} \
+    ${MAX_MODEL_LEN} \
     --use-contexts "${_USE_CONTEXTS}" \
     --setting "${SETTING}"
 SCRIPT_EOF

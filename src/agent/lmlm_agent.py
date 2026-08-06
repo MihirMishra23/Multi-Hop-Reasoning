@@ -32,8 +32,14 @@ class LogitBiasProcessor(LogitsProcessor):
         return scores
 
 class LMLMAgent(Agent):
-    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6, adaptive : bool = False, top_k : int = 4, return_triplets : bool = False, use_inverses : bool = False, **kwargs ):
+    def __init__(self, model_path = "/share/j_sun/lmlm_multihop/models/Qwen3-1.7B/gemini_sft_v1/_full_ep5_bsz32_new_qa", database_path = "../LMLM/hotpotqa_annotation_results/extracted_database_lookups.json", similarity_threshold = 0.6, adaptive : bool = False, top_k : int = 4, return_triplets : bool = False, use_inverses : bool = False,
+                 top_p : float = 1.0, vllm_top_k : int = 0, repetition_penalty : float = 1.0, max_model_len : int | None = None, **kwargs ):
         self.model_path = model_path
+        # vLLM sampling params. Defaults reproduce the historical greedy setup
+        # (top_p=1.0, top_k=0 → disabled); set them to match training sampling.
+        self.top_p = top_p
+        self.vllm_top_k = vllm_top_k
+        self.repetition_penalty = repetition_penalty
         self.database_path = database_path
         self.top_k = top_k
         metadata_file = os.path.join(os.path.dirname(database_path), "metadata.json")
@@ -77,13 +83,16 @@ class LMLMAgent(Agent):
 
         check_token_in_vocab(self.tok)
 
+        _llm_kwargs = {}
+        if max_model_len is not None:
+            _llm_kwargs["max_model_len"] = max_model_len
         self.llm = LLM(
             model=model_path,
             tensor_parallel_size=1,
             gpu_memory_utilization=0.6,
-            # max_model_len=16384,
             seed=42,
             tokenizer=model_path,
+            **_llm_kwargs,
         )
         check_token_in_vocab(self.llm.get_tokenizer())
 
@@ -142,8 +151,9 @@ class LMLMAgent(Agent):
             sampling_params = SamplingParams(
                 n=1,
                 temperature=temperature,
-                top_p=1.0,
-                top_k=0,
+                top_p=self.top_p,
+                top_k=self.vllm_top_k,
+                repetition_penalty=self.repetition_penalty,
                 max_tokens=max_tokens,  # Generate up to max_tokens or until stop token
                 stop_token_ids=self.stop_token_ids,
                 # logprobs=0, # help solve the bug of illegal cuda memory access

@@ -18,6 +18,12 @@ TOP_K=4
 ADAPTIVE_K=""           # set to "--adaptive-k" to enable adaptive retrieval
 USE_INVERSES=""         # set to "--use-inverses" to enable inverse relations
 USE_TRAIN_PARAMS=""     # set to "--use-train-params" to use training sampling params (T=1.0)
+# lmlm-only sampling knobs. All unset → historical greedy behaviour.
+# Ignored by two_phase, which resolves sampling from --use-train-params.
+TEMPERATURE=""          # e.g. "--temperature 1.0"
+TOP_P=""                # e.g. "--top-p 0.95"
+VLLM_TOP_K=""           # e.g. "--vllm-top-k 4"  (vLLM sampling, not retrieval --top-k)
+MAX_MODEL_LEN=""        # e.g. "--max-model-len 8192"
 CONCAT_ALL_DB=""        # set to "--concat-all-db" to build unified database (two_phase only)
 USE_CONTEXTS="golden"   # "golden" | "all" (two_phase only)
 SIMILARITY_THRESHOLD=0.6
@@ -39,6 +45,10 @@ while [[ $# -gt 0 ]]; do
         --adaptive-k)       ADAPTIVE_K="--adaptive-k"; shift ;;
         --use-inverses)     USE_INVERSES="--use-inverses"; shift ;;
         --use-train-params) USE_TRAIN_PARAMS="--use-train-params"; shift ;;
+        --temperature)      TEMPERATURE="--temperature $2"; shift 2 ;;
+        --top-p)            TOP_P="--top-p $2"; shift 2 ;;
+        --vllm-top-k)       VLLM_TOP_K="--vllm-top-k $2"; shift 2 ;;
+        --max-model-len)    MAX_MODEL_LEN="--max-model-len $2"; shift 2 ;;
         --concat-all-db)    CONCAT_ALL_DB="--concat-all-db"; shift ;;
         --use-contexts)     USE_CONTEXTS="$2";      shift 2 ;;
         --similarity-threshold) SIMILARITY_THRESHOLD="$2"; shift 2 ;;
@@ -162,6 +172,10 @@ for METHOD in "${METHODS[@]}"; do
             ${ADAPTIVE_K} \
             ${RETURN_TRIPLETS} \
             ${USE_INVERSES} \
+            ${TEMPERATURE} \
+            ${TOP_P} \
+            ${VLLM_TOP_K} \
+            ${MAX_MODEL_LEN} \
             --eval \
             --resume
 
