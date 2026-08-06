@@ -17,6 +17,10 @@
 # Load the required environmentt
 source activate mem
 
+# WANDB destination — Menghan's KBevo project
+export WANDB_ENTITY=KBevo
+export WANDB_PROJECT=LMLM
+
 # Navigate to the working directory
 cd /share/j_sun/mx253_lmlm/
 

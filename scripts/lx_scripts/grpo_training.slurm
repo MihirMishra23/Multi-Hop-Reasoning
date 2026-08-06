@@ -20,6 +20,10 @@
 # Load the required environmentt
 source activate mem
 
+# WANDB destination — Menghan's KBevo project
+export WANDB_ENTITY=KBevo
+export WANDB_PROJECT=LMLM
+
 # Navigate to the working directory
 cd /share/j_sun/mx253_lmlm/
 
@@ -33,7 +37,7 @@ DATASET=hotpotqa-v2
 # MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-184
 # MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k
 MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4/checkpoint-368
-SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/main/0805_ret_0.6_top_k_4
+SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/main/0805_ret_0.6_top_k_4_4b200s
 RETRIEVAL_THRESHOLD=0.6
 RETRIEVAL_TOP_K=4
 NUM_GENERATIONS=32
