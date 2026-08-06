@@ -1,0 +1,24 @@
+{
+  "official_repository": "https://github.com/StonyBrookNLP/ircot",
+  "official_commit": "3c1820f698eea5eeddb4fba3c56b64c961e063e4",
+  "download_script": "download/processed_data.sh",
+  "release_file_id": "1t2BjJtsejSIUZI54PKObMFG6_wMMG3bC",
+  "archive_sha256": "271fff07efb120a71739c89ab69ab10f4c00059e74b2f7b451a607158c364906",
+  "files": {
+    "hotpotqa/test_subsampled.jsonl": {
+      "rows": 500,
+      "sha256": "729d8987560092c8476523488069e6fb9bd1527157dc0d7bfebf3ddc336c558e",
+      "ordered_question_ids_sha256": "5a4e3f9a32493c31d0f1f2eaf57ee5ee976f9b53303a3a72ffa026350325a5b2"
+    },
+    "2wikimultihopqa/test_subsampled.jsonl": {
+      "rows": 500,
+      "sha256": "4948757b90627f40b77cd6bf81a62c1a7ad525d6a6a0c91b17a2e0e2fa88f5bc",
+      "ordered_question_ids_sha256": "e1f97e82bcf33b895bf45d908bd67f9ccdfbfd98c6841a00d206ea04712dd416"
+    },
+    "musique/test_subsampled.jsonl": {
+      "rows": 500,
+      "sha256": "380b4c567a9d8168e0be36e9ccd12953c285edfb77dd2fd0ecef64b6f8e7da31",
+      "ordered_question_ids_sha256": "b0e26e358eeccf96d9e20dc73d8edec2ada359bdf21590bd80e4a3e68c83fba6"
+    }
+  }
+}

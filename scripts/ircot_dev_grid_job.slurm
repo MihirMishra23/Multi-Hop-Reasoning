@@ -1,5 +1,5 @@
 #!/bin/bash
-# One cell of the exact IRCoT prompt-set-1 development sweep.
+# One cell of the exact IRCoT development sweep or best-HP test evaluation.
 
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -28,6 +28,10 @@ set -euo pipefail
 REPO_DIR="${REPO_DIR:-/home/rtn27/Multi-Hop-Reasoning-ircot-table3}"
 IRCOT_ROOT="${IRCOT_ROOT:-/share/j_sun/rtn27/ircot_faithful}"
 OUTPUT_DIR="${OUTPUT_DIR:-${IRCOT_ROOT}/predictions/dev_grid}"
+EVALUATION_SPLIT="${EVALUATION_SPLIT:-dev}"
+TOTAL_COUNT="${TOTAL_COUNT:-100}"
+PROMPT_SET="${PROMPT_SET:-1}"
+SAVE_LABEL="${SAVE_LABEL:-paperdev}"
 
 case "${DATASET}" in
     hotpotqa) upstream_dataset=hotpotqa ;;
@@ -42,18 +46,23 @@ case "${MODEL}" in
 esac
 case "${RETRIEVAL_K}" in 2|4|6|8) ;; *) echo "Unsupported RETRIEVAL_K=${RETRIEVAL_K}" >&2; exit 2 ;; esac
 case "${DISTRACTOR_COUNT}" in 1|2|3) ;; *) echo "Unsupported DISTRACTOR_COUNT=${DISTRACTOR_COUNT}" >&2; exit 2 ;; esac
+case "${EVALUATION_SPLIT}" in dev|test) ;; *) echo "Unsupported EVALUATION_SPLIT=${EVALUATION_SPLIT}" >&2; exit 2 ;; esac
+case "${PROMPT_SET}" in 1|2|3) ;; *) echo "Unsupported PROMPT_SET=${PROMPT_SET}" >&2; exit 2 ;; esac
+case "${TOTAL_COUNT}" in 100|500) ;; *) echo "Unsupported TOTAL_COUNT=${TOTAL_COUNT}" >&2; exit 2 ;; esac
+
+evaluation_file="${IRCOT_ROOT}/data/processed_data/${upstream_dataset}/${EVALUATION_SPLIT}_subsampled.jsonl"
 
 source /share/apps/software/anaconda3/etc/profile.d/conda.sh
 conda activate multi-hop-reasoning
 cd "${REPO_DIR}"
 
-test -f "${IRCOT_ROOT}/data/processed_data/${upstream_dataset}/dev_subsampled.jsonl"
+test -f "${evaluation_file}"
 test -f "${IRCOT_ROOT}/manifests/${upstream_dataset}_index.json"
 curl -fsS "${IRCOT_RETRIEVER_URL}/" >/dev/null
 
 echo "code_commit=$(git rev-parse HEAD)"
-echo "dataset=${DATASET} model=${MODEL} k=${RETRIEVAL_K} distractors=${DISTRACTOR_COUNT} prompt_set=1"
-echo "evaluation_file=${IRCOT_ROOT}/data/processed_data/${upstream_dataset}/dev_subsampled.jsonl"
+echo "dataset=${DATASET} model=${MODEL} split=${EVALUATION_SPLIT} count=${TOTAL_COUNT} k=${RETRIEVAL_K} distractors=${DISTRACTOR_COUNT} prompt_set=${PROMPT_SET}"
+echo "evaluation_file=${evaluation_file}"
 nvidia-smi --query-gpu=name,uuid,driver_version,memory.total --format=csv,noheader
 
 MIN_GPU_MEMORY_MIB="${MIN_GPU_MEMORY_MIB:-0}"
@@ -71,22 +80,23 @@ python src/eval_multihop.py \
     --method ircot \
     --dataset "${DATASET}" \
     --setting distractor \
-    --split dev \
+    --split "${EVALUATION_SPLIT}" \
     --model "${MODEL}" \
     --model-revision "${model_revision}" \
     --batch-size 1 \
     --start-index 0 \
-    --total-count 100 \
+    --total-count "${TOTAL_COUNT}" \
     --save-every 10 \
+    --resume \
     --output-dir "${OUTPUT_DIR}" \
-    --save-version "_paperdev_ps1_${RUN_TAG}" \
+    --save-version "_${SAVE_LABEL}_ps${PROMPT_SET}_${RUN_TAG}" \
     --temperature 0 \
     --max-tokens 300 \
     --ircot-retriever-url "${IRCOT_RETRIEVER_URL}" \
     --ircot-index-manifest "${IRCOT_ROOT}/manifests/${upstream_dataset}_index.json" \
-    --ircot-evaluation-file "${IRCOT_ROOT}/data/processed_data/${upstream_dataset}/dev_subsampled.jsonl" \
+    --ircot-evaluation-file "${evaluation_file}" \
     --ircot-prompt-dir provenance/ircot/prompts \
-    --ircot-prompt-set 1 \
+    --ircot-prompt-set "${PROMPT_SET}" \
     --ircot-retrieval-k "${RETRIEVAL_K}" \
     --ircot-distractor-count "${DISTRACTOR_COUNT}" \
     --ircot-max-evidence 15 \

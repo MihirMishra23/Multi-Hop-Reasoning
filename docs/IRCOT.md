@@ -108,6 +108,29 @@ completed artifacts that contain any generation trace error, as well as
 missing or duplicate grid cells, so an OOM cannot silently become a reported
 score.
 
+## Best-HP test evaluation
+
+The [IRCoT paper](https://aclanthology.org/2023.acl-long.557/) evaluates the development-selected settings on each released
+500-row `test_subsampled.jsonl` using prompt sets 1, 2, and 3, then reports the
+mean and sample standard deviation across the three results. The official GPT3
+IRCoT QA paper values are HotpotQA 49.3 EM / 60.7±1.1 F1, 2WikiMultiHopQA
+57.7 EM / 68.0±1.5 F1, and MuSiQue 26.5 EM / 36.5±1.2 F1. These are reference
+values, not expected outputs after substituting Qwen.
+
+After the development summary has selected the six settings, launch the 18
+test cells and summarize them with:
+
+```bash
+IRCOT_RETRIEVER_URL=http://RETRIEVER_HOST:18000 \
+  bash scripts/launch_ircot_test_best.sh
+python scripts/summarize_ircot_test_best.py /path/to/predictions/test_best/RUN_TAG \
+  --output /path/to/ircot_test_summary.json
+```
+
+The jobs save every 10 examples and resume the same artifact after a Slurm
+restart. The released archive and exact test-file hashes are recorded in
+`provenance/ircot/official_test_data.json`.
+
 ## Faithfulness boundary
 
 The evaluator preserves the released prompt reader and 8,000-token fitting
