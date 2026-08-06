@@ -18,8 +18,10 @@ Notes:
 - Context splitting (sentence grouping >= 800 chars) is handled by eval_multihop.py, not here.
 """
 
+import gzip
 import json
 import os
+import warnings
 from typing import Any, Dict, List, Optional
 
 from datasets import Dataset as HFDataset  # type: ignore
@@ -27,6 +29,11 @@ from datasets import load_dataset  # type: ignore
 
 # Path to the PopQA Wikipedia corpus
 POPQA_CORPUS_PATH = "/share/j_sun/lmlm_multihop/popqa/popqa_corpus_1000_ex_seed_42.json"
+
+
+def _resolve_popqa_corpus_path(corpus_path: Optional[str]) -> str:
+    """Resolve an explicit path, the environment override, or the legacy artifact."""
+    return corpus_path or os.environ.get("POPQA_CORPUS_PATH") or POPQA_CORPUS_PATH
 
 
 def _normalize_split(split: str) -> str:
@@ -49,53 +56,50 @@ def _load_popqa_corpus(corpus_path: str = POPQA_CORPUS_PATH) -> List[Dict[str, A
     if not os.path.exists(corpus_path):
         raise FileNotFoundError(f"PopQA corpus not found: {corpus_path}")
 
-    with open(corpus_path, "r", encoding="utf-8") as f:
-        corpus = json.load(f)
+    opener = gzip.open if corpus_path.endswith(".gz") else open
+    with opener(corpus_path, "rt", encoding="utf-8") as stream:
+        if corpus_path.endswith((".jsonl", ".jsonl.gz")):
+            corpus = [json.loads(line) for line in stream if line.strip()]
+        else:
+            payload = json.load(stream)
+            if isinstance(payload, list):
+                corpus = payload
+            elif isinstance(payload, dict):
+                corpus = payload.get("articles") or payload.get("records") or []
+            else:
+                corpus = []
 
+    if not isinstance(corpus, list):
+        raise ValueError(f"PopQA corpus must contain a list of records: {corpus_path}")
     return corpus
 
 
-def _build_context_titles_from_corpus(corpus: List[Dict[str, Any]]) -> List[str]:
-    """Extract title list from corpus.
+def _build_corpus_index(corpus: List[Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
+    """Index usable articles by requested and canonical title.
 
-    Args:
-        corpus: List of corpus entries with 'title' and 'paragraphs'
-
-    Returns:
-        List of titles (parallel to contexts returned by _build_contexts_from_corpus)
+    The historical artifact was deduplicated and saved in an order unrelated to
+    the shuffled PopQA rows.  A title-keyed join is therefore required even for
+    reproducing the original 1,000-row evaluation subset.
     """
-    titles: List[str] = []
+    index: Dict[str, Dict[str, str]] = {}
     for entry in corpus:
-        if isinstance(entry, dict):
-            title = entry.get("title", "")
-            titles.append(str(title))
-    return titles
-
-
-def _build_contexts_from_corpus(corpus: List[Dict[str, Any]]) -> List[str]:
-    """Build context strings from corpus.
-
-    Args:
-        corpus: List of corpus entries with 'title' and 'paragraphs'
-
-    Returns:
-        List of concatenated paragraph strings (one per corpus entry)
-    """
-    contexts: List[str] = []
-    for entry in corpus:
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or entry.get("status", "ok") != "ok":
             continue
-
         paragraphs = entry.get("paragraphs", [])
         if not isinstance(paragraphs, list):
             continue
-
-        # Concatenate all paragraphs with double newline separator
-        text = "\n\n".join(str(p).strip() for p in paragraphs if str(p).strip())
-        if text:
-            contexts.append(text)
-
-    return contexts
+        text = "\n\n".join(
+            str(paragraph).strip() for paragraph in paragraphs if str(paragraph).strip()
+        )
+        if not text:
+            continue
+        requested_title = str(entry.get("requested_title") or entry.get("title") or "").strip()
+        canonical_title = str(entry.get("title") or requested_title).strip()
+        article = {"title": canonical_title, "text": text}
+        for title in (requested_title, canonical_title):
+            if title:
+                index.setdefault(title, article)
+    return index
 
 
 def _build_answers(answer_field: Any) -> List[str]:
@@ -112,7 +116,7 @@ def _build_answers(answer_field: Any) -> List[str]:
         result = []
         for a in answer_field:
             # Handle case where list item might be a JSON string
-            if isinstance(a, str) and a.strip().startswith('['):
+            if isinstance(a, str) and a.strip().startswith("["):
                 try:
                     parsed = json.loads(a)
                     if isinstance(parsed, list):
@@ -129,7 +133,7 @@ def _build_answers(answer_field: Any) -> List[str]:
     elif answer_field is not None:
         # Try to parse as JSON if it's a string representation of a list
         answer_str = str(answer_field).strip()
-        if answer_str.startswith('['):
+        if answer_str.startswith("["):
             try:
                 parsed = json.loads(answer_str)
                 if isinstance(parsed, list):
@@ -140,15 +144,15 @@ def _build_answers(answer_field: Any) -> List[str]:
     return []
 
 
-def _normalize_hf_dataset(ds: HFDataset, contexts: List[str], context_titles: List[str]) -> HFDataset:
+def _normalize_hf_dataset(ds: HFDataset, corpus_index: Dict[str, Dict[str, str]]) -> HFDataset:
     """Normalize PopQA HF dataset to unified schema.
 
     Args:
         ds: Raw HuggingFace dataset
-        contexts: Pre-loaded contexts from corpus (aligned by index)
-        context_titles: Pre-loaded context titles from corpus (aligned by index)
+        corpus_index: Wikipedia articles keyed by PopQA's subject title
     """
-    def _map(ex: Dict[str, Any], idx: int) -> Dict[str, Any]:
+
+    def _map(ex: Dict[str, Any]) -> Dict[str, Any]:
         ex_id = ex.get("id") or ex.get("question_id") or ""
         question = ex.get("question", "")
 
@@ -156,9 +160,10 @@ def _normalize_hf_dataset(ds: HFDataset, contexts: List[str], context_titles: Li
         answer_field = ex.get("possible_answers")
         answers = _build_answers(answer_field)
 
-        # Get the context for this specific example (corpus is aligned by index)
-        ex_contexts = [contexts[idx]] if idx < len(contexts) else []
-        ex_context_titles = [context_titles[idx]] if idx < len(context_titles) else []
+        requested_title = str(ex.get("s_wiki_title") or ex.get("subj") or "").strip()
+        article = corpus_index.get(requested_title)
+        ex_contexts = [article["text"]] if article else []
+        ex_context_titles = [article["title"]] if article else []
 
         return {
             "id": str(ex_id),
@@ -170,10 +175,9 @@ def _normalize_hf_dataset(ds: HFDataset, contexts: List[str], context_titles: Li
             "supporting_facts": [],  # PopQA has no sentence-level supporting facts
         }
 
-    # Map to unified schema with indices, avoid cache conflicts
+    # Avoid cache conflicts with older positional PopQA normalization.
     return ds.map(
         _map,
-        with_indices=True,
         remove_columns=ds.column_names,
         desc="normalize popqa",
         load_from_cache_file=False,
@@ -187,7 +191,7 @@ def load_popqa(
     limit: Optional[int] = None,
     seed: Optional[int] = None,
     setting: Optional[str] = None,
-    corpus_path: str = POPQA_CORPUS_PATH,
+    corpus_path: Optional[str] = None,
 ) -> HFDataset:
     """Load PopQA with unified schema.
 
@@ -197,7 +201,9 @@ def load_popqa(
         limit: optional max number of rows to return
         seed: optional random seed for shuffling
         setting: dataset setting (unused for PopQA)
-        corpus_path: path to the PopQA Wikipedia corpus JSON
+        corpus_path: path to a PopQA Wikipedia corpus JSON/JSONL file. If omitted,
+            POPQA_CORPUS_PATH from the environment is used before the bundled
+            legacy artifact.
 
     Returns:
         HFDataset with unified schema
@@ -205,18 +211,16 @@ def load_popqa(
     split_norm = _normalize_split(split)
 
     # Load the Wikipedia corpus
-    corpus = _load_popqa_corpus(corpus_path)
-    contexts = _build_contexts_from_corpus(corpus)
-    context_titles = _build_context_titles_from_corpus(corpus)
+    resolved_corpus_path = _resolve_popqa_corpus_path(corpus_path)
+    corpus = _load_popqa_corpus(resolved_corpus_path)
+    corpus_index = _build_corpus_index(corpus)
 
     # Load from Hugging Face
     # PopQA is available on HF as "akariasai/PopQA"
     try:
         raw = load_dataset("akariasai/PopQA", split=split_norm)  # type: ignore
     except Exception as e:
-        raise RuntimeError(
-            f"Failed to load PopQA from Hugging Face (split={split_norm}): {e}"
-        )
+        raise RuntimeError(f"Failed to load PopQA from Hugging Face (split={split_norm}): {e}")
 
     # Shuffle with seed if provided (before normalizing to avoid duplicating heavy context data)
     if seed is not None:
@@ -226,13 +230,17 @@ def load_popqa(
     if limit is not None:
         raw = raw.select(range(min(limit, len(raw))))
 
-    # Limit contexts and context_titles to match the dataset length
-    # (corpus was pre-built with same seed/limit, so indices align)
-    dataset_len = len(raw)
-    contexts = contexts[:dataset_len]
-    context_titles = context_titles[:dataset_len]
+    requested_titles = {str(title).strip() for title in raw["s_wiki_title"] if str(title).strip()}
+    missing_titles = requested_titles.difference(corpus_index)
+    if missing_titles:
+        preview = ", ".join(sorted(missing_titles)[:3])
+        warnings.warn(
+            f"PopQA corpus covers {len(requested_titles) - len(missing_titles)}/"
+            f"{len(requested_titles)} requested Wikipedia titles; missing examples: {preview}",
+            RuntimeWarning,
+        )
 
     # Normalize to unified schema (adds contexts to each example)
-    ds = _normalize_hf_dataset(raw, contexts, context_titles)
+    ds = _normalize_hf_dataset(raw, corpus_index)
 
     return ds
