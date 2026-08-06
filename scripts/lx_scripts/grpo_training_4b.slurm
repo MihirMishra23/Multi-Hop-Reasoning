@@ -17,7 +17,7 @@
 # Load the required environmentt
 source activate mem
 
-# WANDB destination — Menghan's KBevo project
+# WANDB destination
 export WANDB_ENTITY=KBevo
 export WANDB_PROJECT=LMLM
 
