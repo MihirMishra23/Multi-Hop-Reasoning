@@ -1,5 +1,5 @@
 #
-# eval_lmlm_multihop.sh — Evaluate lmlm / two_phase / direct / icl / rag methods
+# eval_lmlm_multihop.sh — Evaluate lmlm / two_phase / direct / icl / rag / ircot methods
 #
 # Usage:
 #   bash scripts/eval_lmlm_multihop.sh --method lmlm --dataset hotpotqa --split dev
@@ -21,6 +21,15 @@ USE_TRAIN_PARAMS=""     # set to "--use-train-params" to use training sampling p
 CONCAT_ALL_DB=""        # set to "--concat-all-db" to build unified database (two_phase only)
 USE_CONTEXTS="golden"   # "golden" | "all" (two_phase only)
 SIMILARITY_THRESHOLD=0.6
+EMBEDDING_BATCH_SIZE=2048
+VLLM_GPU_MEMORY_UTILIZATION=0.6
+IRCOT_RETRIEVAL_K=6
+IRCOT_MAX_EVIDENCE=15
+IRCOT_MAX_STEPS=10
+IRCOT_GENERATOR_MAX_TOKENS=300
+IRCOT_DISTRACTOR_COUNT=2
+IRCOT_PROMPT_DIR="${IRCOT_PROMPT_DIR:-provenance/ircot/prompts}"
+IRCOT_RETRIEVER_URL="${IRCOT_RETRIEVER_URL:-}"
 METHODS=("lmlm")
 OUTPUT_DIR=./output/main_tables
 SETTING=${SETTING:-distractor}
@@ -42,6 +51,15 @@ while [[ $# -gt 0 ]]; do
         --concat-all-db)    CONCAT_ALL_DB="--concat-all-db"; shift ;;
         --use-contexts)     USE_CONTEXTS="$2";      shift 2 ;;
         --similarity-threshold) SIMILARITY_THRESHOLD="$2"; shift 2 ;;
+        --embedding-batch-size) EMBEDDING_BATCH_SIZE="$2"; shift 2 ;;
+        --vllm-gpu-memory-utilization) VLLM_GPU_MEMORY_UTILIZATION="$2"; shift 2 ;;
+        --ircot-retrieval-k) IRCOT_RETRIEVAL_K="$2"; shift 2 ;;
+        --ircot-max-evidence) IRCOT_MAX_EVIDENCE="$2"; shift 2 ;;
+        --ircot-max-steps) IRCOT_MAX_STEPS="$2"; shift 2 ;;
+        --ircot-generator-max-tokens|--ircot-step-max-tokens) IRCOT_GENERATOR_MAX_TOKENS="$2"; shift 2 ;;
+        --ircot-distractor-count) IRCOT_DISTRACTOR_COUNT="$2"; shift 2 ;;
+        --ircot-prompt-dir) IRCOT_PROMPT_DIR="$2"; shift 2 ;;
+        --ircot-retriever-url) IRCOT_RETRIEVER_URL="$2"; shift 2 ;;
         --save_version)     SAVE_VERSION="$2";      shift 2 ;;
         --output-dir)       OUTPUT_DIR="$2";        shift 2 ;;
         --setting)          SETTING="$2";          shift 2 ;;
@@ -106,7 +124,7 @@ elif [ "${DATASET}" = "synthworlds" ]; then
         echo "Error: synthworlds SPLIT must be 'dev', got '${SPLIT}'"
         exit 1
     fi
-elif [ "${DATASET}" = "trivia_qa" ]; then
+elif [ "${DATASET}" = "trivia_qa" ] || [ "${DATASET}" = "popqa" ]; then
     if [ "${SPLIT}" = "dev" ]; then
         START_IDX=0
     else
@@ -123,6 +141,7 @@ MAX_TOKENS=1024
 BATCH_SIZE_DIRECT=32
 BATCH_SIZE_ICL=1
 BATCH_SIZE_RAG=1
+BATCH_SIZE_IRCOT=1
 BATCH_SIZE_LMLM=64
 SAVE_EVERY=64
 SEED=42
@@ -159,6 +178,8 @@ for METHOD in "${METHODS[@]}"; do
             --start-index ${START_IDX} \
             --top-k ${TOP_K} \
             --similarity-threshold ${SIMILARITY_THRESHOLD} \
+            --embedding-batch-size ${EMBEDDING_BATCH_SIZE} \
+            --vllm-gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION} \
             ${ADAPTIVE_K} \
             ${RETURN_TRIPLETS} \
             ${USE_INVERSES} \
@@ -182,6 +203,8 @@ for METHOD in "${METHODS[@]}"; do
             --start-index ${START_IDX} \
             --top-k ${TOP_K} \
             --similarity-threshold ${SIMILARITY_THRESHOLD} \
+            --embedding-batch-size ${EMBEDDING_BATCH_SIZE} \
+            --vllm-gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION} \
             ${RETURN_TRIPLETS} \
             ${USE_INVERSES} \
             ${USE_TRAIN_PARAMS} \
@@ -195,6 +218,8 @@ for METHOD in "${METHODS[@]}"; do
             BATCH_SIZE=${BATCH_SIZE_ICL}
         elif [ "${METHOD}" = "rag" ]; then
             BATCH_SIZE=${BATCH_SIZE_RAG}
+        elif [ "${METHOD}" = "ircot" ]; then
+            BATCH_SIZE=${BATCH_SIZE_IRCOT}
         else
             BATCH_SIZE=${BATCH_SIZE_DIRECT}
         fi
@@ -211,6 +236,15 @@ for METHOD in "${METHODS[@]}"; do
             --seed ${SEED} \
             --save-every ${SAVE_EVERY} \
             --start-index ${START_IDX} \
+            --rag-k ${TOP_K} \
+            --ircot-retrieval-k ${IRCOT_RETRIEVAL_K} \
+            --ircot-max-evidence ${IRCOT_MAX_EVIDENCE} \
+            --ircot-max-steps ${IRCOT_MAX_STEPS} \
+            --ircot-generator-max-tokens ${IRCOT_GENERATOR_MAX_TOKENS} \
+            --ircot-distractor-count ${IRCOT_DISTRACTOR_COUNT} \
+            --ircot-prompt-dir "${IRCOT_PROMPT_DIR}" \
+            --ircot-retriever-url "${IRCOT_RETRIEVER_URL}" \
+            --save-version "_${SAVE_VERSION}" \
             --eval \
             --resume
     fi

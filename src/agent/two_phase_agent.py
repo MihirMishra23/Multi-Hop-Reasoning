@@ -69,8 +69,14 @@ class TwoPhaseAgent(Agent):
         repetition_penalty: float = 1.0,
         max_completion_length: int = 1024,
         max_model_len: int = 4096,
+        embedding_batch_size: int = 2048,
+        vllm_gpu_memory_utilization: float = 0.6,
         **kwargs,
     ):
+        if embedding_batch_size <= 0:
+            raise ValueError("embedding_batch_size must be positive")
+        if not 0.0 < vllm_gpu_memory_utilization <= 1.0:
+            raise ValueError("vllm_gpu_memory_utilization must be in (0, 1]")
         self.model_path = model_path
         self.top_k = top_k
         self.similarity_threshold = similarity_threshold
@@ -78,6 +84,8 @@ class TwoPhaseAgent(Agent):
         self.return_triplets = return_triplets
         self.concat_all_db = concat_all_db
         self.contexts_are_split = contexts_are_split
+        self.embedding_batch_size = embedding_batch_size
+        self.vllm_gpu_memory_utilization = vllm_gpu_memory_utilization
         # sampling params
         self.temperature = temperature
         self.top_p = top_p
@@ -102,7 +110,7 @@ class TwoPhaseAgent(Agent):
         self.llm = LLM(
             model=model_path,
             tensor_parallel_size=1,
-            gpu_memory_utilization=0.6,
+            gpu_memory_utilization=self.vllm_gpu_memory_utilization,
             seed=42,
             tokenizer=model_path,
             max_model_len=max_model_len,
@@ -191,6 +199,7 @@ class TwoPhaseAgent(Agent):
             default_threshold=self.similarity_threshold,
             adaptive=False,
             use_inverses=self.use_inverses,
+            batch_size=self.embedding_batch_size,
         )[0]
 
         # Store it for use in run()
@@ -264,6 +273,7 @@ class TwoPhaseAgent(Agent):
                 default_threshold=self.similarity_threshold,
                 adaptive=False,
                 use_inverses=self.use_inverses,
+                batch_size=self.embedding_batch_size,
             )
             self._phase1_dbs = dbs
             return dbs
@@ -341,6 +351,7 @@ class TwoPhaseAgent(Agent):
                 default_threshold=self.similarity_threshold,
                 adaptive=False,
                 use_inverses=self.use_inverses,
+                batch_size=self.embedding_batch_size,
             )
             total_triplets = sum(len(t) for t in combined_triplets_per_question)
             print(f"[Phase 1 - Split Mode] Built {len(dbs)} DBs with {total_triplets} total triplets")

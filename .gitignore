@@ -48,3 +48,5 @@ output/
 
 mlruns/
 core
+# Downloaded, checksum-verified assets from the pinned IRCoT release.
+provenance/ircot/prompts/

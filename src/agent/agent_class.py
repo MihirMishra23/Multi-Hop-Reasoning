@@ -11,6 +11,7 @@ class AgentStep:
     prompt: str
     answer: Optional[str]
     action: ActionType
+    raw_response: Optional[str] = None
     error: Optional[str] = None
     tool_name: Optional[str] = None
     tool_args: Optional[Dict[str, Any]] = None
@@ -98,5 +99,4 @@ class Agent:
                 break
         # Return a copy of the trace for the caller
         return [final_answer], [list(self.trace)]
-
 
