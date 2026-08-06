@@ -8,13 +8,14 @@ from .icl_agent import ICLAgent
 from .cot_agent import CotAgent
 from .lmlm_agent import LMLMAgent
 from .two_phase_agent import TwoPhaseAgent
+from .search_r1_agent import SearchR1Agent
 
 
 def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
     """Return an Agent instance for the given method.
 
     Args:
-        method: Agent method type ("rag", "icl", "db", "lmlm", "two_phase")
+        method: Agent method type ("rag", "icl", "db", "lmlm", "two_phase", "search_r1")
         agent_kwargs: Dictionary containing agent-specific parameters
 
     Returns:
@@ -82,6 +83,15 @@ def get_agent(method: str, agent_kwargs: Dict[str, Any]) -> Agent:
             if model_path is None:
                 raise Exception("You must set --model-path for two_phase method.")
             agent = TwoPhaseAgent(**agent_kwargs)
+
+        case "search_r1":
+            model_path = agent_kwargs.get("model_path")
+            retrieval_url = agent_kwargs.get("retrieval_url")
+            if model_path is None:
+                raise Exception("You must set --model-path for search_r1 method.")
+            if retrieval_url is None:
+                raise Exception("You must set --search-r1-retrieval-url for search_r1 method.")
+            agent = SearchR1Agent(**agent_kwargs)
 
         case _:
             raise NotImplementedError(f"Method '{method}' is not implemented.")

@@ -352,6 +352,7 @@ def process_single_batch(
                 "error": step.error,
                 "tool_name": step.tool_name,
                 "tool_args": step.tool_args,
+                "tool_result": step.tool_result,
                 "golden_triplets" : step.golden_triplets,
             }
             for step in (trace or [])
@@ -444,6 +445,20 @@ def save_results_to_file(
             "concat_all_db": args.concat_all_db,
             "use_contexts": args.use_contexts,
         }
+    if args.method == "search_r1":
+        output["metadata"]["search_r1"] = {
+            "retrieval_url": args.search_r1_retrieval_url,
+            "retrieval_top_k": args.search_r1_retrieval_k,
+            "prompt_variant": args.search_r1_prompt_variant,
+            "enable_thinking": args.search_r1_enable_thinking,
+            "max_steps": args.max_steps,
+            "max_tool_response_length": args.search_r1_max_tool_response_length,
+            "tool_response_truncate_side": args.search_r1_tool_response_truncate_side,
+            "retrieval_timeout": args.search_r1_retrieval_timeout,
+            "retrieval_workers": args.search_r1_retrieval_workers,
+            "max_response_length": args.search_r1_max_response_length,
+            "max_model_len": args.search_r1_max_model_len,
+        }
     # Add retrieval metadata for RAG
     if args.method == "rag":
         output["metadata"]["retrieval"] = {
@@ -478,7 +493,7 @@ def main() -> None:
     parser.add_argument(
         "--method",
         default="icl",
-        choices=["db", "rag", "icl", "lmlm", "direct", "two_phase"],
+        choices=["db", "rag", "icl", "lmlm", "direct", "two_phase", "search_r1"],
         help="Agent method label (for output path)",
     )
     parser.add_argument(
@@ -540,6 +555,63 @@ def main() -> None:
     )
     parser.add_argument("--rag-k", type=int, default=4, help="Top-k documents to retrieve")
     parser.add_argument(
+        "--search-r1-retrieval-url",
+        default="http://127.0.0.1:8000/retrieve",
+        help="Search-R1 retrieval service endpoint",
+    )
+    parser.add_argument(
+        "--search-r1-retrieval-k", type=int, default=3, help="Search-R1 documents per query"
+    )
+    parser.add_argument(
+        "--search-r1-prompt-variant",
+        choices=["default", "thinkingtag", "icl3hop"],
+        default="default",
+        help="Prompt variant used to train the Search-R1 checkpoint",
+    )
+    parser.add_argument(
+        "--search-r1-enable-thinking",
+        action="store_true",
+        help="Enable Qwen3 native thinking in the Search-R1 chat template",
+    )
+    parser.add_argument(
+        "--search-r1-max-tool-response-length",
+        type=int,
+        default=512,
+        help="Maximum Search-R1 tool response length in characters",
+    )
+    parser.add_argument(
+        "--search-r1-tool-response-truncate-side",
+        choices=["left", "right", "middle"],
+        default="left",
+    )
+    parser.add_argument(
+        "--search-r1-retrieval-timeout", type=float, default=30.0
+    )
+    parser.add_argument(
+        "--search-r1-retrieval-workers", type=int, default=32
+    )
+    parser.add_argument(
+        "--search-r1-max-response-length",
+        type=int,
+        default=2048,
+        help="Total Search-R1 trajectory token budget, including tool responses",
+    )
+    parser.add_argument(
+        "--search-r1-max-model-len", type=int, default=3072
+    )
+    # Shared by search_r1 and lmlm, which want different defaults (0.95 vs the
+    # historical greedy 1.0). Left as None here and resolved per-method after
+    # parse_args() so neither method's default behaviour changes.
+    parser.add_argument("--top-p", type=float, default=None,
+                        help="Nucleus sampling probability (default: 0.95 for search_r1, 1.0 for lmlm)")
+    parser.add_argument(
+        "--sampling-top-k", type=int, default=-1, help="Sampling top-k; -1 disables it"
+    )
+    parser.add_argument("--tensor-parallel-size", type=int, default=1)
+    parser.add_argument("--gpu-memory-utilization", type=float, default=0.85)
+    parser.add_argument("--max-num-seqs", type=int, default=None)
+    parser.add_argument("--enforce-eager", action="store_true")
+    parser.add_argument(
         "--debug-evidence",
         action="store_true",
         help="Include retrieved evidence in saved preds for debugging",
@@ -553,8 +625,8 @@ def main() -> None:
         ),
     )
 
-    parser.add_argument("--top-p", type=float, default=1.0,
-                        help="lmlm only: nucleus sampling top_p (two_phase resolves this from --use-train-params)")
+    # NOTE: --top-p is declared once above (shared with search_r1); for lmlm it
+    # defaults to 1.0. two_phase resolves top_p from --use-train-params instead.
     parser.add_argument("--vllm-top-k", type=int, default=0,
                         help="lmlm only: vLLM sampling top_k, 0 = disabled (distinct from retrieval --top-k)")
     parser.add_argument("--max-model-len", type=int, default=8192,
@@ -619,6 +691,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # --top-p is shared by search_r1 and lmlm but their historical defaults
+    # differ, so it is declared with default=None and resolved here. lmlm's 1.0
+    # (with --vllm-top-k 0) reproduces the original greedy decoding.
+    if args.top_p is None:
+        args.top_p = 1.0 if args.method == "lmlm" else 0.95
+
     # Validate use-contexts flag
     if args.use_contexts == "all" and args.method != "two_phase":
         raise ValueError("--use-contexts=all is only supported for --method=two_phase")
@@ -629,6 +707,19 @@ def main() -> None:
 
     if args.concat_all_db and args.method != "two_phase":
         raise ValueError("--concat-all-db is only supported for --method=two_phase")
+
+    if args.method == "search_r1":
+        if not args.model_path:
+            raise ValueError("--model-path is required for --method=search_r1")
+        if args.search_r1_retrieval_k <= 0:
+            raise ValueError("--search-r1-retrieval-k must be positive")
+        if args.search_r1_max_tool_response_length <= 0:
+            raise ValueError("--search-r1-max-tool-response-length must be positive")
+        if args.search_r1_retrieval_workers <= 0:
+            raise ValueError("--search-r1-retrieval-workers must be positive")
+        if args.search_r1_max_response_length <= 0 or args.search_r1_max_model_len <= 0:
+            raise ValueError("Search-R1 response and model lengths must be positive")
+        args.max_tokens = args.search_r1_max_response_length
 
     # Logging
     logging.basicConfig(
@@ -677,6 +768,11 @@ def main() -> None:
            if args.method == "two_phase" else {}),
         **({"top_p": args.top_p, "vllm_top_k": args.vllm_top_k, "max_model_len": args.max_model_len}
            if args.method == "lmlm" else {}),
+        **({
+            "top_p": args.top_p,
+            "sampling_top_k": args.sampling_top_k,
+            "max_model_len": args.search_r1_max_model_len,
+        } if args.method == "search_r1" else {}),
         "use_train_params": getattr(args, "use_train_params", False),
     }
 
@@ -787,7 +883,7 @@ def main() -> None:
 
     # Prepare output location
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
-    if args.method in ('lmlm', 'two_phase'):
+    if args.method in ('lmlm', 'two_phase', 'search_r1'):
         # Strip trailing slashes to ensure consistent path parsing
         model_path_clean = args.model_path.rstrip('/')
         model_name = model_path_clean.split('/')[-1] if "checkpoint" not in model_path_clean else model_path_clean.split('/')[-2]+"-ckpt"+model_path_clean.split('/')[-1].split("checkpoint-")[-1]
@@ -799,7 +895,8 @@ def main() -> None:
             settings_str += f"_ctx{args.use_contexts}"
             if args.concat_all_db:
                 settings_str += "_cdb"
-        settings_str += f"_k{args.top_k}"
+        if args.method != "search_r1":
+            settings_str += f"_k{args.top_k}"
         if getattr(args, "use_train_params", False):
             settings_str += "_tp"
         if args.dataset == "synthworlds":
@@ -870,7 +967,7 @@ def main() -> None:
     )
 
     llm = None
-    if args.method not in ("lmlm", "two_phase"):
+    if args.method not in ("lmlm", "two_phase", "search_r1"):
         llm = get_llm(model_name=args.model)
 
 
@@ -893,6 +990,26 @@ def main() -> None:
         "concat_all_db": args.concat_all_db if args.method == "two_phase" else False,
         "contexts_are_split": args.use_contexts == "all" if args.method == "two_phase" else False,
     }
+
+    if args.method == "search_r1":
+        agent_kwargs.update({
+            "retrieval_url": args.search_r1_retrieval_url,
+            "retrieval_top_k": args.search_r1_retrieval_k,
+            "retrieval_timeout": args.search_r1_retrieval_timeout,
+            "retrieval_workers": args.search_r1_retrieval_workers,
+            "prompt_variant": args.search_r1_prompt_variant,
+            "enable_thinking": args.search_r1_enable_thinking,
+            "top_p": args.top_p,
+            "sampling_top_k": args.sampling_top_k,
+            "max_model_len": args.search_r1_max_model_len,
+            "max_tool_response_length": args.search_r1_max_tool_response_length,
+            "tool_response_truncate_side": args.search_r1_tool_response_truncate_side,
+            "tensor_parallel_size": args.tensor_parallel_size,
+            "gpu_memory_utilization": args.gpu_memory_utilization,
+            "max_num_seqs": args.max_num_seqs,
+            "enforce_eager": args.enforce_eager,
+            "seed": args.seed,
+        })
 
     # Add RAG corpus if available (for fullwiki setting)
     if args.method == "rag" and rag_corpus:
