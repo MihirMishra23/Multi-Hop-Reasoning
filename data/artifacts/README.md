@@ -12,3 +12,10 @@ derived data rather than part of PopQA. Wikipedia text is available under the
 [Creative Commons Attribution-ShareAlike License](https://creativecommons.org/licenses/by-sa/4.0/);
 the corresponding source page for an entry titled `T` is
 `https://en.wikipedia.org/wiki/T`.
+
+Despite its filename, this historical file contains 992 unique articles. The
+seed-42 sample contained 1,000 question rows, six repeated subject titles, and
+two titles without a saved article. Its article order does not match the PopQA
+row order, so loaders must join it by title. Use `scripts/build_popqa_corpus.py`
+to produce an auditable full corpus; generated full snapshots should be hosted
+outside Git and pinned by commit plus checksum.

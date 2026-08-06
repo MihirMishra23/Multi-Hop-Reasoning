@@ -16,6 +16,7 @@ experiment/confiqa_table2_*.md
 # Data directories
 data/processed/
 data/raw/
+data/generated/
 
 # FlashRAG
 src/tools/FlashRAG/
