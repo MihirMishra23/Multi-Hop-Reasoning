@@ -20,6 +20,11 @@ REPO_DIR="${REPO_DIR:-/home/rtn27/Multi-Hop-Reasoning-ircot-table3}"
 IRCOT_ROOT="${IRCOT_ROOT:-/share/j_sun/rtn27/ircot_faithful}"
 DATASET="${DATASET:-2wiki}"
 MODEL="${MODEL:-qwen3-1.7b}"
+EVALUATION_SPLIT="${EVALUATION_SPLIT:-dev}"
+PROMPT_SET="${PROMPT_SET:-1}"
+RETRIEVAL_K="${RETRIEVAL_K:-6}"
+DISTRACTOR_COUNT="${DISTRACTOR_COUNT:-2}"
+OUTPUT_DIR="${OUTPUT_DIR:-${IRCOT_ROOT}/predictions/official_smoke}"
 
 case "${DATASET}" in
     hotpotqa) upstream_dataset=hotpotqa ;;
@@ -32,32 +37,41 @@ case "${MODEL}" in
     qwen3-4b) model_revision=1cfa9a7208912126459214e8b04321603b3df60c ;;
     *) echo "Unsupported MODEL=${MODEL}" >&2; exit 2 ;;
 esac
+case "${EVALUATION_SPLIT}" in dev|test) ;; *) echo "Unsupported EVALUATION_SPLIT=${EVALUATION_SPLIT}" >&2; exit 2 ;; esac
+case "${PROMPT_SET}" in 1|2|3) ;; *) echo "Unsupported PROMPT_SET=${PROMPT_SET}" >&2; exit 2 ;; esac
+case "${RETRIEVAL_K}" in 2|4|6|8) ;; *) echo "Unsupported RETRIEVAL_K=${RETRIEVAL_K}" >&2; exit 2 ;; esac
+case "${DISTRACTOR_COUNT}" in 1|2|3) ;; *) echo "Unsupported DISTRACTOR_COUNT=${DISTRACTOR_COUNT}" >&2; exit 2 ;; esac
+
+evaluation_file="${IRCOT_ROOT}/data/processed_data/${upstream_dataset}/${EVALUATION_SPLIT}_subsampled.jsonl"
 
 source /share/apps/software/anaconda3/etc/profile.d/conda.sh
 conda activate multi-hop-reasoning
 cd "${REPO_DIR}"
 
+test -f "${evaluation_file}"
+curl -fsS "${IRCOT_RETRIEVER_URL}/" >/dev/null
+
 python src/eval_multihop.py \
     --method ircot \
     --dataset "${DATASET}" \
     --setting distractor \
-    --split dev \
+    --split "${EVALUATION_SPLIT}" \
     --model "${MODEL}" \
     --model-revision "${model_revision}" \
     --batch-size 1 \
     --total-count 2 \
-    --output-dir "${IRCOT_ROOT}/predictions/official_smoke" \
-    --save-version "_official_${SLURM_JOB_ID}" \
+    --output-dir "${OUTPUT_DIR}" \
+    --save-version "_official_${EVALUATION_SPLIT}_ps${PROMPT_SET}_${SLURM_JOB_ID}" \
     --save-every 1 \
     --temperature 0 \
     --max-tokens 300 \
     --ircot-retriever-url "${IRCOT_RETRIEVER_URL}" \
     --ircot-index-manifest "${IRCOT_ROOT}/manifests/${upstream_dataset}_index.json" \
-    --ircot-evaluation-file "${IRCOT_ROOT}/data/processed_data/${upstream_dataset}/dev_subsampled.jsonl" \
+    --ircot-evaluation-file "${evaluation_file}" \
     --ircot-prompt-dir provenance/ircot/prompts \
-    --ircot-prompt-set 1 \
-    --ircot-retrieval-k 6 \
-    --ircot-distractor-count 2 \
+    --ircot-prompt-set "${PROMPT_SET}" \
+    --ircot-retrieval-k "${RETRIEVAL_K}" \
+    --ircot-distractor-count "${DISTRACTOR_COUNT}" \
     --ircot-max-evidence 15 \
     --ircot-max-steps 10 \
     --ircot-generator-max-tokens 300 \
