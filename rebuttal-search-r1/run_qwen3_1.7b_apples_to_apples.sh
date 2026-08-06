@@ -4,6 +4,6 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-export MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-1.7B}"
+export MODEL_ARTIFACT="${MODEL_ARTIFACT:-qwen3_1_7b}"
 export MODEL_RUN_NAME="${MODEL_RUN_NAME:-qwen3-1.7b}"
 exec "${SCRIPT_DIR}/run_qwen3_training.sh" "$@"

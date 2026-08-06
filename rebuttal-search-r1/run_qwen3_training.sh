@@ -10,7 +10,9 @@ REWARD_PATH="${REWARD_PATH:-${SCRIPT_DIR}/rewards/hotpotqa_f1.py}"
 
 TRAIN_DATA="${TRAIN_DATA:-${SCRIPT_DIR}/data/train_verl.parquet}"
 VAL_DATA="${VAL_DATA:-${SCRIPT_DIR}/data/test_verl.parquet}"
-MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-1.7B}"
+MODEL_ARTIFACT="${MODEL_ARTIFACT:-qwen3_1_7b}"
+MODEL_PATH="${MODEL_PATH:-}"
+MODEL_REVISION="${MODEL_REVISION:-}"
 MODEL_RUN_NAME="${MODEL_RUN_NAME:-qwen3-1.7b}"
 NUM_GPUS="${NUM_GPUS:-4}"
 LR="${LR:-1e-6}"
@@ -24,9 +26,24 @@ EXPERIMENT_NAME="${EXPERIMENT_NAME:-${MODEL_RUN_NAME}-searchR1-a2a-lr${LR_TAG}-n
 RUN_TAG="${SLURM_JOB_ID:-$(date +%Y%m%d_%H%M%S)}"
 ROLLOUT_DIR="${ROLLOUT_DIR:-${SCRIPT_DIR}/outputs/rollouts_${EXPERIMENT_NAME}_${RUN_TAG}}"
 
-export WANDB_ENTITY="${WANDB_ENTITY:-ryan-noonan-cornell-university}"
-export WANDB_PROJECT="${WANDB_PROJECT:-search-r1-hotpotqa}"
+export WANDB_ENTITY="${WANDB_ENTITY:-KBevo}"
+export WANDB_PROJECT="${WANDB_PROJECT:-LMLM}"
 export RETRIEVAL_URL
+
+if [ -z "${MODEL_PATH}" ]; then
+    MODEL_PATH="$("${PYTHON}" "${SCRIPT_DIR}/reproduction_manifest.py" --artifact "${MODEL_ARTIFACT}")"
+elif [ -d "${MODEL_PATH}" ]; then
+    MODEL_PATH="$(cd "${MODEL_PATH}" && pwd)"
+elif [ -n "${MODEL_REVISION}" ]; then
+    MODEL_PATH="$("${PYTHON}" "${SCRIPT_DIR}/reproduction_manifest.py" \
+        --repo-id "${MODEL_PATH}" --revision "${MODEL_REVISION}")"
+else
+    echo "A remote MODEL_PATH requires a full MODEL_REVISION commit hash." >&2
+    exit 2
+fi
+
+echo "Reproduction provenance: $("${PYTHON}" "${SCRIPT_DIR}/reproduction_manifest.py" --describe)"
+echo "Resolved model snapshot: ${MODEL_PATH}"
 
 for path in \
     "${TRAIN_DATA}" \
@@ -45,10 +62,7 @@ curl -fsS --max-time 5 "${RETRIEVAL_HEALTH_URL}" >/dev/null || {
 ulimit -n 65535 2>/dev/null || echo "Warning: could not raise the open-file limit" >&2
 mkdir -p "${ROLLOUT_DIR}"
 
-OUTPUT_ARGS=()
-if [ -n "${OUTPUT_DIR:-}" ]; then
-    OUTPUT_ARGS+=("trainer.default_local_dir=${OUTPUT_DIR}")
-fi
+OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/checkpoints/${WANDB_PROJECT}/${EXPERIMENT_NAME}}"
 
 "${PYTHON}" -m verl.trainer.main_ppo \
     --config-path="${CONFIG_PATH}" \
@@ -63,6 +77,6 @@ fi
     trainer.project_name="${WANDB_PROJECT}" \
     trainer.experiment_name="${EXPERIMENT_NAME}" \
     trainer.n_gpus_per_node="${NUM_GPUS}" \
+    trainer.default_local_dir="${OUTPUT_DIR}" \
     trainer.rollout_data_dir="${ROLLOUT_DIR}" \
-    "${OUTPUT_ARGS[@]}" \
     "$@"

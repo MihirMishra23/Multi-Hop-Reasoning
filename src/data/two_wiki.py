@@ -1,4 +1,4 @@
-from data.hotpotqa import _normalize_examples_pylist, _normalize_hf_dataset, _normalize_split
+from .hotpotqa import _normalize_examples_pylist, _normalize_hf_dataset, _normalize_split
 from datasets import Dataset as HFDataset  # type: ignore
 from datasets import load_dataset  # type: ignore
 from typing import Optional

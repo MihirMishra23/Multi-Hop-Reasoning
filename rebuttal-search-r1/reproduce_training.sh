@@ -8,6 +8,14 @@ cd "${SCRIPT_DIR}"
 PYTHON="${PYTHON:-python3}"
 MODEL_SIZE="${MODEL_SIZE:-1.7B}"
 PORT="${PORT:-8000}"
+RETRIEVER_MODEL="${RETRIEVER_MODEL:-$(
+    "${PYTHON}" "${SCRIPT_DIR}/reproduction_manifest.py" \
+        --artifact e5_base_v2 --field repo_id
+)}"
+RETRIEVER_REVISION="${RETRIEVER_REVISION:-$(
+    "${PYTHON}" "${SCRIPT_DIR}/reproduction_manifest.py" \
+        --artifact e5_base_v2 --field revision
+)}"
 DATA_DIR="${DATA_DIR:-${SCRIPT_DIR}/data}"
 INDEX_DIR="${INDEX_DIR:-${DATA_DIR}/index}"
 RETRIEVAL_URL="${RETRIEVAL_URL:-http://127.0.0.1:${PORT}/retrieve}"
@@ -16,17 +24,23 @@ RETRIEVAL_LOG="${RETRIEVAL_LOG:-${SCRIPT_DIR}/logs/retrieval.log}"
 
 mkdir -p "${DATA_DIR}" "${INDEX_DIR}" "$(dirname "${RETRIEVAL_LOG}")"
 
+prepared_data=0
 if [ "${FORCE_PREPARE:-0}" = "1" ] || \
    [ ! -f "${DATA_DIR}/train_verl.parquet" ] || \
    [ ! -f "${DATA_DIR}/test_verl.parquet" ] || \
    [ ! -f "${DATA_DIR}/hotpotqa_corpus.jsonl" ]; then
     "${PYTHON}" "${SCRIPT_DIR}/prepare_hotpotqa_data.py" --data-dir "${DATA_DIR}"
+    prepared_data=1
 fi
 
-if [ "${FORCE_INDEX:-0}" = "1" ] || [ ! -f "${INDEX_DIR}/e5_Flat.index" ]; then
+if [ "${FORCE_INDEX:-0}" = "1" ] || [ "${prepared_data}" = "1" ] || \
+   [ ! -f "${INDEX_DIR}/e5_Flat.index" ] || \
+   [ ! -f "${INDEX_DIR}/e5_Flat.index.manifest.json" ]; then
     "${PYTHON}" "${SCRIPT_DIR}/build_index_hotpotqa.py" \
         --corpus-path "${DATA_DIR}/hotpotqa_corpus.jsonl" \
         --output-dir "${INDEX_DIR}" \
+        --model "${RETRIEVER_MODEL}" \
+        --revision "${RETRIEVER_REVISION}" \
         --device "${INDEX_DEVICE:-cuda}"
 fi
 
@@ -50,6 +64,8 @@ else
     PYTHON="${PYTHON}" \
     INDEX_PATH="${INDEX_DIR}/e5_Flat.index" \
     CORPUS_PATH="${DATA_DIR}/hotpotqa_corpus.jsonl" \
+    RETRIEVER_MODEL="${RETRIEVER_MODEL}" \
+    RETRIEVER_REVISION="${RETRIEVER_REVISION}" \
     RETRIEVER_DEVICE="${RETRIEVER_DEVICE:-cuda}" \
     PORT="${PORT}" \
         "${SCRIPT_DIR}/launch_retrieval_verl.sh" >"${RETRIEVAL_LOG}" 2>&1 &

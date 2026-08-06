@@ -51,7 +51,7 @@ actor_rollout_ref:
     gpu_memory_utilization: 0.35
     free_cache_engine: false
     top_p: 0.95
-    top_k: 4
+    # verl 0.7 does not forward top_k through its multi-turn agent loop.
     temperature: 1.0
     engine_kwargs:
       sglang:

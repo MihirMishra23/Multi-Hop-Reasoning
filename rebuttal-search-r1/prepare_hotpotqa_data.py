@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.data.hotpotqa import load_hotpotqa  # noqa: E402
+from reproduction_manifest import artifact  # noqa: E402
 
 
 SYSTEM_PROMPT = "You are a helpful and harmless assistant."
@@ -92,6 +93,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
+    hotpotqa = artifact("hotpotqa")
     args.data_dir.mkdir(parents=True, exist_ok=True)
     train = load_hotpotqa(
         setting="distractor",
@@ -100,6 +102,8 @@ def main():
         sub_split="train",
         limit=args.train_size,
         seed=args.seed,
+        hf_repo_id=hotpotqa["repo_id"],
+        hf_revision=hotpotqa["revision"],
     )
     validation = load_hotpotqa(
         setting="distractor",
@@ -108,6 +112,8 @@ def main():
         sub_split="eval",
         limit=args.eval_size,
         seed=args.seed,
+        hf_repo_id=hotpotqa["repo_id"],
+        hf_revision=hotpotqa["revision"],
     )
 
     _write_parquet(train, "train", args.data_dir / "train_verl.parquet")

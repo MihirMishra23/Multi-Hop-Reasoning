@@ -333,6 +333,8 @@ def load_hotpotqa(
     limit: Optional[int] = None,
     seed: Optional[int] = None,
     sub_split: Optional[str] = None,
+    hf_repo_id: str = "hotpot_qa",
+    hf_revision: Optional[str] = None,
 ) -> HFDataset:
     """Load HotpotQA with unified schema.
 
@@ -342,6 +344,8 @@ def load_hotpotqa(
         source: "auto" (prefer local), "local", or "hf".
         limit: optional max number of rows to return.
         seed: optional random seed for shuffling. If provided, dataset will be shuffled deterministically.
+        hf_repo_id: Hugging Face dataset repository used when source is "hf".
+        hf_revision: Optional immutable Hugging Face dataset revision.
     """
 
     split_norm = _normalize_split(split)
@@ -367,15 +371,21 @@ def load_hotpotqa(
     # Fallback to Hugging Face
     hf_split = split_norm
     try:
-        raw = load_dataset("hotpot_qa", setting, split=hf_split)  # type: ignore
+        raw = load_dataset(
+            hf_repo_id,
+            setting,
+            split=hf_split,
+            revision=hf_revision,
+        )  # type: ignore
     except Exception as e:
         # Common failure mode: stale/incompatible cached dataset metadata across datasets versions.
         # Retry with forced redownload, then with a fresh isolated cache directory.
         try:
             raw = load_dataset(
-                "hotpot_qa",
+                hf_repo_id,
                 setting,
                 split=hf_split,
+                revision=hf_revision,
                 download_mode="force_redownload",
             )  # type: ignore
         except Exception:
@@ -383,9 +393,10 @@ def load_hotpotqa(
                 isolated_cache_dir = os.path.join(tempfile.gettempdir(), "hf_datasets_hotpotqa_clean_cache")
                 os.makedirs(isolated_cache_dir, exist_ok=True)
                 raw = load_dataset(
-                    "hotpot_qa",
+                    hf_repo_id,
                     setting,
                     split=hf_split,
+                    revision=hf_revision,
                     cache_dir=isolated_cache_dir,
                     download_mode="force_redownload",
                 )  # type: ignore
