@@ -121,8 +121,8 @@ MODEL_PATH_LST=(
 
     # ----------------------------
     # Final Runs: SFT
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
-    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
+    Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
     # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1
@@ -130,8 +130,8 @@ MODEL_PATH_LST=(
 
     # ----------------------------
     # Final Runs: GRPO
-    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
-    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+    Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_lr5e-5_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
 
@@ -184,26 +184,27 @@ MODEL_PATH_LST=(
     # ----------------------------
     # tier filter and curriculum
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n90447-f1-2ph-prsft-wcount-th0.6-topk4-nak-tier1_3
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n90447-f1-2ph-prsft-wcount-th0.6-topk4-nak-tier1_3-curric
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n90447-f1-2ph-prsft-wcount-th0.6-topk4-nak-tier1_3-curric
 )
 
 # TWO_PHASE_METHOD="lmlm"
 TWO_PHASE_METHOD="two_phase"
 
 # ── Datasets and splits ──────────────────────────────────────────────────────
-# NOTE: train_val1k is only valid for hotpotqa. musique/2wiki only support "dev".
+# NOTE: train_val1k is only valid for hotpotqa. musique/2wiki/popqa only support "dev".
 #       mquake supports: eval-original, eval-edit, eval-edit-new, train
 DATASET_LST=(
     # synthworlds
     # trivia_qa
     hotpotqa
-    # musique
-    # 2wiki
+    musique
+    2wiki
+    popqa
     # mquake
 )
 SPLIT_LST=(
-    train_val1k
-    # dev
+    # train_val1k
+    dev
     # eval-original
     # eval-edit
 )
@@ -216,8 +217,8 @@ fi
 
 # ── Eval parameters ──────────────────────────────────────────────────────────
 OUTPUT_DIR="./output/main_tables"
-SAVE_VERSION="_0330"
-NUM_SAMPLES=1000
+SAVE_VERSION="_0805_full"
+NUM_SAMPLES=20000    # auto-caps per dataset; > max dev (popqa=14267) → runs full dev
 
 # Retrieval hyper-parameters (match training)
 TOP_K=4
@@ -241,6 +242,7 @@ is_valid_combo() {
         2wiki|two_wiki)     [[ "${sp}" == "dev" ]] ;;
         mquake*)            [[ "${sp}" =~ ^(eval-edit|eval-edit-new|eval-original|train)$ ]] ;;
         trivia_qa)          [[ "${sp}" == "dev" ]] ;;
+        popqa)              [[ "${sp}" == "dev" ]] ;;
         synthworlds)        [[ "${sp}" == "dev" ]] ;;
         *)                  return 1 ;;
     esac
