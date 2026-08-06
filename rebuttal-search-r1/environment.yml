@@ -1,0 +1,24 @@
+name: searchr1-reproduction
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - torch==2.8.0
+      - verl==0.7.0
+      - sglang[all]==0.5.2
+      - transformers==4.56.1
+      - ray[default]==2.53.0
+      - datasets>=3.0,<5
+      - pandas>=2.0
+      - pyarrow>=18
+      - numpy>=1.26
+      - faiss-cpu>=1.10
+      - fastapi>=0.115
+      - uvicorn>=0.34
+      - pydantic>=2.10
+      - tqdm>=4.66
+      - accelerate>=1.0
+      - wandb>=0.19

@@ -1,0 +1,82 @@
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+# Paper-run recipe from c30a5d9. Later tuning in 522b9ba intentionally differs.
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+algorithm:
+  adv_estimator: grpo
+  use_kl_in_reward: false
+
+data:
+  train_batch_size: 16
+  val_batch_size: 100
+  max_prompt_length: 4096
+  max_response_length: 1024
+  filter_overlong_prompts: true
+  truncation: error
+  return_raw_chat: true
+  shuffle: false
+
+actor_rollout_ref:
+  hybrid_engine: true
+  model:
+    use_remove_padding: false
+    enable_gradient_checkpointing: true
+    override_config:
+      attn_implementation: sdpa
+  actor:
+    ppo_mini_batch_size: 16
+    ppo_micro_batch_size_per_gpu: 4
+    clip_ratio: 0.2
+    use_kl_loss: true
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
+    entropy_coeff: 0
+    optim:
+      lr_warmup_steps_ratio: 0.1
+      lr_scheduler_type: cosine
+    fsdp_config:
+      param_offload: false
+      optimizer_offload: false
+  rollout:
+    name: sglang
+    max_model_len: 4096
+    log_prob_micro_batch_size_per_gpu: 4
+    tensor_model_parallel_size: 1
+    gpu_memory_utilization: 0.35
+    free_cache_engine: false
+    top_p: 0.95
+    top_k: 4
+    temperature: 1.0
+    engine_kwargs:
+      sglang:
+        attention_backend: flashinfer
+    multi_turn:
+      enable: true
+      max_assistant_turns: 4
+      format: hermes
+    agent:
+      default_agent_loop: tool_agent
+  ref:
+    log_prob_micro_batch_size_per_gpu: 4
+    fsdp_config:
+      param_offload: true
+
+custom_reward_function:
+  name: compute_score
+
+trainer:
+  critic_warmup: 0
+  val_before_train: false
+  logger: [console, wandb]
+  nnodes: 1
+  save_freq: 100
+  test_freq: 25
+  log_val_generations: 10
+  total_training_steps: 500
+  total_epochs: 10
