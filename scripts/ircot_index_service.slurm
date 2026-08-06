@@ -48,7 +48,14 @@ for _ in $(seq 1 180); do
     if curl -fsS http://127.0.0.1:9200/_cluster/health >/dev/null; then break; fi
     sleep 2
 done
-curl -fsS http://127.0.0.1:9200/_cluster/health
+health_json=$(curl -fsS "http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow&timeout=300s")
+python -c '
+import json, sys
+health = json.load(sys.stdin)
+if health.get("timed_out") or health.get("status") not in {"yellow", "green"}:
+    raise SystemExit(f"Elasticsearch shards did not recover: {health}")
+' <<< "${health_json}"
+echo "${health_json}"
 
 cd "${ROOT}/data"
 for dataset in 2wikimultihopqa musique hotpotqa; do
@@ -58,17 +65,14 @@ for dataset in 2wikimultihopqa musique hotpotqa; do
         2wikimultihopqa) expected=430225 ;;
         musique) expected=139416 ;;
     esac
-    if count_json=$(curl -fsS "http://127.0.0.1:9200/${dataset}/_count" 2>/dev/null); then
+    if curl -fsS "http://127.0.0.1:9200/${dataset}" >/dev/null 2>&1; then
+        count_json=$(curl -fsS "http://127.0.0.1:9200/${dataset}/_count")
         current=$(python -c 'import json,sys; print(json.load(sys.stdin)["count"])' <<< "${count_json}")
-    else
-        current=0
-    fi
-    if [[ "${current}" == "${expected}" ]]; then
-        echo "Reusing ${dataset} index with ${current} documents"
-        continue
-    fi
-    if [[ "${current}" != "0" ]]; then
-        echo "Refusing to replace ${dataset}: found ${current}, expected ${expected}" >&2
+        if [[ "${current}" == "${expected}" ]]; then
+            echo "Reusing ${dataset} index with ${current} documents"
+            continue
+        fi
+        echo "Refusing to replace existing ${dataset}: found ${current}, expected ${expected}" >&2
         exit 1
     fi
     python "${UPSTREAM}/retriever_server/build_index.py" "${dataset}"
