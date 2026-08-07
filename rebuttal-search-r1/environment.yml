@@ -18,7 +18,8 @@ dependencies:
       - numpy>=1.26
       - faiss-cpu>=1.10
       - fastapi>=0.115
-      - uvicorn>=0.34
+      # verl 0.7's HTTP server bootstrap relies on behavior removed in 0.41.
+      - uvicorn==0.40.0
       - pydantic>=2.10
       - tqdm>=4.66
       - accelerate>=1.0

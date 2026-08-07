@@ -10,8 +10,8 @@ import re
 
 SOURCE_RECIPE_COMMIT = "c30a5d919c8eec291ed5e3e6fefca18eb8138113"
 CLASSIFICATION = (
-    "API-compatible reconstruction; the original full environment freeze and "
-    "verl git commit were not recorded"
+    "API-compatible reconstruction; W&B recorded the package snapshot, but the "
+    "exact editable verl source commit was not recorded"
 )
 RUNTIME = {
     "python": "3.11",
@@ -21,6 +21,7 @@ RUNTIME = {
     "transformers": "4.56.1",
     "huggingface_hub": "0.34.4",
     "ray": "2.53.0",
+    "uvicorn": "0.40.0",
 }
 
 ARTIFACTS = {

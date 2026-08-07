@@ -30,6 +30,12 @@ export WANDB_ENTITY="${WANDB_ENTITY:-KBevo}"
 export WANDB_PROJECT="${WANDB_PROJECT:-LMLM}"
 export RETRIEVAL_URL
 
+# Keep this pinned environment isolated from packages installed in ~/.local.
+export PYTHONNOUSERSITE="${PYTHONNOUSERSITE:-1}"
+# The CUDA 13 DeepGEMM wheel currently selected by SGLang's optional extra
+# cannot load on the CUDA 12.8 paper hardware. These runs use BF16, not FP8.
+export SGL_ENABLE_JIT_DEEPGEMM="${SGL_ENABLE_JIT_DEEPGEMM:-false}"
+
 if [ -z "${MODEL_PATH}" ]; then
     MODEL_PATH="$("${PYTHON}" "${SCRIPT_DIR}/reproduction_manifest.py" --artifact "${MODEL_ARTIFACT}")"
 elif [ -d "${MODEL_PATH}" ]; then
@@ -64,6 +70,16 @@ mkdir -p "${ROLLOUT_DIR}"
 
 OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/checkpoints/${WANDB_PROJECT}/${EXPERIMENT_NAME}}"
 
+RAY_ARGS=()
+# Ray otherwise sees every host CPU rather than the cores granted by Slurm.
+RAY_CPU_COUNT="${RAY_NUM_CPUS:-${SLURM_CPUS_PER_TASK:-}}"
+if [ -n "${RAY_CPU_COUNT}" ]; then
+    case "${RAY_CPU_COUNT}" in
+        *[!0-9]*|0) echo "RAY_NUM_CPUS must be a positive integer" >&2; exit 2 ;;
+    esac
+    RAY_ARGS+=("ray_kwargs.ray_init.num_cpus=${RAY_CPU_COUNT}")
+fi
+
 "${PYTHON}" -m verl.trainer.main_ppo \
     --config-path="${CONFIG_PATH}" \
     --config-name=search_multiturn_grpo \
@@ -79,4 +95,5 @@ OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/checkpoints/${WANDB_PROJECT}/${EXPERIMEN
     trainer.n_gpus_per_node="${NUM_GPUS}" \
     trainer.default_local_dir="${OUTPUT_DIR}" \
     trainer.rollout_data_dir="${ROLLOUT_DIR}" \
+    "${RAY_ARGS[@]}" \
     "$@"

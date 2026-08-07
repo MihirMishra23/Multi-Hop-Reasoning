@@ -53,10 +53,16 @@ The recorded runs used verl 0.7, SGLang 0.5.2, PyTorch 2.8/CUDA 12.8, and
 Transformers 4.56.1 on four B200 GPUs. Full training cannot be validated on a
 CPU-only machine.
 
+The environment constrains Uvicorn below 0.41 because verl 0.7's native SGLang
+HTTP bootstrap depends on behavior removed in Uvicorn 0.41. The launcher also
+disables SGLang's optional JIT DeepGEMM path: the paper recipe is BF16, while
+the currently published DeepGEMM wheel requires CUDA 13 rather than CUDA 12.8.
+
 The supported reconstruction pins immutable Hugging Face revisions for both
-Qwen models, E5-base-v2, and HotpotQA in `reproduction_manifest.py`. The exact
-May environment cannot be reconstructed byte-for-byte because its complete
-package freeze and verl git commit were not recorded.
+Qwen models, E5-base-v2, and HotpotQA in `reproduction_manifest.py`. W&B
+recorded a package snapshot for the May run, but not the commit of its editable
+verl source checkout, so the exact environment cannot be reconstructed
+byte-for-byte.
 
 Index construction records the corpus hash and E5 identity beside the FAISS
 file. Retrieval refuses to start if that provenance does not match, preventing

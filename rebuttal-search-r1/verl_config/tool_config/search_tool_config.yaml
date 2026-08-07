@@ -4,6 +4,9 @@ tools:
       retrieval_service_url: ${oc.env:RETRIEVAL_URL,http://127.0.0.1:8000/retrieve}
       num_workers: 120
       rate_limit: 120
+      # Local FAISS has no API quota. verl 0.7's shared limiter is owned by a
+      # short-lived Ray worker and can disappear between rollout batches.
+      enable_global_rate_limit: false
       timeout: 30
       type: native
     tool_schema:
