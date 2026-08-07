@@ -149,7 +149,30 @@ def parse_tool_call(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _passages_to_string(passages: list[dict[str, Any]]) -> str:
+def _passages_to_string(passages: list[dict[str, Any]], official: bool = False) -> str:
+    """Render retrieved passages.
+
+    official=True reproduces Search-R1's own infer.py::_passages2string:
+
+        title = content.split("\\n")[0]
+        text  = "\\n".join(content.split("\\n")[1:])
+        format_reference += f"Doc {idx+1}(Title: {title}) {text}\\n"
+
+    Note "Doc N(Title:" has no space before the paren, the body follows the
+    paren after a single space, and each document ends with one newline.
+
+    (mx253's evaluate_searchr1.py uses a third shape, f"Doc {idx+1} {content}",
+    which keeps the title inline and does not match infer.py. infer.py is the
+    file that ships with the Search-R1 release, so it is what we follow.)
+    """
+    if official:
+        parts = []
+        for index, item in enumerate(passages):
+            content = str(item["document"]["contents"])
+            title = content.split("\n")[0]
+            text = "\n".join(content.split("\n")[1:])
+            parts.append(f"Doc {index + 1}(Title: {title}) {text}\n")
+        return "".join(parts)
     rendered = []
     for index, item in enumerate(passages):
         contents = str(item["document"]["contents"])
@@ -158,10 +181,14 @@ def _passages_to_string(passages: list[dict[str, Any]]) -> str:
     return "\n\n".join(rendered)
 
 
-def _render_passages(response: dict[str, Any]) -> str:
+def _render_passages(response: dict[str, Any], official: bool = False) -> str:
     results = response.get("result", [])
     if not results:
         return "No search results found."
+    if official:
+        # Upstream issues one query per turn and concatenates its documents
+        # with no separator between result groups.
+        return "".join(_passages_to_string(p, official=True) for p in results)
     return "\n---\n".join(_passages_to_string(passages) for passages in results)
 
 
@@ -172,21 +199,45 @@ def format_search_response(response: dict[str, Any], official: bool = False) -> 
     "\\n<information>...</information>\\n\\n" continuation. Otherwise the result
     is a JSON tool payload for the Hermes tool_call schema.
     """
-    result = _render_passages(response)
+    result = _render_passages(response, official=official)
     if official:
-        return f"\n<information>{result}</information>\n\n"
+        # Upstream's curr_search_template is
+        #   '\n\n{output_text}<information>{search_results}</information>\n\n'
+        # The generated text is already appended to the prompt by the caller,
+        # so only the <information> block and its trailing blank line remain.
+        return f"<information>{result}</information>\n\n"
     return json.dumps({"result": result}, ensure_ascii=False)
 
 
+_INFORMATION_OPEN = "<information>"
+_INFORMATION_CLOSE = "</information>"
+
+
 def truncate_tool_response(text: str, limit: int, side: str) -> str:
-    if len(text) <= limit:
-        return text
-    if side == "left":
-        return text[:limit] + "...(truncated)"
-    if side == "right":
-        return "(truncated)..." + text[-limit:]
-    half = limit // 2
-    return text[:half] + "...(truncated)..." + text[-half:]
+    """Shorten a tool response, preserving <information> tags if present.
+
+    Truncating the raw string used to cut the closing </information> off the
+    end. The model then saw a block that was never closed and spent its next
+    turn emitting "</information>" to balance it instead of answering, which
+    cost ~60% of 3B's answers. Only the payload is shortened here; the tags
+    always survive.
+    """
+    def _clip(body: str) -> str:
+        if len(body) <= limit:
+            return body
+        if side == "left":
+            return body[:limit] + "...(truncated)"
+        if side == "right":
+            return "(truncated)..." + body[-limit:]
+        half = limit // 2
+        return body[:half] + "...(truncated)..." + body[-half:]
+
+    if text.startswith(_INFORMATION_OPEN) and _INFORMATION_CLOSE in text:
+        head = _INFORMATION_OPEN
+        rest = text[len(head):]
+        body, _, tail = rest.partition(_INFORMATION_CLOSE)
+        return head + _clip(body) + _INFORMATION_CLOSE + tail
+    return _clip(text)
 
 
 class SearchR1Agent(Agent):
@@ -205,7 +256,7 @@ class SearchR1Agent(Agent):
         top_p: float = 0.95,
         sampling_top_k: int = -1,
         max_model_len: int = 3072,
-        max_tool_response_length: int = 512,
+        max_tool_response_length: int = 4096,
         tool_response_truncate_side: str = "left",
         tensor_parallel_size: int = 1,
         gpu_memory_utilization: float = 0.85,

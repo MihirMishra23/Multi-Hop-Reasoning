@@ -38,18 +38,28 @@ DATA_ROOT=/share/j_sun/mx253/Search-R1     # index/, corpus/ live here (owned by
 EVAL_ENV=mem                                # vllm + transformers
 RETRIEVER_ENV=sr1-retriever                 # pyserini + fastapi + uvicorn
 
-SAVE_VERSION="_0806_searchr1_official"
+SAVE_VERSION="_0806_sr1_n1000_3b_noshuf"
 OUTPUT_DIR="./output/main_tables"
 
 # Set to a small number (e.g. 20) for a smoke test before committing to full dev.
 # 20000 auto-caps to each dataset's dev size (hotpotqa 7405 / musique 2417 / 2wiki 12576).
-NUM_SAMPLES=20
+NUM_SAMPLES=1000
 
-# Search-R1 retrieval / rollout parameters
+# Search-R1 retrieval / rollout parameters, matched to upstream
+# evaluate_searchr1.py so results are comparable to the published numbers:
+#   while cnt < 10          -> MAX_STEPS=10
+#   max_new_tokens=1024     -> 10 turns x 1024 = 10240 total budget
+#   do_sample=False, T=0.0  -> greedy (already the evaluator default)
+#   samples[:max_samples]   -> NO_SHUFFLE, upstream takes the first N unshuffled
+# Upstream sets no context cap (HF generate uses the model's native window:
+# 32768 for 3B, 131072 for 7B). 16384 is well above what 10 turns of 3 docs
+# needs while keeping the KV cache affordable on a 48GB card.
 RETRIEVAL_TOPK=3
-PROMPT_VARIANT="default"                    # default | thinkingtag | icl3hop
-MAX_RESPONSE_LENGTH=2048
-SEARCH_R1_MAX_MODEL_LEN=3072
+PROMPT_VARIANT="default"                    # default | toolcall | thinkingtag | icl3hop
+NO_SHUFFLE="--no-shuffle"                   # "" to shuffle by --seed instead
+MAX_STEPS=10
+MAX_RESPONSE_LENGTH=10240
+SEARCH_R1_MAX_MODEL_LEN=16384
 
 # Per-job SLURM resources
 EVAL_PARTITION="kilian,default_partition"
@@ -64,7 +74,7 @@ EVAL_MEM=128G
 #   short_name : hf_repo_id_or_local_path
 MODEL_LST=(
     "sr1-3b:PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-3b-em-ppo"
-    "sr1-7b:PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
+    # "sr1-7b:PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
 )
 
 # ── Datasets ──────────────────────────────────────────────────────────────────
@@ -75,7 +85,9 @@ MODEL_LST=(
 #   name : corpus jsonl : bm25 index dir
 DATASETS=(
     "hotpotqa:hotpotqa_distractor_full_val_corpus.jsonl:hotpotqa_full_val"
-    "musique:musique_val_corpus.jsonl:musique_val"
+    # musique excluded from the unshuffled comparison: our loader reads it from
+    # HF and mx253 from an exported json, so the orders differ (2/1000 match).
+    # "musique:musique_val_corpus.jsonl:musique_val"
     "2wiki:2wiki_val_corpus.jsonl:2wiki_val"
 )
 
@@ -209,6 +221,8 @@ python src/eval_multihop.py \\
     --search-r1-retrieval-url http://127.0.0.1:\${PORT}/retrieve \\
     --search-r1-retrieval-k ${RETRIEVAL_TOPK} \\
     --search-r1-prompt-variant ${PROMPT_VARIANT} \\
+    ${NO_SHUFFLE} \\
+    --max-steps ${MAX_STEPS} \\
     --search-r1-max-response-length ${MAX_RESPONSE_LENGTH} \\
     --search-r1-max-model-len ${SEARCH_R1_MAX_MODEL_LEN} \\
     --total-count ${NUM_SAMPLES} \\

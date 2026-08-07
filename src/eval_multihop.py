@@ -581,8 +581,13 @@ def main() -> None:
     parser.add_argument(
         "--search-r1-max-tool-response-length",
         type=int,
-        default=512,
-        help="Maximum Search-R1 tool response length in characters",
+        default=4096,
+        help=(
+            "Maximum Search-R1 tool response length in characters. Upstream "
+            "does not truncate at all; 512 cut three retrieved documents down "
+            "to a fragment and starved the model of the evidence it searched "
+            "for. 4096 fits a typical top-3 BM25 response intact."
+        ),
     )
     parser.add_argument(
         "--search-r1-tool-response-truncate-side",
@@ -655,6 +660,16 @@ def main() -> None:
         "--max-steps", type=int, default=5, help="Max reasoning steps for the Agent"
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
+    parser.add_argument(
+        "--no-shuffle",
+        action="store_true",
+        help=(
+            "Load the dataset in its original order instead of shuffling by "
+            "--seed. Use when comparing against numbers produced by a harness "
+            "that takes the first N examples unshuffled, such as upstream "
+            "Search-R1's evaluate_searchr1.py."
+        ),
+    )
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
     parser.add_argument(
         "--start-index",
@@ -878,7 +893,14 @@ def main() -> None:
     dataset_setting = args.confiqa_setting if args.dataset == "confiqa" else args.setting
     if args.dataset == "confiqa":
         logger.info(f"DEBUG: Loading ConFiQA with setting='{dataset_setting}' (args.confiqa_setting='{args.confiqa_setting}')")
-    full_dataset = get_dataset(name = args.dataset, setting = dataset_setting, split =  args.split, seed=args.seed)
+    # The loaders shuffle only when seed is not None, so None keeps the
+    # original order (which is what --no-shuffle asks for).
+    full_dataset = get_dataset(
+        name=args.dataset,
+        setting=dataset_setting,
+        split=args.split,
+        seed=None if args.no_shuffle else args.seed,
+    )
     total_dataset_size = len(full_dataset)
 
     print(f"examples in dataset: {full_dataset[0]}")
