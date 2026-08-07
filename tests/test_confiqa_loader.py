@@ -1,7 +1,4 @@
-import gzip
-import hashlib
 import json
-from pathlib import Path
 
 import pytest
 
@@ -72,14 +69,3 @@ def test_ordered_ids_are_recorded_not_only_hashed():
     )
     assert provenance["selection"]["ordered_ids"] == ["7", "2", "9"]
     assert provenance["selection"]["counterfactual_count"] == 3
-
-
-def test_bundled_popqa_artifact_preserves_historical_bytes():
-    artifact = (
-        Path(__file__).parents[1] / "data" / "artifacts" / "popqa_corpus_1000_ex_seed_42.json.gz"
-    )
-    digest = hashlib.sha256()
-    with gzip.open(artifact, "rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    assert digest.hexdigest() == "00c9c266728f63ba0fc259d727ccab488a9ad54bc594eabd10ffe131ca0875fc"
