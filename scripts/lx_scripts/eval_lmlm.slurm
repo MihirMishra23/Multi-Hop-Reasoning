@@ -7,14 +7,23 @@
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH --get-user-env
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=2
 #SBATCH --mem=64G
 #SBATCH -t infinite
-#SBATCH --partition=aimi,kilian,jjs533,default_partition
+#SBATCH --partition=kilian,default_partition,jjs533
 #SBATCH --gres=gpu:nvidia_rtx_a6000:1
 
 source activate mem
 cd /share/j_sun/mx253_lmlm/
+
+_directive() {  # _directive --partition  →  value after '='
+    sed -n "s|^#SBATCH[[:space:]]\+$1=\(.*\)|\1|p" "${BASH_SOURCE[0]}" | head -1
+}
+SB_CPUS=$(_directive --cpus-per-task)
+SB_MEM=$(_directive --mem)
+SB_PARTITION=$(_directive --partition)
+SB_GRES=$(_directive --gres)
+echo "Resources (from #SBATCH header): partition=${SB_PARTITION} gres=${SB_GRES} cpus=${SB_CPUS} mem=${SB_MEM}"
 
 echo "Starting Eval..."
 
@@ -125,13 +134,18 @@ MODEL_PATH_LST=(
 
     # ----------------------------
     # 0806: mid-training SFT checkpoint-368, full dev, two_phase
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4/checkpoint-368
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4/checkpoint-368
     # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
 
     # ----------------------------
     # 0806: 4B GRPO trained FROM the ckpt-368 SFT (job 827668, finished at step 500).
     # Distinct from the older 4B GRPO that started from the final SFT checkpoint.
     # 0805/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-checkpoint-368-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-rth0.6-rk4-sk4-nak-inv/checkpoint-500
+
+    # ----------------------------
+    # 0806: 1.7B GRPO trained FROM the ckpt-368 SFT, finished at step 500.
+    # Same params as the 4B ckpt-368 GRPO eval above (full dev, two_phase).
+    0805_ret_0.6_top_k_4/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4-checkpoint-368-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-rth0.6-rk4-sk4-nak-inv/checkpoint-500
 
     # ----------------------------
     # Final Runs: SFT
@@ -203,8 +217,8 @@ MODEL_PATH_LST=(
 # "lmlm"      → Phase-2 only over the pre-built DB that eval_lmlm_multihop.sh
 #               maps per (dataset, split). Used for the row-3 ablation.
 # "two_phase" → normal co-evolution eval (model builds its own DB).
-# TWO_PHASE_METHOD="lmlm"
-TWO_PHASE_METHOD="two_phase"
+TWO_PHASE_METHOD="lmlm"
+# TWO_PHASE_METHOD="two_phase"
 
 # ── Datasets and splits ──────────────────────────────────────────────────────
 # NOTE: train_val1k is only valid for hotpotqa. musique/2wiki/popqa only support "dev".
@@ -212,8 +226,8 @@ TWO_PHASE_METHOD="two_phase"
 DATASET_LST=(
     # synthworlds
     # trivia_qa
-    # hotpotqa
-    # musique
+    hotpotqa
+    musique
     2wiki
     # popqa      # broken: 13275/14267 have empty contexts, rest misaligned
     # mquake
@@ -233,8 +247,9 @@ fi
 
 # ── Eval parameters ──────────────────────────────────────────────────────────
 OUTPUT_DIR="./output/main_tables"
-SAVE_VERSION="_0806_ckpt368_full"
-NUM_SAMPLES=20000    # auto-caps per dataset; two_phase only (lmlm needs 1000)
+SAVE_VERSION="_0806_ckpt368_geminidb"
+NUM_SAMPLES=1000     # lmlm: the pre-built Gemini DBs only cover the first 1000
+                     # seed-42 dev questions — do NOT raise this here.
 
 # Retrieval hyper-parameters (match training)
 TOP_K=4
@@ -251,10 +266,10 @@ USE_CONTEXTS="all"               # "golden" or "all"
 # eval is hyperparameter-identical to a two_phase --use-train-params run.
 # Leave all four empty to get the historical greedy behaviour (T=0.0).
 # Ignored when TWO_PHASE_METHOD="two_phase" (that path uses USE_TRAIN_PARAMS).
-TEMPERATURE=""
-TOP_P=""
-VLLM_TOP_K=""
-MAX_MODEL_LEN=""
+TEMPERATURE="--temperature 1.0"
+TOP_P="--top-p 0.95"
+VLLM_TOP_K="--vllm-top-k 4"
+MAX_MODEL_LEN="--max-model-len 8192"
 
 # Sampling: "" = greedy (temperature=0, recommended); "--use-train-params" = T=1.0, top_p=0.95
 USE_TRAIN_PARAMS="--use-train-params"
@@ -429,11 +444,11 @@ for GROUP_KEY in "${!GROUPED_SCRIPTS[@]}"; do
             -e "/home/lz586/icl/slurm_output/lmlm_multi_hop/${JOB_NAME}_%j.err" \
             -N 1 -n 1 \
             --get-user-env \
-            --cpus-per-task=4 \
-            --mem=64G \
+            --cpus-per-task="${SB_CPUS}" \
+            --mem="${SB_MEM}" \
             -t infinite \
-            --partition=kilian \
-            --gres=gpu:nvidia_rtx_a6000:1 \
+            --partition="${SB_PARTITION}" \
+            --gres="${SB_GRES}" \
             --requeue \
             "${TMP_SCRIPT}"
         rm -f "${TMP_SCRIPT}"
