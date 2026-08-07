@@ -29,27 +29,12 @@ from datasets import load_dataset  # type: ignore
 
 from .provenance import hf_dataset_file, hf_source
 
-POPQA_CORPUS_PATH = os.path.abspath(
-    os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "..",
-        "data",
-        "artifacts",
-        "popqa_corpus_1000_ex_seed_42.json.gz",
-    )
-)
 
-
-def _resolve_popqa_corpus_path(
-    corpus_path: Optional[str], *, seed: Optional[int], limit: Optional[int]
-) -> str:
-    """Resolve an override, the historical subset, or the pinned full corpus."""
+def _resolve_popqa_corpus_path(corpus_path: Optional[str]) -> str:
+    """Resolve an explicit override or the pinned full corpus."""
     configured_path = corpus_path or os.environ.get("POPQA_CORPUS_PATH")
     if configured_path:
         return configured_path
-    if seed == 42 and limit == 1000:
-        return POPQA_CORPUS_PATH
     return hf_dataset_file("popqa_contexts")
 
 
@@ -61,7 +46,7 @@ def _normalize_split(split: str) -> str:
     return s
 
 
-def _load_popqa_corpus(corpus_path: str = POPQA_CORPUS_PATH) -> List[Dict[str, Any]]:
+def _load_popqa_corpus(corpus_path: str) -> List[Dict[str, Any]]:
     """Load the PopQA Wikipedia corpus from JSON file.
 
     Args:
@@ -94,9 +79,8 @@ def _load_popqa_corpus(corpus_path: str = POPQA_CORPUS_PATH) -> List[Dict[str, A
 def _build_corpus_index(corpus: List[Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
     """Index usable articles by requested and canonical title.
 
-    The historical artifact was deduplicated and saved in an order unrelated to
-    the shuffled PopQA rows.  A title-keyed join is therefore required even for
-    reproducing the original 1,000-row evaluation subset.
+    The corpus is deduplicated by title and its record order is independent of
+    shuffled PopQA rows, so contexts must be joined by title rather than position.
     """
     index: Dict[str, Dict[str, str]] = {}
     for entry in corpus:
@@ -219,9 +203,8 @@ def load_popqa(
         seed: optional random seed for shuffling
         setting: dataset setting (unused for PopQA)
         corpus_path: path to a PopQA Wikipedia corpus JSON/JSONL file. If omitted,
-            POPQA_CORPUS_PATH from the environment is honored first. The exact
-            seed-42, 1,000-row historical run uses the bundled legacy artifact;
-            all other selections use the pinned full Hugging Face corpus.
+            POPQA_CORPUS_PATH from the environment is honored first; otherwise the
+            pinned full Hugging Face corpus is downloaded and checksum-verified.
 
     Returns:
         HFDataset with unified schema
@@ -229,7 +212,7 @@ def load_popqa(
     split_norm = _normalize_split(split)
 
     # Load the Wikipedia corpus
-    resolved_corpus_path = _resolve_popqa_corpus_path(corpus_path, seed=seed, limit=limit)
+    resolved_corpus_path = _resolve_popqa_corpus_path(corpus_path)
     corpus = _load_popqa_corpus(resolved_corpus_path)
     corpus_index = _build_corpus_index(corpus)
 

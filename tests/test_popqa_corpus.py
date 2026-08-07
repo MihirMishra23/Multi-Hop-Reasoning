@@ -14,7 +14,7 @@ from data.popqa_corpus import (
 )
 
 
-def test_extract_paragraphs_matches_historical_nonempty_line_shape():
+def test_extract_paragraphs_keeps_nonempty_lines():
     extract = "Lead paragraph.\n\nHistory\nFirst history paragraph.\n  \nReferences\n"
     assert extract_paragraphs(extract) == [
         "Lead paragraph.",
@@ -216,7 +216,7 @@ def test_loader_joins_corpus_by_subject_title_not_position(tmp_path, monkeypatch
     assert dataset[3]["contexts"] == []
 
 
-def test_legacy_json_array_is_also_title_keyed(tmp_path, monkeypatch):
+def test_json_array_corpus_is_also_title_keyed(tmp_path, monkeypatch):
     raw = Dataset.from_list(
         [
             {
@@ -229,7 +229,7 @@ def test_legacy_json_array_is_also_title_keyed(tmp_path, monkeypatch):
         ]
     )
     monkeypatch.setattr(popqa, "load_dataset", lambda *args, **kwargs: raw)
-    corpus_path = Path(tmp_path) / "legacy.json"
+    corpus_path = Path(tmp_path) / "corpus.json"
     corpus_path.write_text(
         json.dumps(
             [
@@ -244,7 +244,7 @@ def test_legacy_json_array_is_also_title_keyed(tmp_path, monkeypatch):
     assert dataset[0]["contexts"] == ["correct"]
 
 
-def test_corpus_resolution_preserves_historical_run_and_defaults_to_full(monkeypatch):
+def test_corpus_resolution_defaults_to_full_and_honors_overrides(monkeypatch):
     monkeypatch.delenv("POPQA_CORPUS_PATH", raising=False)
     downloads = []
     monkeypatch.setattr(
@@ -253,11 +253,14 @@ def test_corpus_resolution_preserves_historical_run_and_defaults_to_full(monkeyp
         lambda name: downloads.append(name) or "/cache/popqa_contexts.jsonl.gz",
     )
 
-    historical = popqa._resolve_popqa_corpus_path(None, seed=42, limit=1000)
-    full = popqa._resolve_popqa_corpus_path(None, seed=None, limit=None)
+    full = popqa._resolve_popqa_corpus_path(None)
+    monkeypatch.setenv("POPQA_CORPUS_PATH", "/data/environment.jsonl.gz")
+    environment = popqa._resolve_popqa_corpus_path(None)
+    explicit = popqa._resolve_popqa_corpus_path("/data/explicit.jsonl.gz")
 
-    assert historical == popqa.POPQA_CORPUS_PATH
     assert full == "/cache/popqa_contexts.jsonl.gz"
+    assert environment == "/data/environment.jsonl.gz"
+    assert explicit == "/data/explicit.jsonl.gz"
     assert downloads == ["popqa_contexts"]
 
 

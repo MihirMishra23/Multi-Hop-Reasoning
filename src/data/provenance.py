@@ -71,17 +71,6 @@ DATASET_PROVENANCE: Dict[str, Dict[str, Any]] = {
         "file": "test.tsv",
         "upstream": "https://github.com/AlexTMallen/adaptive-retrieval",
         "license": "not specified by upstream",
-        "legacy_context_artifact": {
-            "file": "popqa_corpus_1000_ex_seed_42.json",
-            "sha256": "00c9c266728f63ba0fc259d727ccab488a9ad54bc594eabd10ffe131ca0875fc",
-            "bytes": 10952628,
-            "bundled_file": "data/artifacts/popqa_corpus_1000_ex_seed_42.json.gz",
-            "bundled_sha256": "7872be316c22a65665ed32ab65f4ca490939a14bd7f204866db3090144a7c995",
-            "note": (
-                "Team-generated Wikipedia context artifact bundled byte-for-byte (gzip only) "
-                "for legacy Table 3 reproduction; it is not part of the PopQA release."
-            ),
-        },
     },
     "popqa_contexts": {
         "hf_repo": "ryannoonan/popqa-wikipedia-contexts",
@@ -177,7 +166,7 @@ def download_verified_file(
 
 
 def hf_dataset_file(name: str, filename: Optional[str] = None) -> str:
-    """Resolve and, when registered, checksum a pinned Hugging Face file."""
+    """Resolve a cached pinned Hugging Face file and verify its registered checksum."""
     source = dataset_source(name)
     selected_file = filename or source.get("file")
     if not selected_file:
