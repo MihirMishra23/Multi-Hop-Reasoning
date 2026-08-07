@@ -3,7 +3,8 @@
 This directory provides an API-compatible reconstruction of Linxi's May 2026
 Search-R1 training path from `c30a5d9`: prepare the 7,000/100 HotpotQA split,
 build the E5-base-v2 FAISS retriever, start the verl-compatible retrieval
-service, and train Qwen3 with the recorded GRPO recipe.
+service, and train Qwen3 with the effective GRPO config recovered from the
+completed 500-step W&B run `c9nhr0ix`.
 
 The later tuning in `522b9ba` is intentionally not used because it changed the
 paper-run hyperparameters.
@@ -27,8 +28,8 @@ artifacts under `rebuttal-search-r1/data/`, builds the index, launches retrieval
 on port 8000, and then starts training. The retriever is stopped when training
 exits.
 
-The historical defaults use four GPUs, 7,000 training prompts, 100 validation
-prompts, five rollouts per prompt, and 500 steps. New runs log to the
+The paper-run defaults use four GPUs, 7,000 training prompts, 100 validation
+prompts, eight rollouts per prompt, and 500 steps. New runs log to the
 [KBevo/LMLM](https://wandb.ai/KBevo/LMLM) W&B project. Override `WANDB_ENTITY`,
 `WANDB_PROJECT`, `NUM_GPUS`, `LR`, `N_ROLLOUT`, or pass trailing Hydra overrides
 to `reproduce_training.sh` when needed.

@@ -2,7 +2,8 @@ hydra:
   searchpath:
     - pkg://verl.trainer.config
 
-# Paper-run recipe from c30a5d9. Later tuning in 522b9ba intentionally differs.
+# Effective config recovered from the completed 500-step c9nhr0ix run, which
+# launched at c30a5d9 with command-line overrides. Later 522b9ba tuning differs.
 
 defaults:
   - ppo_trainer
@@ -15,8 +16,8 @@ algorithm:
 data:
   train_batch_size: 16
   val_batch_size: 100
-  max_prompt_length: 4096
-  max_response_length: 1024
+  max_prompt_length: 1024
+  max_response_length: 4096
   filter_overlong_prompts: true
   truncation: error
   return_raw_chat: true
@@ -38,27 +39,29 @@ actor_rollout_ref:
     kl_loss_type: low_var_kl
     entropy_coeff: 0
     optim:
-      lr_warmup_steps_ratio: 0.1
+      lr_warmup_steps_ratio: 0.285
       lr_scheduler_type: cosine
     fsdp_config:
       param_offload: false
       optimizer_offload: false
   rollout:
     name: sglang
-    max_model_len: 4096
+    max_model_len: 5120
     log_prob_micro_batch_size_per_gpu: 4
     tensor_model_parallel_size: 1
     gpu_memory_utilization: 0.35
     free_cache_engine: false
     top_p: 0.95
-    # verl 0.7 does not forward top_k through its multi-turn agent loop.
+    top_k: 4
     temperature: 1.0
     engine_kwargs:
       sglang:
         attention_backend: flashinfer
     multi_turn:
       enable: true
-      max_assistant_turns: 4
+      max_assistant_turns: 5
+      max_tool_response_length: 1800
+      tool_response_truncate_side: middle
       format: hermes
     agent:
       default_agent_loop: tool_agent
