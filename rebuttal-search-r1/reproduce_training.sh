@@ -7,6 +7,12 @@ cd "${SCRIPT_DIR}"
 
 PYTHON="${PYTHON:-python3}"
 export PYTHONNOUSERSITE="${PYTHONNOUSERSITE:-1}"
+SEARCHR1_PYTHON_PATH="$(command -v "${PYTHON}")" || {
+    echo "Python executable not found: ${PYTHON}" >&2
+    exit 1
+}
+# SGLang/FlashInfer launch subprocess tools such as ninja by name.
+export PATH="$(dirname "${SEARCHR1_PYTHON_PATH}"):${PATH}"
 MODEL_SIZE="${MODEL_SIZE:-1.7B}"
 PORT="${PORT:-8000}"
 RETRIEVER_MODEL="${RETRIEVER_MODEL:-$(

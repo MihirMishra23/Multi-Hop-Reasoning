@@ -9,6 +9,8 @@ dependencies:
       - torch==2.8.0
       - verl==0.7.0
       - sglang[all]==0.5.2
+      # FlashInfer JIT compilation for the 5,120-token paper context.
+      - ninja==1.13.0
       - transformers==4.56.1
       - huggingface-hub==0.34.4
       - ray[default]==2.53.0
