@@ -367,6 +367,10 @@ if __name__ == "__main__":
     parser.add_argument("--retriever_name", type=str, default="e5", help="Name of the retriever model.")
     parser.add_argument("--retriever_model", type=str, default="intfloat/e5-base-v2", help="Path of the retriever model.")
     parser.add_argument('--faiss_gpu', action='store_true', help='Use GPU for computation')
+    # LOCAL PATCH (not upstream): the port used to be hard-coded to 8000, which
+    # made it impossible to run more than one retrieval server per node. Several
+    # eval jobs share a node here, so let the caller pick the port.
+    parser.add_argument('--port', type=int, default=8000, help='Port to serve on.')
 
     args = parser.parse_args()
     
@@ -389,4 +393,4 @@ if __name__ == "__main__":
     retriever = get_retriever(config)
     
     # 3) Launch the server. By default, it listens on http://127.0.0.1:8000
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=args.port)

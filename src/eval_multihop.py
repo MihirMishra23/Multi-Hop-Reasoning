@@ -564,9 +564,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--search-r1-prompt-variant",
-        choices=["default", "thinkingtag", "icl3hop"],
+        choices=["default", "toolcall", "thinkingtag", "icl3hop"],
         default="default",
-        help="Prompt variant used to train the Search-R1 checkpoint",
+        help=(
+            "Prompt variant. 'default' is the verbatim upstream Search-R1 prompt "
+            "and speaks the <search>/<information> protocol the released "
+            "checkpoints were trained on. The others are paraphrases using the "
+            "Hermes <tool_call> schema and do not work with those checkpoints."
+        ),
     )
     parser.add_argument(
         "--search-r1-enable-thinking",
@@ -598,6 +603,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--search-r1-max-model-len", type=int, default=3072
+    )
+    parser.add_argument(
+        "--search-r1-dtype",
+        default="bfloat16",
+        help=(
+            "vLLM dtype for search_r1. The released checkpoints declare "
+            "torch_dtype=float32 (verl saves fp32 FSDP master weights) even "
+            "though training and rollout ran in bf16, so bf16 both matches how "
+            "the weights were produced and halves memory. Use 'auto' to follow "
+            "config.json instead."
+        ),
     )
     # Shared by search_r1 and lmlm, which want different defaults (0.95 vs the
     # historical greedy 1.0). Left as None here and resolved per-method after
@@ -772,6 +788,7 @@ def main() -> None:
             "top_p": args.top_p,
             "sampling_top_k": args.sampling_top_k,
             "max_model_len": args.search_r1_max_model_len,
+            "dtype": args.search_r1_dtype,
         } if args.method == "search_r1" else {}),
         "use_train_params": getattr(args, "use_train_params", False),
     }
@@ -1002,6 +1019,9 @@ def main() -> None:
             "top_p": args.top_p,
             "sampling_top_k": args.sampling_top_k,
             "max_model_len": args.search_r1_max_model_len,
+            # "auto" means "let vLLM read config.json"; the agent treats None
+            # as that, so translate here rather than passing the string through.
+            "dtype": None if args.search_r1_dtype == "auto" else args.search_r1_dtype,
             "max_tool_response_length": args.search_r1_max_tool_response_length,
             "tool_response_truncate_side": args.search_r1_tool_response_truncate_side,
             "tensor_parallel_size": args.tensor_parallel_size,

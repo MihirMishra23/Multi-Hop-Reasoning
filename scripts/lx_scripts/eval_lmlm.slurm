@@ -121,13 +121,22 @@ MODEL_PATH_LST=(
 
     # ----------------------------
     # Row 3 (Train w/ Phase-2 Only) rerun, 0806 — static Gemini DB + row-1 sampling
-    0805/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_1phase-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-rth0.6-rk4-sk4-nak-inv
+    # 0805/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_1phase-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-rth0.6-rk4-sk4-nak-inv
+
+    # ----------------------------
+    # 0806: mid-training SFT checkpoint-368, full dev, two_phase
+    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4/checkpoint-368
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
+
+    # ----------------------------
+    # 0806: 4B GRPO trained FROM the ckpt-368 SFT (job 827668, finished at step 500).
+    # Distinct from the older 4B GRPO that started from the final SFT checkpoint.
+    # 0805/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-checkpoint-368-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-rth0.6-rk4-sk4-nak-inv/checkpoint-500
 
     # ----------------------------
     # Final Runs: SFT
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
     # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
-    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_lr5e-5_th-1
@@ -194,8 +203,8 @@ MODEL_PATH_LST=(
 # "lmlm"      → Phase-2 only over the pre-built DB that eval_lmlm_multihop.sh
 #               maps per (dataset, split). Used for the row-3 ablation.
 # "two_phase" → normal co-evolution eval (model builds its own DB).
-TWO_PHASE_METHOD="lmlm"
-# TWO_PHASE_METHOD="two_phase"
+# TWO_PHASE_METHOD="lmlm"
+TWO_PHASE_METHOD="two_phase"
 
 # ── Datasets and splits ──────────────────────────────────────────────────────
 # NOTE: train_val1k is only valid for hotpotqa. musique/2wiki/popqa only support "dev".
@@ -203,10 +212,10 @@ TWO_PHASE_METHOD="lmlm"
 DATASET_LST=(
     # synthworlds
     # trivia_qa
-    hotpotqa
-    musique
+    # hotpotqa
+    # musique
     2wiki
-    # popqa      # NOTE: no pre-built DB → not usable with TWO_PHASE_METHOD="lmlm"
+    # popqa      # broken: 13275/14267 have empty contexts, rest misaligned
     # mquake
 )
 SPLIT_LST=(
@@ -224,11 +233,8 @@ fi
 
 # ── Eval parameters ──────────────────────────────────────────────────────────
 OUTPUT_DIR="./output/main_tables"
-SAVE_VERSION="_0806_row3_t1.0"
-# The pre-built DBs only cover the first 1000 dev questions (seed 42), so with
-# TWO_PHASE_METHOD="lmlm" NUM_SAMPLES must stay at 1000 — do NOT raise it here.
-# Questions past 1000 would still run, but against a DB with none of their facts.
-NUM_SAMPLES=1000
+SAVE_VERSION="_0806_ckpt368_full"
+NUM_SAMPLES=20000    # auto-caps per dataset; two_phase only (lmlm needs 1000)
 
 # Retrieval hyper-parameters (match training)
 TOP_K=4
@@ -245,10 +251,10 @@ USE_CONTEXTS="all"               # "golden" or "all"
 # eval is hyperparameter-identical to a two_phase --use-train-params run.
 # Leave all four empty to get the historical greedy behaviour (T=0.0).
 # Ignored when TWO_PHASE_METHOD="two_phase" (that path uses USE_TRAIN_PARAMS).
-TEMPERATURE="--temperature 1.0"
-TOP_P="--top-p 0.95"
-VLLM_TOP_K="--vllm-top-k 4"
-MAX_MODEL_LEN="--max-model-len 8192"
+TEMPERATURE=""
+TOP_P=""
+VLLM_TOP_K=""
+MAX_MODEL_LEN=""
 
 # Sampling: "" = greedy (temperature=0, recommended); "--use-train-params" = T=1.0, top_p=0.95
 USE_TRAIN_PARAMS="--use-train-params"
@@ -355,6 +361,11 @@ for MODEL_DIR in "${MODEL_PATH_LST[@]}"; do
 source \$(conda info --base)/etc/profile.d/conda.sh
 conda activate mem
 cd /share/j_sun/mx253_lmlm/
+# Per-job vLLM cache. Concurrent jobs on the same model share a torch.compile
+# cache hash, and racing writes to it on NFS kill jobs with either
+# "Errno 116 Stale file handle" or an AssertionError in standalone_compile.save.
+# Costs a few minutes of recompilation per job; avoids the race entirely.
+export VLLM_CACHE_ROOT=/home/lz586/.cache/vllm_\${SLURM_JOB_ID}
 SCRIPT_EOF
             fi
             TMP_SCRIPT="${GROUPED_SCRIPTS[${GROUP_KEY}]}"
