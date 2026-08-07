@@ -564,9 +564,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--search-r1-prompt-variant",
-        choices=["default", "thinkingtag", "icl3hop"],
+        choices=["default", "toolcall", "thinkingtag", "icl3hop"],
         default="default",
-        help="Prompt variant used to train the Search-R1 checkpoint",
+        help=(
+            "Prompt variant. 'default' is the verbatim upstream Search-R1 prompt "
+            "and speaks the <search>/<information> protocol the released "
+            "checkpoints were trained on. The others are paraphrases using the "
+            "Hermes <tool_call> schema and do not work with those checkpoints."
+        ),
     )
     parser.add_argument(
         "--search-r1-enable-thinking",
@@ -576,8 +581,13 @@ def main() -> None:
     parser.add_argument(
         "--search-r1-max-tool-response-length",
         type=int,
-        default=512,
-        help="Maximum Search-R1 tool response length in characters",
+        default=4096,
+        help=(
+            "Maximum Search-R1 tool response length in characters. Upstream "
+            "does not truncate at all; 512 cut three retrieved documents down "
+            "to a fragment and starved the model of the evidence it searched "
+            "for. 4096 fits a typical top-3 BM25 response intact."
+        ),
     )
     parser.add_argument(
         "--search-r1-tool-response-truncate-side",
@@ -598,6 +608,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--search-r1-max-model-len", type=int, default=3072
+    )
+    parser.add_argument(
+        "--search-r1-dtype",
+        default="bfloat16",
+        help=(
+            "vLLM dtype for search_r1. The released checkpoints declare "
+            "torch_dtype=float32 (verl saves fp32 FSDP master weights) even "
+            "though training and rollout ran in bf16, and infer.py itself loads "
+            "bfloat16. Following config.json would load 7B as 29GB and not fit "
+            "a 48GB card. Use 'auto' to follow config.json instead."
+        ),
     )
     parser.add_argument("--top-p", type=float, default=0.95, help="Nucleus sampling probability")
     parser.add_argument(
@@ -631,6 +652,16 @@ def main() -> None:
         "--max-steps", type=int, default=5, help="Max reasoning steps for the Agent"
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
+    parser.add_argument(
+        "--no-shuffle",
+        action="store_true",
+        help=(
+            "Load the dataset in its original order instead of shuffling by "
+            "--seed. Use when comparing against numbers produced by a harness "
+            "that takes the first N examples unshuffled, as upstream Search-R1 "
+            "does."
+        ),
+    )
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
     parser.add_argument(
         "--start-index",
@@ -756,6 +787,7 @@ def main() -> None:
             "top_p": args.top_p,
             "sampling_top_k": args.sampling_top_k,
             "max_model_len": args.search_r1_max_model_len,
+            "dtype": args.search_r1_dtype,
         } if args.method == "search_r1" else {}),
         "use_train_params": getattr(args, "use_train_params", False),
     }
@@ -845,7 +877,14 @@ def main() -> None:
     dataset_setting = args.confiqa_setting if args.dataset == "confiqa" else args.setting
     if args.dataset == "confiqa":
         logger.info(f"DEBUG: Loading ConFiQA with setting='{dataset_setting}' (args.confiqa_setting='{args.confiqa_setting}')")
-    full_dataset = get_dataset(name = args.dataset, setting = dataset_setting, split =  args.split, seed=args.seed)
+    # The loaders shuffle only when seed is not None, so None keeps the
+    # original order (which is what --no-shuffle asks for).
+    full_dataset = get_dataset(
+        name=args.dataset,
+        setting=dataset_setting,
+        split=args.split,
+        seed=None if args.no_shuffle else args.seed,
+    )
     total_dataset_size = len(full_dataset)
 
     print(f"examples in dataset: {full_dataset[0]}")
@@ -986,6 +1025,9 @@ def main() -> None:
             "top_p": args.top_p,
             "sampling_top_k": args.sampling_top_k,
             "max_model_len": args.search_r1_max_model_len,
+            # "auto" means "let vLLM read config.json"; the agent treats None
+            # as that, so translate here rather than passing the string through.
+            "dtype": None if args.search_r1_dtype == "auto" else args.search_r1_dtype,
             "max_tool_response_length": args.search_r1_max_tool_response_length,
             "tool_response_truncate_side": args.search_r1_tool_response_truncate_side,
             "tensor_parallel_size": args.tensor_parallel_size,
