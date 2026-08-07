@@ -1,9 +1,9 @@
 """Build a reproducible Wikipedia context corpus for PopQA.
 
-The historical PopQA artifact contains the plain-text content of each subject's
-Wikipedia article split on non-empty lines.  This module recreates that shape
-through the official MediaWiki Action API while retaining enough metadata to
-audit redirects, missing pages, and the exact Wikipedia revisions returned.
+The corpus contains the plain-text content of each subject's Wikipedia article
+split on non-empty lines. This module fetches that content through the official
+MediaWiki Action API while retaining enough metadata to audit redirects, missing
+pages, and the exact Wikipedia revisions returned.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ class WikipediaAPIError(RuntimeError):
 
 
 def extract_paragraphs(extract: str) -> List[str]:
-    """Convert MediaWiki's plain-text extract to the historical paragraph shape."""
+    """Split a MediaWiki plain-text extract into non-empty lines."""
     return [line.strip() for line in extract.splitlines() if line.strip()]
 
 

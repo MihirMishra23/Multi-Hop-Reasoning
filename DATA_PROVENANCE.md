@@ -14,7 +14,7 @@ but no Cornell filesystem path is required.
 | 2WikiMultiHopQA | `kamelliao/2wikimultihopqa@f4f0d7e` | Uses the pinned `data/dev.json` mirror of the official release. |
 | SynthWorlds | `kenqgu/SynthWorlds@d0f02ed` | `qa-sm` / `qa-rm` configs. |
 | TriviaQA | `mandarjoshi/trivia_qa@0f7faf3` | Uses `rc.wikipedia`. |
-| PopQA | `akariasai/PopQA@098765c` | The exact team-generated 1,000-example Wikipedia context artifact is bundled under `data/artifacts/`; it is not part of upstream PopQA. |
+| PopQA | `akariasai/PopQA@098765c` + `ryannoonan/popqa-wikipedia-contexts@1b91217` | Questions and the generated full Wikipedia context corpus are pinned independently. |
 
 ## PopQA Wikipedia corpus
 
@@ -65,10 +65,11 @@ shifting every later question onto the wrong context.
 The completed corpus and its manifest are published at
 [`ryannoonan/popqa-wikipedia-contexts`](https://huggingface.co/datasets/ryannoonan/popqa-wikipedia-contexts).
 The repository commit and the corpus SHA-256 are pinned in
-`src/data/provenance.py`; the loader downloads that exact artifact for full or
-otherwise non-historical evaluations and verifies its checksum. The exact
-seed-42, 1,000-row run continues to use the bundled legacy artifact so existing
-Table 3 results remain reproducible. `POPQA_CORPUS_PATH` overrides either choice.
+`src/data/provenance.py`; the loader downloads that exact artifact for every
+PopQA evaluation and verifies its checksum. `POPQA_CORPUS_PATH` can override the
+pinned corpus with an explicitly selected local artifact. The Hugging Face Hub
+client stores the downloaded corpus in its content-addressed local cache, so
+later evaluations verify and reuse the same bytes without downloading them again.
 
 Keep the builder, tests, and manifest format in Git, but do not commit successive
 full corpus snapshots here: they are derived Wikipedia data, are expected to be
