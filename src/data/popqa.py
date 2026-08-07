@@ -13,7 +13,7 @@ with fields:
 
 Notes:
 - PopQA does not provide supporting facts, so supporting_facts is always empty.
-- Contexts are loaded from a local Wikipedia corpus JSON file.
+- Contexts are loaded from a pinned full Wikipedia corpus or an explicit local override.
 - context_titles stores the titles separately to avoid fragile string parsing during splitting.
 - Context splitting (sentence grouping >= 800 chars) is handled by eval_multihop.py, not here.
 """
@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 from datasets import Dataset as HFDataset  # type: ignore
 from datasets import load_dataset  # type: ignore
 
-from .provenance import hf_source
+from .provenance import hf_dataset_file, hf_source
 
 POPQA_CORPUS_PATH = os.path.abspath(
     os.path.join(
@@ -41,9 +41,16 @@ POPQA_CORPUS_PATH = os.path.abspath(
 )
 
 
-def _resolve_popqa_corpus_path(corpus_path: Optional[str]) -> str:
-    """Resolve an explicit path, the environment override, or the legacy artifact."""
-    return corpus_path or os.environ.get("POPQA_CORPUS_PATH") or POPQA_CORPUS_PATH
+def _resolve_popqa_corpus_path(
+    corpus_path: Optional[str], *, seed: Optional[int], limit: Optional[int]
+) -> str:
+    """Resolve an override, the historical subset, or the pinned full corpus."""
+    configured_path = corpus_path or os.environ.get("POPQA_CORPUS_PATH")
+    if configured_path:
+        return configured_path
+    if seed == 42 and limit == 1000:
+        return POPQA_CORPUS_PATH
+    return hf_dataset_file("popqa_contexts")
 
 
 def _normalize_split(split: str) -> str:
@@ -212,8 +219,9 @@ def load_popqa(
         seed: optional random seed for shuffling
         setting: dataset setting (unused for PopQA)
         corpus_path: path to a PopQA Wikipedia corpus JSON/JSONL file. If omitted,
-            POPQA_CORPUS_PATH from the environment is used before the bundled
-            legacy artifact.
+            POPQA_CORPUS_PATH from the environment is honored first. The exact
+            seed-42, 1,000-row historical run uses the bundled legacy artifact;
+            all other selections use the pinned full Hugging Face corpus.
 
     Returns:
         HFDataset with unified schema
@@ -221,7 +229,7 @@ def load_popqa(
     split_norm = _normalize_split(split)
 
     # Load the Wikipedia corpus
-    resolved_corpus_path = _resolve_popqa_corpus_path(corpus_path)
+    resolved_corpus_path = _resolve_popqa_corpus_path(corpus_path, seed=seed, limit=limit)
     corpus = _load_popqa_corpus(resolved_corpus_path)
     corpus_index = _build_corpus_index(corpus)
 

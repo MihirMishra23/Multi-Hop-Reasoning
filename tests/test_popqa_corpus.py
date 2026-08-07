@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from datasets import Dataset
 
-from data import popqa
+from data import popqa, provenance
 from data.popqa_corpus import (
     WikipediaClient,
     build_corpus,
@@ -242,3 +242,50 @@ def test_legacy_json_array_is_also_title_keyed(tmp_path, monkeypatch):
 
     dataset = popqa.load_popqa(split="test", corpus_path=str(corpus_path))
     assert dataset[0]["contexts"] == ["correct"]
+
+
+def test_corpus_resolution_preserves_historical_run_and_defaults_to_full(monkeypatch):
+    monkeypatch.delenv("POPQA_CORPUS_PATH", raising=False)
+    downloads = []
+    monkeypatch.setattr(
+        popqa,
+        "hf_dataset_file",
+        lambda name: downloads.append(name) or "/cache/popqa_contexts.jsonl.gz",
+    )
+
+    historical = popqa._resolve_popqa_corpus_path(None, seed=42, limit=1000)
+    full = popqa._resolve_popqa_corpus_path(None, seed=None, limit=None)
+
+    assert historical == popqa.POPQA_CORPUS_PATH
+    assert full == "/cache/popqa_contexts.jsonl.gz"
+    assert downloads == ["popqa_contexts"]
+
+
+def test_full_popqa_corpus_source_is_immutable_and_checksummed():
+    source = provenance.dataset_source("popqa_contexts")
+
+    assert source["hf_repo"] == "ryannoonan/popqa-wikipedia-contexts"
+    assert source["revision"] == "1b91217d540cd4ab34e3efee1d7abe07c46f0209"
+    assert source["file"] == "popqa_contexts.jsonl.gz"
+    assert source["sha256"] == (
+        "afcc52bd4ab5ebe4f63a249fb305b21de288e8a4eafbf8c73cbd183ec3320482"
+    )
+
+
+def test_hf_dataset_file_verifies_a_registered_checksum(tmp_path, monkeypatch):
+    artifact = tmp_path / "artifact.jsonl.gz"
+    artifact.write_bytes(b"verified artifact")
+    source = {
+        "hf_repo": "owner/repo",
+        "revision": "immutable-revision",
+        "file": artifact.name,
+        "sha256": provenance.sha256_file(artifact),
+    }
+    monkeypatch.setattr(provenance, "dataset_source", lambda name: source)
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda **kwargs: str(artifact))
+
+    assert provenance.hf_dataset_file("popqa_contexts") == str(artifact)
+
+    source["sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="expected 000000"):
+        provenance.hf_dataset_file("popqa_contexts")

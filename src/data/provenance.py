@@ -83,6 +83,16 @@ DATASET_PROVENANCE: Dict[str, Dict[str, Any]] = {
             ),
         },
     },
+    "popqa_contexts": {
+        "hf_repo": "ryannoonan/popqa-wikipedia-contexts",
+        "revision": "1b91217d540cd4ab34e3efee1d7abe07c46f0209",
+        "file": "popqa_contexts.jsonl.gz",
+        "sha256": "afcc52bd4ab5ebe4f63a249fb305b21de288e8a4eafbf8c73cbd183ec3320482",
+        "bytes": 45394537,
+        "records": 12244,
+        "upstream": "https://www.mediawiki.org/wiki/API:Main_page",
+        "license": "CC BY-SA 4.0",
+    },
 }
 
 
@@ -167,19 +177,28 @@ def download_verified_file(
 
 
 def hf_dataset_file(name: str, filename: Optional[str] = None) -> str:
-    """Resolve a file from a pinned Hugging Face dataset revision."""
+    """Resolve and, when registered, checksum a pinned Hugging Face file."""
     source = dataset_source(name)
     selected_file = filename or source.get("file")
     if not selected_file:
         raise ValueError(f"No file is registered for dataset: {name}")
     from huggingface_hub import hf_hub_download
 
-    return hf_hub_download(
+    path = hf_hub_download(
         repo_id=source["hf_repo"],
         filename=selected_file,
         revision=source["revision"],
         repo_type="dataset",
     )
+    expected_sha256 = source.get("sha256")
+    if expected_sha256:
+        actual_sha256 = sha256_file(path)
+        if actual_sha256 != expected_sha256:
+            raise ValueError(
+                f"Hugging Face artifact has SHA-256 {actual_sha256}, "
+                f"expected {expected_sha256}: {path}"
+            )
+    return path
 
 
 def selected_rows_provenance(

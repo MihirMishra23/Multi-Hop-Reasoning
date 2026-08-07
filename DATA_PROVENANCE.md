@@ -62,13 +62,17 @@ shifting every later question onto the wrong context.
 
 ### Distribution
 
-Keep the builder, tests, and manifest format in Git. Publish the completed
-`popqa_contexts.jsonl.gz` plus `manifest.json` in a Hugging Face dataset
-repository, then pin that dataset repository's commit and artifact SHA-256 in
-`src/data/provenance.py`. Do not commit successive full corpus snapshots to this
-Git repository: they are derived Wikipedia data, are expected to be tens of
-megabytes compressed, and would permanently inflate Git history. The bundled
-legacy artifact remains only for reproducing the historical 1,000-row runs.
+The completed corpus and its manifest are published at
+[`ryannoonan/popqa-wikipedia-contexts`](https://huggingface.co/datasets/ryannoonan/popqa-wikipedia-contexts).
+The repository commit and the corpus SHA-256 are pinned in
+`src/data/provenance.py`; the loader downloads that exact artifact for full or
+otherwise non-historical evaluations and verifies its checksum. The exact
+seed-42, 1,000-row run continues to use the bundled legacy artifact so existing
+Table 3 results remain reproducible. `POPQA_CORPUS_PATH` overrides either choice.
+
+Keep the builder, tests, and manifest format in Git, but do not commit successive
+full corpus snapshots here: they are derived Wikipedia data, are expected to be
+tens of megabytes compressed, and would permanently inflate Git history.
 
 ## ConFiQA Table 2 protocol
 
