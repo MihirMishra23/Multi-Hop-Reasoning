@@ -36,6 +36,24 @@ export PYTHONNOUSERSITE="${PYTHONNOUSERSITE:-1}"
 # cannot load on the CUDA 12.8 paper hardware. These runs use BF16, not FP8.
 export SGL_ENABLE_JIT_DEEPGEMM="${SGL_ENABLE_JIT_DEEPGEMM:-false}"
 
+# SGLang starts fresh Python interpreters for its scheduler processes. On nodes
+# that also retain an older system CUDA toolkit, those children can resolve the
+# old libcudart before importing PyTorch and fail with an undefined CUDA symbol.
+# Preload the runtime shipped with the pinned PyTorch wheel so every process
+# uses the same CUDA version as torch itself.
+PYTORCH_CUDA_RUNTIME_LIB="$("${PYTHON}" -c '
+import importlib.util
+import pathlib
+
+spec = importlib.util.find_spec("nvidia.cuda_runtime")
+if spec is not None and spec.submodule_search_locations:
+    print(pathlib.Path(next(iter(spec.submodule_search_locations))) / "lib")
+')"
+if [ -f "${PYTORCH_CUDA_RUNTIME_LIB}/libcudart.so.12" ]; then
+    export LD_LIBRARY_PATH="${PYTORCH_CUDA_RUNTIME_LIB}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    export LD_PRELOAD="${PYTORCH_CUDA_RUNTIME_LIB}/libcudart.so.12${LD_PRELOAD:+:${LD_PRELOAD}}"
+fi
+
 if [ -z "${MODEL_PATH}" ]; then
     MODEL_PATH="$("${PYTHON}" "${SCRIPT_DIR}/reproduction_manifest.py" --artifact "${MODEL_ARTIFACT}")"
 elif [ -d "${MODEL_PATH}" ]; then
