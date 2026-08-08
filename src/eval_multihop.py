@@ -36,7 +36,7 @@ import torch
 
 from agent import get_agent, Agent
 from llm import get_llm
-from data import get_dataset
+from data import get_dataset, selected_rows_provenance
 from data.hotpotqa import load_hotpotqa_rag_corpus
 from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
 from multi_lmlm.database.database_manager import build_databases_from_triplets_batch
@@ -284,6 +284,14 @@ def process_single_batch(
             "supporting_facts": ex.get("supporting_facts"),
             "contexts": contexts,
         }
+        for provenance_key in (
+            "source_index",
+            "eval_position",
+            "confiqa_setting",
+            "is_counterfactual",
+        ):
+            if provenance_key in ex:
+                metadata_entry[provenance_key] = ex[provenance_key]
         # For MQuAKE, also capture new_answers and split type for knowledge editing evaluation
         if "new_answers" in ex:
             metadata_entry["new_answers"] = ex["new_answers"]
@@ -365,6 +373,14 @@ def process_single_batch(
             "question": metadata["question"],
             "trace": serialized_trace,
         }
+        for provenance_key in (
+            "source_index",
+            "eval_position",
+            "confiqa_setting",
+            "is_counterfactual",
+        ):
+            if provenance_key in metadata:
+                results[str(metadata["qid"])][provenance_key] = metadata[provenance_key]
         # For MQuAKE, also save new_gold_answer and split type for knowledge editing evaluation
         if "new_answers" in metadata:
             results[str(metadata["qid"])]["new_gold_answer"] = metadata["new_answers"]
@@ -420,7 +436,9 @@ def save_results_to_file(
             "database-path": database_path_value,
             "model": args.model,
             "dataset": args.dataset,
-            "setting": args.setting,
+            "setting": args.confiqa_setting if args.dataset == "confiqa" else args.setting,
+            "dataset_source": args.dataset_source,
+            "dataset_provenance": getattr(args, "_dataset_provenance", None),
             "split": args.split,
             "batch_size": args.batch_size,
             "total_examples": len(all_results),
@@ -478,6 +496,12 @@ def save_results_to_file(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run agent over a dataset and save predictions.")
     parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki", "synthworlds", "trivia_qa", "popqa", "confiqa", "mquake", "mquake-remastered"], help="Dataset name")
+    parser.add_argument(
+        "--dataset-source",
+        default="auto",
+        choices=["auto", "hf", "remote", "local"],
+        help="Use pinned public data by default, or an explicitly configured local override.",
+    )
     parser.add_argument(
         "--setting",
         default="distractor",
@@ -899,6 +923,7 @@ def main() -> None:
         name=args.dataset,
         setting=dataset_setting,
         split=args.split,
+        source=args.dataset_source,
         seed=None if args.no_shuffle else args.seed,
     )
     total_dataset_size = len(full_dataset)
@@ -916,6 +941,33 @@ def main() -> None:
     # TODO: how to make the training and eval use the same split function (e.g. create_train_val_splits)?
     # Calculate the exclusive end index
     end_index = args.start_index + examples_to_process
+
+    selected_dataset = full_dataset.select(range(args.start_index, end_index))
+    counterfactual_count = None
+    if "is_counterfactual" in selected_dataset.column_names:
+        counterfactual_count = sum(
+            bool(value) for value in selected_dataset["is_counterfactual"]
+        )
+    id_column = next(
+        (
+            column
+            for column in ("id", "_id", "case_id")
+            if column in selected_dataset.column_names
+        ),
+        None,
+    )
+    selected_ids = (
+        selected_dataset[id_column]
+        if id_column is not None
+        else list(range(args.start_index, end_index))
+    )
+    args._dataset_provenance = selected_rows_provenance(
+        args.dataset,
+        selected_ids,
+        seed=args.seed,
+        setting=dataset_setting,
+        counterfactual_count=counterfactual_count,
+    )
 
     print(f"Evaluating {examples_to_process} / {total_dataset_size} examples (index {args.start_index} to {end_index})")
     logger.info(f"Dataset size: {total_dataset_size}, Processing {examples_to_process} examples from index {args.start_index} to {end_index}")
@@ -940,6 +992,8 @@ def main() -> None:
             settings_str += "_tp"
         if args.dataset == "synthworlds":
             settings_str += f"_setting{args.setting}"
+        if args.dataset == "confiqa":
+            settings_str += f"_setting{args.confiqa_setting}"
 
         save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}{settings_str}.json"
         save_path = os.path.join(output_dir, f"generations{args.save_version}", f"eval_{save_postfix}")
@@ -1146,7 +1200,10 @@ def main() -> None:
         os.makedirs(unified_db_dir, exist_ok=True)
 
         contexts_suffix = f"_{args.use_contexts}" if args.use_contexts != "golden" else ""
-        unified_db_filename = f"unified_db_{args.dataset}_{args.split}_n{examples_to_process}_i{args.start_index}{contexts_suffix}.json"
+        confiqa_suffix = (
+            f"_{args.confiqa_setting}" if args.dataset == "confiqa" else ""
+        )
+        unified_db_filename = f"unified_db_{args.dataset}_{args.split}_n{examples_to_process}_i{args.start_index}{contexts_suffix}{confiqa_suffix}.json"
         unified_db_path = os.path.join(unified_db_dir, unified_db_filename)
 
         # Extract triplets from the unified database and save
@@ -1164,6 +1221,7 @@ def main() -> None:
                 "total_triplets": len(all_triplets),
                 "use_contexts": args.use_contexts,
                 "contexts_are_split": args.use_contexts == "all",
+                "dataset_provenance": args._dataset_provenance,
             },
             "triplets": [{"head": t[0], "relation": t[1], "tail": t[2]} for t in all_triplets]
         }
