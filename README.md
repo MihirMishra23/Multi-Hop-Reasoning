@@ -96,6 +96,30 @@ python scripts/eval_multihop.py \
   --model gpt-4
 ```
 
+Search-R1 function-tool checkpoints use the same dataset, batching, output,
+resume, and metric code as the other methods. Start a compatible retrieval
+service exposing `POST /retrieve`, then run:
+
+```bash
+python src/eval_multihop.py \
+  --method search_r1 \
+  --model-path /path/to/merged-search-r1-checkpoint \
+  --dataset hotpotqa \
+  --setting distractor \
+  --split validation \
+  --batch-size 8 \
+  --max-steps 5 \
+  --search-r1-max-response-length 2048 \
+  --search-r1-max-model-len 3072 \
+  --search-r1-retrieval-url http://127.0.0.1:8000/retrieve \
+  --search-r1-retrieval-k 3 \
+  --search-r1-max-tool-response-length 512 \
+  --eval
+```
+
+Set `--search-r1-prompt-variant` and `--search-r1-enable-thinking` to the
+values used when training the selected checkpoint.
+
 ```bash
 # FullWiki RAG (defaults to fullwiki corpus path when setting=fullwiki)
 python scripts/eval_multihop.py \

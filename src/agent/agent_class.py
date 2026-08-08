@@ -14,6 +14,7 @@ class AgentStep:
     error: Optional[str] = None
     tool_name: Optional[str] = None
     tool_args: Optional[Dict[str, Any]] = None
+    tool_result: Optional[Any] = None
     golden_triplets: Optional[str] = None
 
 
@@ -98,5 +99,4 @@ class Agent:
                 break
         # Return a copy of the trace for the caller
         return [final_answer], [list(self.trace)]
-
 
