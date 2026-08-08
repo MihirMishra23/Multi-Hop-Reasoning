@@ -17,6 +17,7 @@ The JSON format uses deduplicated metadata at the top level:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -418,6 +419,27 @@ def process_single_batch(
     return results
 
 
+def _fit_filename(name: str, max_bytes: int = 255) -> str:
+    """Shorten a leaf filename that would exceed the filesystem's 255-byte cap.
+
+    Long model tags push results_*.json past the limit (hotpotqa lands on 256
+    bytes and dies with "Errno 36 File name too long", while musique squeaks
+    through at 255). The model tag is also the parent directory name, so
+    dropping the middle of it loses nothing; a hash of the full name is spliced
+    in so two different runs can never collide. No-op for names that already
+    fit, which keeps every existing path untouched.
+    """
+    if len(name.encode()) <= max_bytes:
+        return name
+    stem, _, ext = name.rpartition(".")
+    ext = f".{ext}" if stem else ""
+    stem = stem or name
+    digest = hashlib.sha1(name.encode()).hexdigest()[:8]
+    budget = max_bytes - len(ext.encode()) - len(digest) - 2  # 2 for the ".." join
+    head = budget * 2 // 3
+    return f"{stem[:head]}.{digest}.{stem[-(budget - head):]}{ext}"
+
+
 def save_results_to_file(
     all_results: Dict[str, Dict[str, Any]],
     save_path: str,
@@ -467,8 +489,6 @@ def save_results_to_file(
         output["metadata"]["search_r1"] = {
             "retrieval_url": args.search_r1_retrieval_url,
             "retrieval_top_k": args.search_r1_retrieval_k,
-            "prompt_variant": args.search_r1_prompt_variant,
-            "enable_thinking": args.search_r1_enable_thinking,
             "max_steps": args.max_steps,
             "max_tool_response_length": args.search_r1_max_tool_response_length,
             "tool_response_truncate_side": args.search_r1_tool_response_truncate_side,
@@ -586,22 +606,22 @@ def main() -> None:
     parser.add_argument(
         "--search-r1-retrieval-k", type=int, default=3, help="Search-R1 documents per query"
     )
-    parser.add_argument(
+    # Accepted-but-ignored: the behavioural switches these controlled were
+    # collapsed into the single infer.py-aligned path. Only kept so in-flight
+    # jobs 859612-617, whose SLURM spool scripts still pass these flags, can
+    # requeue without argparse rejecting them. Safe to delete once those runs
+    # (and any resubmissions of them) have finished.
+    for _dep in (
         "--search-r1-prompt-variant",
-        choices=["default", "toolcall", "thinkingtag", "icl3hop"],
-        default="default",
-        help=(
-            "Prompt variant. 'default' is the verbatim upstream Search-R1 prompt "
-            "and speaks the <search>/<information> protocol the released "
-            "checkpoints were trained on. The others are paraphrases using the "
-            "Hermes <tool_call> schema and do not work with those checkpoints."
-        ),
-    )
-    parser.add_argument(
+        "--search-r1-doc-format",
+        "--search-r1-stop-variants",
+    ):
+        parser.add_argument(_dep, help=argparse.SUPPRESS)
+    for _dep in (
+        "--search-r1-splice-prefix-newlines",
         "--search-r1-enable-thinking",
-        action="store_true",
-        help="Enable Qwen3 native thinking in the Search-R1 chat template",
-    )
+    ):
+        parser.add_argument(_dep, action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--search-r1-max-tool-response-length",
         type=int,
@@ -684,16 +704,6 @@ def main() -> None:
         "--max-steps", type=int, default=5, help="Max reasoning steps for the Agent"
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
-    parser.add_argument(
-        "--no-shuffle",
-        action="store_true",
-        help=(
-            "Load the dataset in its original order instead of shuffling by "
-            "--seed. Use when comparing against numbers produced by a harness "
-            "that takes the first N examples unshuffled, such as upstream "
-            "Search-R1's evaluate_searchr1.py."
-        ),
-    )
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
     parser.add_argument(
         "--start-index",
@@ -917,14 +927,12 @@ def main() -> None:
     dataset_setting = args.confiqa_setting if args.dataset == "confiqa" else args.setting
     if args.dataset == "confiqa":
         logger.info(f"DEBUG: Loading ConFiQA with setting='{dataset_setting}' (args.confiqa_setting='{args.confiqa_setting}')")
-    # The loaders shuffle only when seed is not None, so None keeps the
-    # original order (which is what --no-shuffle asks for).
     full_dataset = get_dataset(
         name=args.dataset,
         setting=dataset_setting,
         split=args.split,
         source=args.dataset_source,
-        seed=None if args.no_shuffle else args.seed,
+        seed=args.seed,
     )
     total_dataset_size = len(full_dataset)
 
@@ -996,8 +1004,8 @@ def main() -> None:
             settings_str += f"_setting{args.confiqa_setting}"
 
         save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}{settings_str}.json"
-        save_path = os.path.join(output_dir, f"generations{args.save_version}", f"eval_{save_postfix}")
-        save_results_path = os.path.join(output_dir, f"results{args.save_version}", f"results_{save_postfix}")
+        save_path = os.path.join(output_dir, f"generations{args.save_version}", _fit_filename(f"eval_{save_postfix}"))
+        save_results_path = os.path.join(output_dir, f"results{args.save_version}", _fit_filename(f"results_{save_postfix}"))
     else:
         model_name = args.model or "unknown-model"
         save_path = os.path.join(base_output_dir, args.method, f"{args.dataset}_{args.setting}", model_name, "generations")
@@ -1090,8 +1098,6 @@ def main() -> None:
             "retrieval_top_k": args.search_r1_retrieval_k,
             "retrieval_timeout": args.search_r1_retrieval_timeout,
             "retrieval_workers": args.search_r1_retrieval_workers,
-            "prompt_variant": args.search_r1_prompt_variant,
-            "enable_thinking": args.search_r1_enable_thinking,
             "top_p": args.top_p,
             "sampling_top_k": args.sampling_top_k,
             "max_model_len": args.search_r1_max_model_len,

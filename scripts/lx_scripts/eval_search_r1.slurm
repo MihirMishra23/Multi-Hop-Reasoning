@@ -18,14 +18,14 @@
 # Usage:
 #     bash scripts/lx_scripts/eval_search_r1.slurm
 #
-#SBATCH -J search_r1_dispatch
-#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multi_hop/search_r1_dispatch_%j.out
-#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multi_hop/search_r1_dispatch_%j.err
+#SBATCH -J sr1_full_dispatch
+#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multi_hop/sr1_full_dispatch_%j.out
+#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multi_hop/sr1_full_dispatch_%j.err
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=4G
-#SBATCH -t 00:10:00
+#SBATCH -t infinite
 #SBATCH --partition=kilian,default_partition
 
 set -euo pipefail
@@ -38,25 +38,27 @@ DATA_ROOT=/share/j_sun/mx253/Search-R1     # index/, corpus/ live here (owned by
 EVAL_ENV=mem                                # vllm + transformers
 RETRIEVER_ENV=sr1-retriever                 # pyserini + fastapi + uvicorn
 
-SAVE_VERSION="_0806_sr1_n1000_3b_noshuf"
+# SAVE_VERSION, NUM_SAMPLES, and the model list can be overridden from the
+# environment when re-dispatching for a single new checkpoint, so we don't
+# have to comment-toggle MODEL_LST between runs. Set SR1_MODELS to a
+# newline-separated list of "tag:path" entries (same shape as MODEL_LST).
+SAVE_VERSION="${SAVE_VERSION:-_0808_sr1_full_dev_inferpy_align_shuf}"
 OUTPUT_DIR="./output/main_tables"
 
 # Set to a small number (e.g. 20) for a smoke test before committing to full dev.
-# 20000 auto-caps to each dataset's dev size (hotpotqa 7405 / musique 2417 / 2wiki 12576).
-NUM_SAMPLES=1000
+# 20000 auto-caps to each dataset's dev size (hotpotqa 7405 / musique 2417 / 2wiki 12576),
+# so a single ceiling covers all three without per-dataset math.
+NUM_SAMPLES="${NUM_SAMPLES:-20000}"
 
 # Search-R1 retrieval / rollout parameters, matched to upstream
 # evaluate_searchr1.py so results are comparable to the published numbers:
 #   while cnt < 10          -> MAX_STEPS=10
 #   max_new_tokens=1024     -> 10 turns x 1024 = 10240 total budget
 #   do_sample=False, T=0.0  -> greedy (already the evaluator default)
-#   samples[:max_samples]   -> NO_SHUFFLE, upstream takes the first N unshuffled
 # Upstream sets no context cap (HF generate uses the model's native window:
 # 32768 for 3B, 131072 for 7B). 16384 is well above what 10 turns of 3 docs
 # needs while keeping the KV cache affordable on a 48GB card.
 RETRIEVAL_TOPK=3
-PROMPT_VARIANT="default"                    # default | toolcall | thinkingtag | icl3hop
-NO_SHUFFLE="--no-shuffle"                   # "" to shuffle by --seed instead
 MAX_STEPS=10
 MAX_RESPONSE_LENGTH=10240
 SEARCH_R1_MAX_MODEL_LEN=16384
@@ -72,10 +74,15 @@ EVAL_MEM=128G
 # NOTE: mx253's existing results are mostly v0.3, so numbers from here are NOT
 #       directly comparable to those; this is a deliberate v0.1 run.
 #   short_name : hf_repo_id_or_local_path
-MODEL_LST=(
-    "sr1-3b:PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-3b-em-ppo"
-    # "sr1-7b:PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
-)
+if [[ -n "${SR1_MODELS:-}" ]]; then
+    # env override: parse newline-separated tag:path entries
+    mapfile -t MODEL_LST <<< "${SR1_MODELS}"
+else
+    MODEL_LST=(
+        # "sr1-3b:PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-3b-em-ppo"
+        "sr1-7b:PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
+    )
+fi
 
 # ── Datasets ──────────────────────────────────────────────────────────────────
 # Verified full dev sets (count matches official dev size; corpus answer
@@ -83,13 +90,22 @@ MODEL_LST=(
 # popqa is intentionally absent: only 1000/423-question subsets exist.
 #
 #   name : corpus jsonl : bm25 index dir
-DATASETS=(
-    "hotpotqa:hotpotqa_distractor_full_val_corpus.jsonl:hotpotqa_full_val"
-    # musique excluded from the unshuffled comparison: our loader reads it from
-    # HF and mx253 from an exported json, so the orders differ (2/1000 match).
-    # "musique:musique_val_corpus.jsonl:musique_val"
-    "2wiki:2wiki_val_corpus.jsonl:2wiki_val"
-)
+if [[ -n "${SR1_DATASETS:-}" ]]; then
+    # env override: parse newline-separated "name:corpus:index" entries so a
+    # re-dispatch can target just the (dataset) combos that need re-running.
+    mapfile -t DATASETS <<< "${SR1_DATASETS}"
+else
+    DATASETS=(
+        # "hotpotqa:hotpotqa_distractor_full_val_corpus.jsonl:hotpotqa_full_val"
+        # musique is fine to include when shuffling by --seed through our loader,
+        # because both search_r1 and eval_lmlm go through eval_multihop.py and
+        # get the same seed=42 shuffled 1000 questions. (It was disabled only
+        # for the unshuffled upstream-comparison runs, where mx253's loader order
+        # differed from ours.)
+        # "musique:musique_val_corpus.jsonl:musique_val"
+        "2wiki:2wiki_val_corpus.jsonl:2wiki_val"
+    )
+fi
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
 
@@ -154,6 +170,13 @@ for MENTRY in "${MODEL_LST[@]}"; do
 # which under 'set -u' aborts the script the moment we activate it.
 set -o pipefail
 source ${CONDA_SH}
+
+# Per-job vLLM cache. Without this, concurrent jobs on the same model share a
+# torch.compile cache hash and racing writes to it on NFS kill jobs with an
+# AssertionError in standalone_compile.save (or "Errno 116 Stale file handle").
+# Costs a few minutes of recompilation per job; avoids the race entirely.
+# Mirrors the workaround in scripts/lx_scripts/eval_lmlm.slurm.
+export VLLM_CACHE_ROOT=/home/lz586/.cache/vllm_\${SLURM_JOB_ID}
 
 # Derive a per-job port so several eval jobs can share a node, then step past
 # anything already bound. Requires the --port patch in retrieval_server.py.
@@ -220,8 +243,6 @@ python src/eval_multihop.py \\
     --model-path "${MODEL_PATH}" \\
     --search-r1-retrieval-url http://127.0.0.1:\${PORT}/retrieve \\
     --search-r1-retrieval-k ${RETRIEVAL_TOPK} \\
-    --search-r1-prompt-variant ${PROMPT_VARIANT} \\
-    ${NO_SHUFFLE} \\
     --max-steps ${MAX_STEPS} \\
     --search-r1-max-response-length ${MAX_RESPONSE_LENGTH} \\
     --search-r1-max-model-len ${SEARCH_R1_MAX_MODEL_LEN} \\
@@ -238,7 +259,7 @@ SCRIPT_EOF
 
         chmod +x "${TMP_SCRIPT}"
 
-        JOB_NAME="sr1_eval_${DS}_${MODEL_TAG}"
+        JOB_NAME="sr1_full_inferpy_${DS}_${MODEL_TAG}"
         echo "Submitting: ${JOB_NAME}"
         sbatch \
             --job-name="${JOB_NAME}" \
