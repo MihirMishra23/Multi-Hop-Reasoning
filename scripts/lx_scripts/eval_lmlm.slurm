@@ -133,9 +133,24 @@ MODEL_PATH_LST=(
     # 0805/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_1phase-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-rth0.6-rk4-sk4-nak-inv
 
     # ----------------------------
-    # 0806: mid-training SFT checkpoint-368, full dev, two_phase
+    # 0806: mid-training SFT checkpoint-368. Re-run at n=1000 so the SFT baseline
+    # uses the same 1000-example unified DB pool as the ckpt-368 GRPO n1000 evals
+    # (the earlier full-dev SFT runs pooled the whole dev set, which is not comparable).
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4/checkpoint-368
     # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
+
+    # ----------------------------
+    # 0807: old 4B GRPO that started from the FINAL SFT (= ckpt-735 = root).
+    # Trained WITHOUT --use_inverses. Re-eval at n=1000 with the same
+    # unified-DB pool as the ckpt-368 GRPO n1000 runs so it slots into the
+    # comparison table cleanly. Filling in the 2x2 (init: ckpt-368 vs ckpt-735)
+    # x (train inverses: off vs on).
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+
+    # ----------------------------
+    # 0808: 4B GRPO trained FROM the ckpt-735 SFT WITH --use_inverses
+    # (job 858596, finished at step 500).
+    0807/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-checkpoint-735-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-rth0.6-rk4-sk4-nak-inv/checkpoint-500
 
     # ----------------------------
     # 0806: 4B GRPO trained FROM the ckpt-368 SFT (job 827668, finished at step 500).
@@ -145,7 +160,7 @@ MODEL_PATH_LST=(
     # ----------------------------
     # 0806: 1.7B GRPO trained FROM the ckpt-368 SFT, finished at step 500.
     # Same params as the 4B ckpt-368 GRPO eval above (full dev, two_phase).
-    0805_ret_0.6_top_k_4/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4-checkpoint-368-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-rth0.6-rk4-sk4-nak-inv/checkpoint-500
+    # 0805_ret_0.6_top_k_4/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4-checkpoint-368-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-rth0.6-rk4-sk4-nak-inv/checkpoint-500
 
     # ----------------------------
     # Final Runs: SFT
@@ -217,8 +232,8 @@ MODEL_PATH_LST=(
 # "lmlm"      → Phase-2 only over the pre-built DB that eval_lmlm_multihop.sh
 #               maps per (dataset, split). Used for the row-3 ablation.
 # "two_phase" → normal co-evolution eval (model builds its own DB).
-TWO_PHASE_METHOD="lmlm"
-# TWO_PHASE_METHOD="two_phase"
+# TWO_PHASE_METHOD="lmlm"
+TWO_PHASE_METHOD="two_phase"
 
 # ── Datasets and splits ──────────────────────────────────────────────────────
 # NOTE: train_val1k is only valid for hotpotqa. musique/2wiki/popqa only support "dev".
@@ -247,9 +262,10 @@ fi
 
 # ── Eval parameters ──────────────────────────────────────────────────────────
 OUTPUT_DIR="./output/main_tables"
-SAVE_VERSION="_0806_ckpt368_geminidb"
-NUM_SAMPLES=1000     # lmlm: the pre-built Gemini DBs only cover the first 1000
-                     # seed-42 dev questions — do NOT raise this here.
+SAVE_VERSION="_0808_4b_ckpt735_grpo_ckpt500_n1000"
+NUM_SAMPLES=1000     # for the full-dev pass, set NUM_SAMPLES=20000 (auto-caps
+                     # to each dataset's dev size: hotpotqa 7405 / musique 2417
+                     # / 2wiki 12576)
 
 # Retrieval hyper-parameters (match training)
 TOP_K=4
