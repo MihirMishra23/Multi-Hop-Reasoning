@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -90,6 +91,57 @@ class RetrievalTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "corrupt index"):
             retrieval._search_bm25(BrokenRetriever(), "question", 4)
+
+    def test_memory_index_queries_with_corpus_vocabulary(self):
+        corpus_calls = []
+        retrieve_calls = []
+
+        class FakeTokenizer:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            def tokenize(self, documents, **kwargs):
+                corpus_calls.append((documents, kwargs))
+                return ([['corpus-token']], {})
+
+        class FakeBM25:
+            def __init__(self, corpus, backend):
+                self.corpus = corpus
+                self.backend = backend
+
+            def index(self, corpus_tokens, **kwargs):
+                self.corpus_tokens = corpus_tokens
+
+            def retrieve(self, query_tokens, **kwargs):
+                retrieve_calls.append((query_tokens, kwargs))
+                return ([[0]], None)
+
+        fake_bm25s = types.ModuleType("bm25s")
+        fake_bm25s.tokenization = types.SimpleNamespace(Tokenizer=FakeTokenizer)
+        fake_bm25s.BM25 = FakeBM25
+
+        def independent_query_tokenize(queries):
+            raise AssertionError("query must not create an independent vocabulary")
+
+        fake_bm25s.tokenize = independent_query_tokenize
+        fake_stemmer = types.ModuleType("Stemmer")
+        fake_stemmer.Stemmer = lambda language: f"stemmer:{language}"
+
+        with patch.dict(sys.modules, {"bm25s": fake_bm25s, "Stemmer": fake_stemmer}):
+            index = retrieval._BM25sMemoryIndex(["First document"])
+            result = index.search("Question text", 1)
+
+        self.assertEqual(result, [0])
+        self.assertEqual(len(corpus_calls), 2)
+        self.assertEqual(corpus_calls[1], (
+            ["Question text"],
+            {
+                "update_vocab": False,
+                "return_as": "tuple",
+                "show_progress": False,
+            },
+        ))
+        self.assertEqual(retrieve_calls[0][0], ([['corpus-token']], {}))
 
 
 if __name__ == "__main__":

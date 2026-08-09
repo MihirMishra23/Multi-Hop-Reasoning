@@ -26,6 +26,7 @@ import logging
 import gc
 import subprocess
 import fcntl
+from importlib.metadata import PackageNotFoundError, version as package_version
 from typing import Dict, Any, List
 from tqdm import tqdm
 
@@ -592,6 +593,13 @@ def save_results_to_file(
             "corpus_path": None if args.method == "ircot" else args.rag_corpus_path,
             "k": args.rag_k if args.method == "rag" else args.ircot_retrieval_k,
         }
+        if args.method == "rag":
+            output["metadata"]["retrieval"].update({
+                "implementation": "bm25s_shared_corpus_vocabulary",
+                "query_tokenization": "corpus_tokenizer_update_vocab_false",
+                "bm25s_version": getattr(args, "rag_bm25s_version", None),
+                "pystemmer_version": getattr(args, "rag_pystemmer_version", None),
+            })
     if args.method == "ircot":
         output["metadata"]["ircot"] = {
             "implementation": "faithful_port_with_model_substitution",
@@ -990,9 +998,41 @@ def main() -> None:
     args = parser.parse_args()
     args.code_commit = _get_git_commit()
 
+    if args.method == "rag" and args.retrieval == "bm25":
+        # RAG retrieval is sensitive to tokenizer/version changes.  Validate
+        # the pinned implementation before loading the dataset or model and
+        # persist the versions in the result artifact.
+        try:
+            import bm25s
+            import Stemmer  # noqa: F401
+
+            args.rag_bm25s_version = package_version("bm25s")
+            args.rag_pystemmer_version = package_version("PyStemmer")
+        except (ImportError, PackageNotFoundError) as exc:
+            raise RuntimeError(
+                "RAG BM25 dependencies are unavailable. Install the project with "
+                "`python -m pip install -e .` before launching evaluation."
+            ) from exc
+        if args.rag_bm25s_version != "0.2.0":
+            raise RuntimeError(
+                "RAG evaluation requires bm25s==0.2.0 for reproducible rankings; "
+                f"found {args.rag_bm25s_version}."
+            )
+
     if args.method == "ircot" and args.batch_size != 1:
         raise ValueError("--method=ircot requires --batch-size=1")
     if args.method == "ircot":
+        # Import the official scorer before loading a model or generating the
+        # first completion.  Missing evaluation-only dependencies previously
+        # surfaced only when live metrics scored example 1, wasting a GPU
+        # allocation and leaving a misleading one-example artifact.
+        try:
+            from eval.ircot_official_metrics import evaluate_predictions as _ircot_preflight
+        except ImportError as exc:
+            raise RuntimeError(
+                "IRCoT scoring dependencies are unavailable. Install the project with "
+                "`python -m pip install -e .` before launching evaluation."
+            ) from exc
         if args.dataset not in OFFICIAL_CORPUS_NAMES:
             raise ValueError("Faithful IRCoT supports --dataset hotpotqa, 2wiki, or musique")
         if not args.ircot_retriever_url:

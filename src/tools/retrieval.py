@@ -115,6 +115,12 @@ class _BM25sMemoryIndex:
         self._retriever.index(corpus_tokens, show_progress=False)
 
     def search(self, query: str, top_k: int) -> List[int]:
+        # Queries must use the vocabulary that was built for the corpus.
+        # FlashRAG 0.1.4 calls the module-level ``bm25s.tokenize`` here, which
+        # creates a fresh integer vocabulary for every query.  Those unrelated
+        # token IDs are then interpreted as corpus token IDs, producing
+        # incorrect and hash-seed-dependent rankings.  Reuse the corpus
+        # tokenizer without extending its vocabulary instead.
         query_tokens = self._tokenizer.tokenize(
             [query],
             update_vocab=False,

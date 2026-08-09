@@ -14,9 +14,12 @@ authors = [
 license = {text = "MIT"}
 
 dependencies = [
+    "bm25s[core]==0.2.0",
     "datasets>=2.14.0",
+    "ftfy>=6.1.1,<7",
     "openai>=1.0.0",
     "pandas>=1.5.0",
+    "PyStemmer==2.2.0.3",
     "rapidfuzz>=3.0.0",
     "requests>=2.28.0",
     "spacy>=3.4.1",
