@@ -20,6 +20,8 @@ MODEL_PATH="${MODEL_PATH:?Set MODEL_PATH}"
 CONFIQA_CONDITION="${CONFIQA_CONDITION:?Set CONFIQA_CONDITION}"
 QUERY_SAMPLES="${QUERY_SAMPLES:-50}"
 STORE_SAMPLES="${STORE_SAMPLES:-1000}"
+EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-${QUERY_SAMPLES}}"
+SAVE_LABEL="${SAVE_LABEL:-smoke${QUERY_SAMPLES}_store${STORE_SAMPLES}}"
 SEED="${SEED:-42}"
 RUN_ROOT="${RUN_ROOT:-/share/j_sun/lmlm_multihop/results/confiqa_conflict_free_smoke}"
 PYTHON="${PYTHON:-/home/rtn27/.conda/envs/multi-hop-reasoning/bin/python}"
@@ -50,10 +52,10 @@ if [[ "${MODE}" == "kbevo" ]]; then
         --start-index 0 \
         --total-count "${QUERY_SAMPLES}" \
         --knowledge-store-count "${STORE_SAMPLES}" \
-        --batch-size "${QUERY_SAMPLES}" \
+        --batch-size "${EVAL_BATCH_SIZE}" \
         --save-every 1 \
         --output-dir "${RUN_ROOT}/kbevo" \
-        --save-version smoke50_store1000 \
+        --save-version "${SAVE_LABEL}" \
         --concat-all-db \
         --use-contexts all \
         --use-inverses \
@@ -141,10 +143,10 @@ elif [[ "${MODE}" == "searchr1" ]]; then
         --sampling-top-k -1 \
         --total-count "${QUERY_SAMPLES}" \
         --knowledge-store-count "${STORE_SAMPLES}" \
-        --batch-size "${QUERY_SAMPLES}" \
+        --batch-size "${EVAL_BATCH_SIZE}" \
         --save-every 1 \
         --output-dir "${RUN_ROOT}/searchr1_recent_master" \
-        --save-version "smoke50_store1000_master_${SR1_CODE_REV}" \
+        --save-version "${SAVE_LABEL}_master_${SR1_CODE_REV}" \
         --seed "${SEED}" \
         --eval
 else
