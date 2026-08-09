@@ -30,6 +30,16 @@ from datasets import load_dataset  # type: ignore
 from .provenance import hf_dataset_file, hf_source
 
 
+LONG_TAIL_SETTING = "long_tail"
+LONG_TAIL_MAX_SUBJECT_POPULARITY = 100
+LONG_TAIL_EXPECTED_COUNT = 1399
+
+
+def _is_long_tail_setting(setting: Optional[str]) -> bool:
+    normalized = (setting or "").lower().replace("-", "_")
+    return normalized in {LONG_TAIL_SETTING, "longtail", "lt100"}
+
+
 def _resolve_popqa_corpus_path(corpus_path: Optional[str]) -> str:
     """Resolve an explicit override or the pinned full corpus."""
     configured_path = corpus_path or os.environ.get("POPQA_CORPUS_PATH")
@@ -101,6 +111,20 @@ def _build_corpus_index(corpus: List[Dict[str, Any]]) -> Dict[str, Dict[str, str
             if title:
                 index.setdefault(title, article)
     return index
+
+
+def load_popqa_rag_corpus(corpus_path: str) -> List[Dict[str, str]]:
+    """Load a prepared PopQA corpus as title/content records for global RAG."""
+    records = _load_popqa_corpus(corpus_path)
+    index = _build_corpus_index(records)
+    unique_articles: Dict[str, Dict[str, str]] = {}
+    for article in index.values():
+        title = article["title"]
+        unique_articles.setdefault(
+            title,
+            {"title": title, "contents": article["text"]},
+        )
+    return list(unique_articles.values())
 
 
 def _build_answers(answer_field: Any) -> List[str]:
@@ -201,7 +225,8 @@ def load_popqa(
         source: "auto" or "hf" (only "hf" supported for PopQA)
         limit: optional max number of rows to return
         seed: optional random seed for shuffling
-        setting: dataset setting (unused for PopQA)
+        setting: use ``long_tail`` for the 1,399 examples whose subject has
+            fewer than 100 monthly Wikipedia page views.
         corpus_path: path to a PopQA Wikipedia corpus JSON/JSONL file. If omitted,
             POPQA_CORPUS_PATH from the environment is honored first; otherwise the
             pinned full Hugging Face corpus is downloaded and checksum-verified.
@@ -222,6 +247,20 @@ def load_popqa(
         raw = load_dataset("akariasai/PopQA", split=split_norm)  # type: ignore
     except Exception as e:
         raise RuntimeError(f"Failed to load PopQA from Hugging Face (split={split_norm}): {e}")
+
+    # The long-tail criterion comes from the benchmark metadata and must be
+    # applied before shuffling/limiting. It is not equivalent to taking a
+    # shuffled prefix of the full PopQA test set.
+    if _is_long_tail_setting(setting):
+        raw = raw.filter(
+            lambda example: float(example["s_pop"]) < LONG_TAIL_MAX_SUBJECT_POPULARITY,
+            desc="select PopQA long-tail subjects",
+        )
+        if len(raw) != LONG_TAIL_EXPECTED_COUNT:
+            raise ValueError(
+                f"Pinned PopQA long-tail selection produced {len(raw)} rows; "
+                f"expected {LONG_TAIL_EXPECTED_COUNT}"
+            )
 
     # Shuffle with seed if provided (before normalizing to avoid duplicating heavy context data)
     if seed is not None:
