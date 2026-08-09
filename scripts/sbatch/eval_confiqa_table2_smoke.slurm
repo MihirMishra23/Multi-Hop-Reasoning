@@ -24,12 +24,15 @@ SEED="${SEED:-42}"
 RUN_ROOT="${RUN_ROOT:-/share/j_sun/lmlm_multihop/results/confiqa_conflict_free_smoke}"
 PYTHON="${PYTHON:-/home/rtn27/.conda/envs/multi-hop-reasoning/bin/python}"
 REPO_DIR="${REPO_DIR:-${SLURM_SUBMIT_DIR}}"
+export PATH="$(dirname "${PYTHON}"):${PATH}"
 
 cd "${REPO_DIR}"
-mkdir -p "${RUN_ROOT}" /home/rtn27/slurm_output
-export VLLM_CACHE_ROOT="/tmp/vllm_${SLURM_JOB_ID}"
-export TORCHINDUCTOR_CACHE_DIR="/tmp/inductor_${SLURM_JOB_ID}"
-mkdir -p "${VLLM_CACHE_ROOT}" "${TORCHINDUCTOR_CACHE_DIR}"
+mkdir -p "${RUN_ROOT}" "${LOG_DIR:-${RUN_ROOT}/logs}"
+CACHE_BASE="${CACHE_BASE:-/scratch/${USER}/confiqa_smoke_${SLURM_JOB_ID}}"
+export VLLM_CACHE_ROOT="${CACHE_BASE}/vllm"
+export TORCHINDUCTOR_CACHE_DIR="${CACHE_BASE}/inductor"
+export TMPDIR="${CACHE_BASE}/tmp"
+mkdir -p "${VLLM_CACHE_ROOT}" "${TORCHINDUCTOR_CACHE_DIR}" "${TMPDIR}"
 set -x
 
 if [[ "${MODE}" == "kbevo" ]]; then
