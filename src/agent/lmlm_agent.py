@@ -1,7 +1,4 @@
 import json
-import tempfile
-from pathlib import Path
-
 from agent.agent_class import Agent, AgentStep
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -10,26 +7,6 @@ from transformers import LogitsProcessor
 from multi_lmlm.constants import DB_END_TOKEN, ANSWER_START_TOKEN, DB_START_TOKEN, DB_SEP_TOKEN, DB_RETRIEVE_TOKEN, ANSWER_END_TOKEN
 import os
 from vllm import LLM, SamplingParams
-
-
-def _load_corrected_tokenizer(model_path):
-    """Load Qwen's tokenizer regex fix and persist it for vLLM.
-
-    vLLM cannot receive ``fix_mistral_regex`` as a tokenizer kwarg, so it must
-    reload a corrected tokenizer snapshot rather than the checkpoint's legacy
-    tokenizer files directly.
-    """
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_path,
-        fix_mistral_regex=True,
-    )
-    scratch_root = Path(os.environ.get("TMPDIR", tempfile.gettempdir()))
-    scratch_root.mkdir(parents=True, exist_ok=True)
-    tokenizer_dir = Path(
-        tempfile.mkdtemp(prefix="kbevo-tokenizer-", dir=str(scratch_root))
-    )
-    tokenizer.save_pretrained(tokenizer_dir)
-    return tokenizer, str(tokenizer_dir)
 
 
 def _decode_with_special_tokens(outputs, tokenizer, input_len, input_text):
@@ -80,9 +57,7 @@ class LMLMAgent(Agent):
         self.db = DatabaseManager()
         self.db.load_database(database_path, top_k=top_k, default_threshold=similarity_threshold, adaptive=adaptive, use_inverses=use_inverses)
         self.device ="cuda" if torch.cuda.is_available() else "cpu"
-        self.tok, engine_tokenizer_path = _load_corrected_tokenizer(model_path)
-        self.tokenizer_source = model_path
-        self.fix_mistral_regex = True
+        self.tok = AutoTokenizer.from_pretrained(model_path)
 
         self.similarity_threshold = similarity_threshold
 
@@ -116,7 +91,7 @@ class LMLMAgent(Agent):
             tensor_parallel_size=1,
             gpu_memory_utilization=0.6,
             seed=42,
-            tokenizer=engine_tokenizer_path,
+            tokenizer=model_path,
             **_llm_kwargs,
         )
         check_token_in_vocab(self.llm.get_tokenizer())
@@ -269,5 +244,6 @@ if __name__ == '__main__':
         results = agent.run(["Walter Piston studied composition with"], 0)
         print("results :\n\n" , results)
     
+
 
 
