@@ -17,6 +17,7 @@ The JSON format uses deduplicated metadata at the top level:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -36,10 +37,13 @@ import torch
 
 from agent import get_agent, Agent
 from llm import get_llm
-from data import get_dataset, selected_rows_provenance
+from data import conflict_free_condition_metadata, get_dataset, selected_rows_provenance
 from data.hotpotqa import load_hotpotqa_rag_corpus
 from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
-from multi_lmlm.database.database_manager import build_databases_from_triplets_batch
+from multi_lmlm.database.database_manager import (
+    _add_inverse_triplets,
+    build_databases_from_triplets_batch,
+)
 
 # Import for TriviaQA sentence splitting
 from nltk.tokenize import PunktSentenceTokenizer
@@ -288,6 +292,7 @@ def process_single_batch(
             "source_index",
             "eval_position",
             "confiqa_setting",
+            "confiqa_condition_label",
             "is_counterfactual",
         ):
             if provenance_key in ex:
@@ -376,6 +381,7 @@ def process_single_batch(
             "source_index",
             "eval_position",
             "confiqa_setting",
+            "confiqa_condition_label",
             "is_counterfactual",
         ):
             if provenance_key in metadata:
@@ -438,6 +444,11 @@ def save_results_to_file(
             "setting": args.confiqa_setting if args.dataset == "confiqa" else args.setting,
             "dataset_source": args.dataset_source,
             "dataset_provenance": getattr(args, "_dataset_provenance", None),
+            "knowledge_store_provenance": getattr(
+                args, "_knowledge_store_provenance", None
+            ),
+            "conflict_free_condition": getattr(args, "_confiqa_condition", None),
+            "evaluation_scope": getattr(args, "_evaluation_scope", None),
             "split": args.split,
             "batch_size": args.batch_size,
             "total_examples": len(all_results),
@@ -525,8 +536,24 @@ def main() -> None:
     parser.add_argument(
         "--confiqa-setting",
         default="orig",
-        choices=["orig", "cf", "cf_100", "cf_500"],
-        help="ConFiQA setting: 'orig' for original, 'cf' for counterfactual, 'cf_100' for CF on 100 examples, 'cf_500' for CF on 500 examples (only used with --dataset confiqa)",
+        choices=[
+            "orig",
+            "cf",
+            "cf_100",
+            "cf_500",
+            "cf_100_conflict_free",
+            "cf_356_conflict_free",
+        ],
+        help="ConFiQA condition (only used with --dataset confiqa)",
+    )
+    parser.add_argument(
+        "--knowledge-store-count",
+        type=int,
+        default=None,
+        help=(
+            "For unified ConFiQA evaluation, build the database from this many ordered "
+            "rows starting at position 0, independently of --total-count."
+        ),
     )
     parser.add_argument("--model-path", default=None, help="Local model path")
     parser.add_argument(
@@ -832,6 +859,18 @@ def main() -> None:
         setting=dataset_setting,
         counterfactual_count=counterfactual_count,
     )
+    args._confiqa_condition = (
+        conflict_free_condition_metadata(dataset_setting)
+        if args.dataset == "confiqa"
+        else None
+    )
+    args._evaluation_scope = {
+        "label": f"{examples_to_process}-query smoke"
+        if examples_to_process == 50
+        else "evaluation",
+        "query_count": examples_to_process,
+        "knowledge_store_source_count": args.knowledge_store_count or examples_to_process,
+    }
 
     print(f"Evaluating {examples_to_process} / {total_dataset_size} examples (index {args.start_index} to {end_index})")
     logger.info(f"Dataset size: {total_dataset_size}, Processing {examples_to_process} examples from index {args.start_index} to {end_index}")
@@ -967,7 +1006,44 @@ def main() -> None:
         all_queries = []
         all_contexts = []
 
-        for ex in full_dataset.select(range(args.start_index, end_index)):
+        database_start = args.start_index
+        database_end = end_index
+        if args.dataset == "confiqa" and args.knowledge_store_count is not None:
+            database_start = 0
+            database_end = min(args.knowledge_store_count, total_dataset_size)
+            if database_end != args.knowledge_store_count:
+                raise ValueError(
+                    f"Requested {args.knowledge_store_count} ConFiQA store rows, "
+                    f"but only {database_end} are available"
+                )
+        database_dataset = full_dataset.select(range(database_start, database_end))
+        store_counterfactual_count = (
+            sum(bool(value) for value in database_dataset["is_counterfactual"])
+            if "is_counterfactual" in database_dataset.column_names
+            else None
+        )
+        store_id_column = next(
+            (
+                column
+                for column in ("id", "_id", "case_id")
+                if column in database_dataset.column_names
+            ),
+            None,
+        )
+        store_ids = (
+            database_dataset[store_id_column]
+            if store_id_column is not None
+            else list(range(database_start, database_end))
+        )
+        args._knowledge_store_provenance = selected_rows_provenance(
+            args.dataset,
+            store_ids,
+            seed=args.seed,
+            setting=dataset_setting,
+            counterfactual_count=store_counterfactual_count,
+        )
+
+        for ex in database_dataset:
             all_queries.append(ex["question"])
             contexts = ex["contexts"]
 
@@ -996,12 +1072,32 @@ def main() -> None:
             logger.info(f"Building ConFiQA database from golden triplets (setting={args.confiqa_setting})")
 
             all_triplets = []
-            for ex in full_dataset.select(range(args.start_index, end_index)):
+            for ex in database_dataset:
                 triplets = ex.get("golden_triplets", [])
                 # Convert triplets to (head, relation, tail) format
                 for triplet in triplets:
                     if isinstance(triplet, (list, tuple)) and len(triplet) == 3:
                         all_triplets.append(tuple(triplet))
+
+            if args._confiqa_condition is not None:
+                def _triplet_digest(triplets):
+                    payload = "\n".join(
+                        json.dumps(list(value), ensure_ascii=False, separators=(",", ":"))
+                        for value in triplets
+                    )
+                    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+                expected = args._confiqa_condition["condition"]["triplets"]
+                if _triplet_digest(all_triplets) != expected["ordered_direct_sha256"]:
+                    raise ValueError(
+                        "ConFiQA ordered direct-triplet hash does not match the condition manifest"
+                    )
+                if args.use_inverses and _triplet_digest(
+                    _add_inverse_triplets(all_triplets)
+                ) != expected["database_with_inverses_sha256"]:
+                    raise ValueError(
+                        "ConFiQA inverse-augmented database hash does not match the condition manifest"
+                    )
 
             # Build unified DatabaseManager from golden triplets
             unified_db = build_databases_from_triplets_batch(
@@ -1034,7 +1130,7 @@ def main() -> None:
         confiqa_suffix = (
             f"_{args.confiqa_setting}" if args.dataset == "confiqa" else ""
         )
-        unified_db_filename = f"unified_db_{args.dataset}_{args.split}_n{examples_to_process}_i{args.start_index}{contexts_suffix}{confiqa_suffix}.json"
+        unified_db_filename = f"unified_db_{args.dataset}_{args.split}_n{len(all_queries)}_i{database_start}{contexts_suffix}{confiqa_suffix}.json"
         unified_db_path = os.path.join(unified_db_dir, unified_db_filename)
 
         # Extract triplets from the unified database and save
@@ -1053,6 +1149,8 @@ def main() -> None:
                 "use_contexts": args.use_contexts,
                 "contexts_are_split": args.use_contexts == "all",
                 "dataset_provenance": args._dataset_provenance,
+                "knowledge_store_provenance": args._knowledge_store_provenance,
+                "conflict_free_condition": args._confiqa_condition,
             },
             "triplets": [{"head": t[0], "relation": t[1], "tail": t[2]} for t in all_triplets]
         }

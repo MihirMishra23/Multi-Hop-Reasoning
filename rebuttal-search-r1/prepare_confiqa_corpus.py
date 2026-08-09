@@ -9,13 +9,28 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from data import get_dataset, selected_rows_provenance  # noqa: E402
+from data import (  # noqa: E402
+    conflict_free_condition_metadata,
+    get_dataset,
+    selected_rows_provenance,
+)
 from data.provenance import sha256_file  # noqa: E402
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--setting", choices=["orig", "cf", "cf_100", "cf_500"], required=True)
+    parser.add_argument(
+        "--setting",
+        choices=[
+            "orig",
+            "cf",
+            "cf_100",
+            "cf_500",
+            "cf_100_conflict_free",
+            "cf_356_conflict_free",
+        ],
+        required=True,
+    )
     parser.add_argument("--num-samples", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", required=True)
@@ -56,6 +71,7 @@ def main() -> None:
     )
     manifest = {
         "dataset_provenance": provenance,
+        "conflict_free_condition": conflict_free_condition_metadata(args.setting),
         "corpus": {
             "path": corpus_path.name,
             "sha256": sha256_file(corpus_path),

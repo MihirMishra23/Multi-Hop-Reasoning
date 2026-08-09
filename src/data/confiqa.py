@@ -1,9 +1,12 @@
 """Portable ConFiQA-MR loader with deterministic counterfactual subsets."""
 
 import ast
+import hashlib
 import json
 import logging
 import os
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from datasets import Dataset as HFDataset  # type: ignore
@@ -11,7 +14,44 @@ from datasets import Dataset as HFDataset  # type: ignore
 from .provenance import dataset_source, download_verified_file, sha256_file
 
 logger = logging.getLogger(__name__)
-VALID_SETTINGS = {"orig", "cf", "cf_100", "cf_500"}
+CONFLICT_FREE_SETTINGS = {"cf_100_conflict_free", "cf_356_conflict_free"}
+VALID_SETTINGS = {"orig", "cf", "cf_100", "cf_500", *CONFLICT_FREE_SETTINGS}
+_SETTING_ALIASES = {
+    "CF-100-conflict-free": "cf_100_conflict_free",
+    "CF-356-conflict-free": "cf_356_conflict_free",
+}
+_CONDITION_MANIFEST = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "artifacts"
+    / "confiqa_conflict_free_conditions.json"
+)
+
+
+def canonical_confiqa_setting(setting: str) -> str:
+    return _SETTING_ALIASES.get(setting, setting)
+
+
+@lru_cache(maxsize=1)
+def load_conflict_free_manifest() -> Dict[str, Any]:
+    with _CONDITION_MANIFEST.open("r", encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def conflict_free_condition_metadata(setting: str) -> Optional[Dict[str, Any]]:
+    setting = canonical_confiqa_setting(setting)
+    if setting not in CONFLICT_FREE_SETTINGS:
+        return None
+    manifest = load_conflict_free_manifest()
+    return {
+        "manifest_path": str(_CONDITION_MANIFEST.relative_to(Path(__file__).resolve().parents[2])),
+        "manifest_sha256": sha256_file(_CONDITION_MANIFEST),
+        "schema_version": manifest["schema_version"],
+        "selection_universe": manifest["selection_universe"],
+        "smoke_query_selection": manifest["smoke_query_selection"],
+        "selection_algorithm": manifest["selection_algorithm"],
+        "condition": manifest["conditions"][setting],
+    }
 
 
 def _parse_triplets(triplet_str: str) -> List[Tuple[str, str, str]]:
@@ -74,6 +114,7 @@ def _load_confiqa(path: str) -> List[Dict[str, Any]]:
 
 
 def _counterfactual_cutoff(setting: str) -> Optional[int]:
+    setting = canonical_confiqa_setting(setting)
     if setting == "orig":
         return 0
     if setting == "cf":
@@ -82,6 +123,8 @@ def _counterfactual_cutoff(setting: str) -> Optional[int]:
         return 100
     if setting == "cf_500":
         return 500
+    if setting in CONFLICT_FREE_SETTINGS:
+        return None
     raise ValueError(
         f"Unsupported ConFiQA setting {setting!r}; choose from {sorted(VALID_SETTINGS)}"
     )
@@ -98,12 +141,23 @@ def _ordered_source_indices(size: int, seed: Optional[int]) -> List[int]:
 def _normalize_confiqa(
     data: List[Dict[str, Any]], source_indices: List[int], setting: str
 ) -> HFDataset:
+    setting = canonical_confiqa_setting(setting)
     cutoff = _counterfactual_cutoff(setting)
+    selected_cf_ids = None
+    condition_label = None
+    if setting in CONFLICT_FREE_SETTINGS:
+        condition = load_conflict_free_manifest()["conditions"][setting]
+        selected_cf_ids = set(int(value) for value in condition["selected_cf_source_ids"])
+        condition_label = condition["label"]
     examples: List[Dict[str, Any]] = []
 
     for eval_position, source_index in enumerate(source_indices):
         ex = data[source_index]
-        use_cf = setting == "cf" or (cutoff is not None and eval_position < cutoff)
+        use_cf = (
+            setting == "cf"
+            or (selected_cf_ids is not None and source_index in selected_cf_ids)
+            or (selected_cf_ids is None and cutoff is not None and eval_position < cutoff)
+        )
         prefix = "cf" if use_cf else "orig"
         context = str(ex.get(f"{prefix}_context", ""))
         answer = str(ex.get(f"{prefix}_answer", ""))
@@ -121,6 +175,7 @@ def _normalize_confiqa(
                 "source_index": source_index,
                 "eval_position": eval_position,
                 "confiqa_setting": setting,
+                "confiqa_condition_label": condition_label,
                 "is_counterfactual": use_cf,
                 "question": str(ex.get("question", "")),
                 "answers": unique_answers,
@@ -150,6 +205,7 @@ def load_confiqa(
     questions in the same order, and a 1,000-row evaluation has exactly 0, 100
     and 500 counterfactual rows respectively.
     """
+    setting = canonical_confiqa_setting(setting)
     if split.lower() not in {"test", "dev", "validation"}:
         raise ValueError("ConFiQA-MR has one evaluation split; use test/dev/validation")
     if setting not in VALID_SETTINGS:
@@ -158,6 +214,22 @@ def load_confiqa(
     path = _resolve_confiqa_path(source, confiqa_path, cache_dir)
     raw_data = _load_confiqa(path)
     source_indices = _ordered_source_indices(len(raw_data), seed)
+    if setting in CONFLICT_FREE_SETTINGS:
+        manifest_universe = load_conflict_free_manifest()["selection_universe"]
+        if seed != manifest_universe["seed"]:
+            raise ValueError(
+                f"{setting} is pinned to seed {manifest_universe['seed']}, received {seed}"
+            )
+        retained_count = int(manifest_universe["retained_count"])
+        retained_ids = source_indices[:retained_count]
+        retained_hash = hashlib.sha256(
+            "\n".join(str(value) for value in retained_ids).encode("utf-8")
+        ).hexdigest()
+        if retained_ids != manifest_universe["ordered_source_ids"]:
+            raise ValueError(
+                "Pinned ConFiQA order does not match the conflict-free condition manifest "
+                f"(actual SHA-256 {retained_hash})"
+            )
     if limit is not None:
         source_indices = source_indices[: min(limit, len(source_indices))]
     dataset = _normalize_confiqa(raw_data, source_indices, setting)

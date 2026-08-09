@@ -60,6 +60,57 @@ def test_legacy_edit_before_shuffle_bug_is_reproduced_by_the_old_ordering():
     assert sum(source_id < 500 for source_id in selected_ids) == 79
 
 
+def test_conflict_free_manifest_records_exact_universe_and_inverse_audit():
+    manifest = confiqa.load_conflict_free_manifest()
+    universe = manifest["selection_universe"]
+    assert universe["seed"] == 42
+    assert universe["retained_count"] == 1000
+    assert len(universe["ordered_source_ids"]) == 1000
+    assert (
+        universe["ordered_source_ids_sha256"]
+        == "2a47114948532dec8c406a26b6d7dcfc8cec39f1ad8b7e6e4803cf728cd341bd"
+    )
+    assert manifest["selection_algorithm"]["maximum_counterfactual_count"] == 356
+    assert manifest["smoke_query_selection"]["count"] == 50
+    assert (
+        manifest["smoke_query_selection"]["ordered_source_ids_sha256"]
+        == "4b1ccfa4a255e99559d159fa82c27a78da531819d30a7fdfc8abe041010df316"
+    )
+
+    expected = {"cf_100_conflict_free": 100, "cf_356_conflict_free": 356}
+    for setting, count in expected.items():
+        condition = manifest["conditions"][setting]
+        assert condition["actual_counterfactual_count"] == count
+        assert len(condition["selected_cf_source_ids"]) == count
+        assert condition["ambiguity"]["forward_direct"]["ambiguous_key_count"] == 0
+        assert (
+            condition["ambiguity"]["actual_database_with_inverses"][
+                "ambiguous_key_count"
+            ]
+            > 0
+        )
+
+
+def test_conflict_free_selection_is_by_source_id(monkeypatch):
+    rows = _fake_rows(4)
+    manifest = {
+        "conditions": {
+            "cf_100_conflict_free": {
+                "label": "CF-100-conflict-free",
+                "selected_cf_source_ids": [3, 1],
+            }
+        }
+    }
+    monkeypatch.setattr(confiqa, "load_conflict_free_manifest", lambda: manifest)
+    dataset = confiqa._normalize_confiqa(
+        rows, [2, 3, 0, 1], "cf_100_conflict_free"
+    )
+    assert dataset["id"] == ["2", "3", "0", "1"]
+    assert dataset["is_counterfactual"] == [False, True, False, True]
+    assert dataset[1]["answers"][0] == "counterfactual 3"
+    assert dataset[3]["answers"][0] == "counterfactual 1"
+
+
 def test_confiqa_source_is_immutable_and_exact():
     source = dataset_source("confiqa")
     assert len(source["revision"]) == 40

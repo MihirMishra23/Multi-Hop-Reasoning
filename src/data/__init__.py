@@ -2,7 +2,7 @@ from typing import Optional
 
 from datasets import Dataset as HFDataset  # type: ignore
 
-from .confiqa import load_confiqa
+from .confiqa import conflict_free_condition_metadata, load_confiqa
 from .hotpotqa import load_hotpotqa
 from .mquake import load_mquake
 from .musique import load_musique
@@ -49,6 +49,7 @@ def get_dataset(
 
 __all__ = [
     "dataset_source",
+    "conflict_free_condition_metadata",
     "get_dataset",
     "load_confiqa",
     "load_hotpotqa",

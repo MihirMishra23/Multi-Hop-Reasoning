@@ -18,7 +18,11 @@ import requests
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from data import get_dataset, selected_rows_provenance  # noqa: E402
+from data import (  # noqa: E402
+    conflict_free_condition_metadata,
+    get_dataset,
+    selected_rows_provenance,
+)
 from eval.metrics import exact_match_score, f1_score  # noqa: E402
 
 SEARCH_R1_COMMIT = "598e61bd1d36895726d28a8d06b3a15bed19f5d3"
@@ -146,6 +150,25 @@ def run_eval(args) -> None:
         limit=args.num_samples,
         seed=args.seed,
     )
+    corpus_manifest = None
+    if args.retrieval_corpus:
+        manifest_path = Path(args.retrieval_corpus).with_name("manifest.json")
+        if manifest_path.exists():
+            corpus_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            corpus_selection = corpus_manifest["dataset_provenance"]["selection"]
+            if corpus_selection["setting"] != args.confiqa_setting:
+                raise ValueError(
+                    "Search-R1 corpus condition does not match the query condition: "
+                    f"{corpus_selection['setting']} != {args.confiqa_setting}"
+                )
+            if corpus_selection["count"] != args.expected_store_samples:
+                raise ValueError(
+                    f"Expected a {args.expected_store_samples}-row knowledge store, "
+                    f"found {corpus_selection['count']}"
+                )
+            query_ids = [str(value) for value in dataset["id"]]
+            if corpus_selection["ordered_ids"][: len(query_ids)] != query_ids:
+                raise ValueError("Search-R1 query IDs are not the ordered prefix of the corpus IDs")
     prompts = []
     for question in dataset["question"]:
         content = PROMPT.format(question=question.strip().rstrip("?") + "?")
@@ -225,6 +248,14 @@ def run_eval(args) -> None:
                 setting=args.confiqa_setting,
                 counterfactual_count=counterfactual_count,
             ),
+            "conflict_free_condition": conflict_free_condition_metadata(
+                args.confiqa_setting
+            ),
+            "evaluation_scope": {
+                "label": f"{len(dataset)}-query smoke" if len(dataset) == 50 else "evaluation",
+                "query_count": len(dataset),
+                "knowledge_store_source_count": args.expected_store_samples,
+            },
             "generation": {
                 "temperature": args.temperature,
                 "top_p": args.top_p,
@@ -239,6 +270,7 @@ def run_eval(args) -> None:
                 "corpus": args.retrieval_corpus,
                 "index": args.retrieval_index,
                 "url": args.retrieval_url,
+                "corpus_manifest": corpus_manifest,
             },
         },
         "summary": {
@@ -261,9 +293,19 @@ def main() -> None:
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--model-revision")
     parser.add_argument(
-        "--confiqa-setting", choices=["orig", "cf", "cf_100", "cf_500"], required=True
+        "--confiqa-setting",
+        choices=[
+            "orig",
+            "cf",
+            "cf_100",
+            "cf_500",
+            "cf_100_conflict_free",
+            "cf_356_conflict_free",
+        ],
+        required=True,
     )
     parser.add_argument("--num-samples", type=int, default=1000)
+    parser.add_argument("--expected-store-samples", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", required=True)
     parser.add_argument("--temperature", type=float, default=0.7)

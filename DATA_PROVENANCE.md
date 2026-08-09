@@ -38,3 +38,26 @@ distinguish their reported scores.
 Search-R1 Table 2 evaluation uses an index built only from the selected ConFiQA
 contexts for that setting. The Wiki-18 corpus is not part of this ConFiQA
 protocol.
+
+## Conflict-free counterfactual smoke protocol
+
+`data/artifacts/confiqa_conflict_free_conditions.json` fixes a second protocol
+over the same first 1,000 seed-42 rows. A binary MILP chooses original or
+counterfactual paths while requiring every direct `(head, relation)` key to
+have at most one tail. HiGHS proves that 356 counterfactual rows is the maximum.
+The committed conditions contain exactly 100 and 356 counterfactual source
+IDs, respectively, and record the exact ordered IDs, selection algorithm,
+hashes, triplet counts, and ambiguity audit.
+
+The names `CF-100-conflict-free` and `CF-356-conflict-free` refer strictly to
+the direct/forward-key criterion. KBEVO normally augments each direct triplet
+`(head, relation, tail)` with `(tail, relation, head)`. Under that actual
+representation, the 100-CF condition has 92 ambiguous keys and the 356-CF
+condition has 112 ambiguous keys. These are therefore not globally
+conflict-free inverse-augmented databases; the distinction is preserved in
+the manifest and evaluation output metadata.
+
+The initial run is a 50-query smoke evaluation. Both conditions and both
+methods use the same first 50 ordered question IDs, while KBEVO's database and
+Search-R1's ConFiQA-only retrieval corpus are built from all 1,000 condition
+rows. These smoke scores are not final Table 2 results.
