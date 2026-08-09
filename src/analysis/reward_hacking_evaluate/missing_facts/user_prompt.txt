@@ -1,0 +1,7 @@
+### Source Passage (ground truth):
+{context}
+
+### Knowledge Database to Audit (extracted triplets):
+{database_triplets}
+
+List every salient fact in the passage that is NOT captured by the database, one per line. If everything is covered, output exactly "All covered!".

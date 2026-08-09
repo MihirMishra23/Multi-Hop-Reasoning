@@ -23,8 +23,12 @@ STORE_SAMPLES="${STORE_SAMPLES:-1000}"
 SEED="${SEED:-42}"
 RUN_ROOT="${RUN_ROOT:-/share/j_sun/lmlm_multihop/results/confiqa_conflict_free_smoke}"
 PYTHON="${PYTHON:-/home/rtn27/.conda/envs/multi-hop-reasoning/bin/python}"
+RETRIEVER_PYTHON="${RETRIEVER_PYTHON:-/home/lz586/.conda/envs/sr1-retriever/bin/python}"
 REPO_DIR="${REPO_DIR:-${SLURM_SUBMIT_DIR}}"
+SR1_CODE_REV="${SR1_CODE_REV:-10a7b9b}"
 export PATH="$(dirname "${PYTHON}"):${PATH}"
+export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}"
+export PATH="${JAVA_HOME}/bin:${PATH}"
 
 cd "${REPO_DIR}"
 mkdir -p "${RUN_ROOT}" "${LOG_DIR:-${RUN_ROOT}/logs}"
@@ -59,28 +63,90 @@ if [[ "${MODE}" == "kbevo" ]]; then
         --eval
 elif [[ "${MODE}" == "searchr1" ]]; then
     MODEL_TAG="$(basename "${MODEL_PATH}")"
-    WORK_DIR="${RUN_ROOT}/searchr1/${MODEL_TAG}/${CONFIQA_CONDITION}_q${QUERY_SAMPLES}_store${STORE_SAMPLES}"
-    mkdir -p "${WORK_DIR}"
+    WORK_DIR="${RUN_ROOT}/searchr1_recent_master/${MODEL_TAG}/${CONFIQA_CONDITION}_q${QUERY_SAMPLES}_store${STORE_SAMPLES}"
+    BM25_INPUT="${WORK_DIR}/bm25_input_${SLURM_JOB_ID}"
+    BM25_INDEX="${WORK_DIR}/bm25_index_${SLURM_JOB_ID}"
+    SERVER_LOG="${WORK_DIR}/retrieval_server_${SLURM_JOB_ID}.log"
+    mkdir -p "${WORK_DIR}" "${BM25_INPUT}"
     "${PYTHON}" rebuttal-search-r1/prepare_confiqa_corpus.py \
         --setting "${CONFIQA_CONDITION}" \
         --num-samples "${STORE_SAMPLES}" \
         --seed "${SEED}" \
         --output-dir "${WORK_DIR}"
-    "${PYTHON}" rebuttal-search-r1/build_retrieval_index.py \
-        --corpus "${WORK_DIR}/corpus.jsonl" \
-        --output "${WORK_DIR}/e5_Flat.index" \
-        --batch-size 128 \
-        --device cuda
-    "${PYTHON}" rebuttal-search-r1/eval_search_r1_qwen25.py \
-        --model-path "${MODEL_PATH}" \
+    ln -s "${WORK_DIR}/corpus.jsonl" "${BM25_INPUT}/corpus.jsonl"
+    "${RETRIEVER_PYTHON}" -m pyserini.index.lucene \
+        --collection JsonCollection \
+        --input "${BM25_INPUT}" \
+        --index "${BM25_INDEX}" \
+        --generator DefaultLuceneDocumentGenerator \
+        --threads 8 \
+        --storeRaw
+
+    PORT=$((8000 + (SLURM_JOB_ID % 20000)))
+    while ss -ltn 2>/dev/null | grep -q ":${PORT} "; do
+        PORT=$((PORT + 1))
+    done
+    set +x
+    export OPENAI_API_KEY=unused-by-bm25
+    "${RETRIEVER_PYTHON}" Search-R1/search_r1/search/retrieval_server.py \
+        --retriever_name bm25 \
+        --index_path "${BM25_INDEX}" \
+        --corpus_path "${WORK_DIR}/corpus.jsonl" \
+        --topk 3 \
+        --port "${PORT}" >"${SERVER_LOG}" 2>&1 &
+    SERVER_PID=$!
+    set -x
+    cleanup_search_server() {
+        kill "${SERVER_PID}" 2>/dev/null || true
+        wait "${SERVER_PID}" 2>/dev/null || true
+    }
+    trap cleanup_search_server EXIT
+
+    READY=0
+    for _ in $(seq 1 120); do
+        if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+            echo "Search-R1 retrieval server exited during startup" >&2
+            tail -n 100 "${SERVER_LOG}" >&2
+            exit 1
+        fi
+        if curl -sf -o /dev/null -X POST "http://127.0.0.1:${PORT}/retrieve" \
+            -H 'Content-Type: application/json' \
+            -d '{"queries":["warmup"],"topk":1,"return_scores":true}'; then
+            READY=1
+            break
+        fi
+        sleep 5
+    done
+    if [[ "${READY}" -ne 1 ]]; then
+        echo "Search-R1 retrieval server was not ready after 600 seconds" >&2
+        tail -n 100 "${SERVER_LOG}" >&2
+        exit 1
+    fi
+
+    "${PYTHON}" src/eval_multihop.py \
+        --method search_r1 \
+        --dataset confiqa \
+        --split dev \
         --confiqa-setting "${CONFIQA_CONDITION}" \
-        --num-samples "${QUERY_SAMPLES}" \
-        --expected-store-samples "${STORE_SAMPLES}" \
+        --model-path "${MODEL_PATH}" \
+        --search-r1-retrieval-url "http://127.0.0.1:${PORT}/retrieve" \
+        --search-r1-retrieval-k 3 \
+        --search-r1-corpus-manifest "${WORK_DIR}/manifest.json" \
+        --search-r1-code-revision "${SR1_CODE_REV}" \
+        --max-steps 10 \
+        --search-r1-max-response-length 10240 \
+        --search-r1-max-model-len 16384 \
+        --temperature 0.0 \
+        --top-p 0.95 \
+        --sampling-top-k -1 \
+        --total-count "${QUERY_SAMPLES}" \
+        --knowledge-store-count "${STORE_SAMPLES}" \
+        --batch-size "${QUERY_SAMPLES}" \
+        --save-every 1 \
+        --output-dir "${RUN_ROOT}/searchr1_recent_master" \
+        --save-version "smoke50_store1000_master_${SR1_CODE_REV}" \
         --seed "${SEED}" \
-        --retrieval-corpus "${WORK_DIR}/corpus.jsonl" \
-        --retrieval-index "${WORK_DIR}/e5_Flat.index" \
-        --retriever-device cuda \
-        --output "${WORK_DIR}/results.json"
+        --eval
 else
     echo "Unsupported MODE=${MODE}" >&2
     exit 2

@@ -2,40 +2,46 @@
 
 
 # SLURM Directives
-#SBATCH -J grpo_1.7b_1phase                  # Job name
-#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_1phase_%j.out   # Standard output file
-#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_1phase_%j.err   # Standard error file
-#SBATCH -N 1                                    # Number of nodes
-#SBATCH -n 1                                    # Number of tasks (or cores)
-#SBATCH --get-user-env                          # Retrieve the user's login environment
+#SBATCH -J grpo_1.7b_1ph_0805
+#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_1ph_0805_%j.out
+#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_1.7b_1ph_0805_%j.err
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH --get-user-env
 #SBATCH --cpus-per-task=28
-#SBATCH --mem=256G                              # Memory requested (2GB per node)
-#SBATCH -t infinite                              # Time limit (2 hours)
-#SBATCH --partition=aimi,kilian,jjs533,default_partition          # Request partition
-#SBATCH --gres=gpu:nvidia_b200:1                # Request 1 NVIDIA A6000 GPU
+#SBATCH --mem=256G
+#SBATCH -t infinite
+#SBATCH --partition=aimi,kilian,jjs533,default_partition
+#SBATCH --gres=gpu:nvidia_b200:4
 #SBATCH --requeue
-#SBATCH --nodelist=aimi-compute-01,aimi-compute-02,aimi-compute-03
 
 
-# Load the required environmentt
+# Load the required environment
 source activate mem
 
+# WANDB destination — Menghan's KBevo project
+export WANDB_ENTITY=KBevo
+export WANDB_PROJECT=LMLM
+
 # Navigate to the working directory
-cd /home/lz586/icl/Multi-Hop-Reasoning/
+cd /share/j_sun/mx253_lmlm/
 
 
 DATASET=hotpotqa-v2-onlyphase1
 
-# MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1
-# MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
-MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_1phase 
-# MODEL_PATH=Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.9_top_k_1
+# 1-phase SFT base (matches historical canonical 1-phase GRPO run in main/)
+# NOTE: 'onlyphase1' is a misleading legacy name — it actually means
+# "phase-2-only GRPO on top of a 1-phase SFT with a pre-built static DB".
+# The DB comes from Gemini extractions, not phase-1 rollouts.
+MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_1phase
+SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/main/0805
+
 RETRIEVAL_THRESHOLD=0.6
-TOP_K=4
-# MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_classic_retrieval_6k
-# MODEL_PATH="/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k"
-# MODEL_PATH="Qwen/Qwen3-1.7B"
-DATABASE_PATH=""  # TODO: set a valid database JSON path for single-phase mode
+RETRIEVAL_TOP_K=4
+NUM_GENERATIONS=32
+NUM_DB_ROLLOUTS=4
+
+DATABASE_PATH=""  # set per-dataset below (phase-2-only mode)
 
 THRESHOLD=-1
 
@@ -52,7 +58,7 @@ if [ "${DATASET}" = "hotpotqa-v2" ]; then
     DATASET_NAME="hotpotqa"
     TWO_PHASE="--two_phase"
 elif [ "${DATASET}" = "hotpotqa-v2-onlyphase1" ]; then
-    echo "Training on hotpotqa-v2-onlyphase1"
+    echo "Training on hotpotqa-v2-onlyphase1 (phase-2-only + Gemini DB)"
     TRAIN_SIZE=7000
     TOTAL_BATCH_SIZE=512
     DATASET_NAME="hotpotqa"
@@ -80,9 +86,10 @@ else
 fi
 
 echo "Starting GRPO Training..."
-bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/grpo_train.sh \
+bash /share/j_sun/mx253_lmlm/scripts/grpo_train.sh \
 --gpu_type B200 \
 --model_path ${MODEL_PATH} \
+--save_dir ${SAVE_DIR} \
 --dataset_name ${DATASET_NAME} \
 --database_path "${DATABASE_PATH}" \
 --train_size ${TRAIN_SIZE} \
@@ -93,6 +100,9 @@ ${USE_CHAT_TEMPLATE} \
 ${TWO_PHASE} \
 ${DEBUG} \
 --retrieval_threshold ${RETRIEVAL_THRESHOLD} \
---top_k ${TOP_K}
+--retrieval_top_k ${RETRIEVAL_TOP_K} \
+--num_generations ${NUM_GENERATIONS} \
+--num_db_rollouts ${NUM_DB_ROLLOUTS} \
+--use_inverses
 
 echo "GRPO Training complete!"

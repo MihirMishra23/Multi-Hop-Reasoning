@@ -29,7 +29,7 @@ DATASET=hotpotqa-full
 # MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1
 MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
 RETRIEVAL_THRESHOLD=0.6
-TOP_K=4
+RETRIEVAL_TOP_K=4
 NUM_GENERATIONS=32
 NUM_DB_ROLLOUTS=4
 
@@ -119,7 +119,7 @@ bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/grpo_train.sh \
     ${TWO_PHASE} \
     ${DEBUG} \
     --retrieval_threshold ${RETRIEVAL_THRESHOLD} \
-    --top_k ${TOP_K} \
+    --retrieval_top_k ${RETRIEVAL_TOP_K} \
     --num_generations ${NUM_GENERATIONS} \
     --num_db_rollouts ${NUM_DB_ROLLOUTS} \
     --tier_path ${TIER_PATH} \

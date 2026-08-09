@@ -365,6 +365,7 @@ def process_single_batch(
                 "error": step.error,
                 "tool_name": step.tool_name,
                 "tool_args": step.tool_args,
+                "tool_result": step.tool_result,
                 "golden_triplets" : step.golden_triplets,
             }
             for step in (trace or [])
@@ -423,6 +424,27 @@ def process_single_batch(
     return results
 
 
+def _fit_filename(name: str, max_bytes: int = 255) -> str:
+    """Shorten a leaf filename that would exceed the filesystem's 255-byte cap.
+
+    Long model tags push results_*.json past the limit (hotpotqa lands on 256
+    bytes and dies with "Errno 36 File name too long", while musique squeaks
+    through at 255). The model tag is also the parent directory name, so
+    dropping the middle of it loses nothing; a hash of the full name is spliced
+    in so two different runs can never collide. No-op for names that already
+    fit, which keeps every existing path untouched.
+    """
+    if len(name.encode()) <= max_bytes:
+        return name
+    stem, _, ext = name.rpartition(".")
+    ext = f".{ext}" if stem else ""
+    stem = stem or name
+    digest = hashlib.sha1(name.encode()).hexdigest()[:8]
+    budget = max_bytes - len(ext.encode()) - len(digest) - 2  # 2 for the ".." join
+    head = budget * 2 // 3
+    return f"{stem[:head]}.{digest}.{stem[-(budget - head):]}{ext}"
+
+
 def save_results_to_file(
     all_results: Dict[str, Dict[str, Any]],
     save_path: str,
@@ -473,6 +495,22 @@ def save_results_to_file(
             "concat_all_db": args.concat_all_db,
             "use_contexts": args.use_contexts,
         }
+    if args.method == "search_r1":
+        output["metadata"]["search_r1"] = {
+            "code_revision": args.search_r1_code_revision,
+            "retrieval_url": args.search_r1_retrieval_url,
+            "retrieval_top_k": args.search_r1_retrieval_k,
+            "retrieval_backend": "bm25",
+            "corpus_manifest": getattr(args, "_search_r1_corpus_manifest", None),
+            "max_steps": args.max_steps,
+            "max_tool_response_length": args.search_r1_max_tool_response_length,
+            "tool_response_truncate_side": args.search_r1_tool_response_truncate_side,
+            "retrieval_timeout": args.search_r1_retrieval_timeout,
+            "retrieval_workers": args.search_r1_retrieval_workers,
+            "max_response_length": args.search_r1_max_response_length,
+            "max_model_len": args.search_r1_max_model_len,
+            "fix_mistral_regex": True,
+        }
     # Add retrieval metadata for RAG
     if args.method == "rag":
         output["metadata"]["retrieval"] = {
@@ -513,7 +551,7 @@ def main() -> None:
     parser.add_argument(
         "--method",
         default="icl",
-        choices=["db", "rag", "icl", "lmlm", "direct", "two_phase"],
+        choices=["db", "rag", "icl", "lmlm", "direct", "two_phase", "search_r1"],
         help="Agent method label (for output path)",
     )
     parser.add_argument(
@@ -591,6 +629,97 @@ def main() -> None:
     )
     parser.add_argument("--rag-k", type=int, default=4, help="Top-k documents to retrieve")
     parser.add_argument(
+        "--search-r1-retrieval-url",
+        default="http://127.0.0.1:8000/retrieve",
+        help="Search-R1 retrieval service endpoint",
+    )
+    parser.add_argument(
+        "--search-r1-corpus-manifest",
+        default=None,
+        help=(
+            "Optional corpus manifest to validate and persist with Search-R1 "
+            "results. Required by the ConFiQA smoke launcher."
+        ),
+    )
+    parser.add_argument(
+        "--search-r1-code-revision",
+        default=None,
+        help="Git revision of the Search-R1 implementation used for this run.",
+    )
+    parser.add_argument(
+        "--search-r1-retrieval-k", type=int, default=3, help="Search-R1 documents per query"
+    )
+    # Accepted-but-ignored: the behavioural switches these controlled were
+    # collapsed into the single infer.py-aligned path. Only kept so in-flight
+    # jobs 859612-617, whose SLURM spool scripts still pass these flags, can
+    # requeue without argparse rejecting them. Safe to delete once those runs
+    # (and any resubmissions of them) have finished.
+    for _dep in (
+        "--search-r1-prompt-variant",
+        "--search-r1-doc-format",
+        "--search-r1-stop-variants",
+    ):
+        parser.add_argument(_dep, help=argparse.SUPPRESS)
+    for _dep in (
+        "--search-r1-splice-prefix-newlines",
+        "--search-r1-enable-thinking",
+    ):
+        parser.add_argument(_dep, action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--search-r1-max-tool-response-length",
+        type=int,
+        default=4096,
+        help=(
+            "Maximum Search-R1 tool response length in characters. Upstream "
+            "does not truncate at all; 512 cut three retrieved documents down "
+            "to a fragment and starved the model of the evidence it searched "
+            "for. 4096 fits a typical top-3 BM25 response intact."
+        ),
+    )
+    parser.add_argument(
+        "--search-r1-tool-response-truncate-side",
+        choices=["left", "right", "middle"],
+        default="left",
+    )
+    parser.add_argument(
+        "--search-r1-retrieval-timeout", type=float, default=30.0
+    )
+    parser.add_argument(
+        "--search-r1-retrieval-workers", type=int, default=32
+    )
+    parser.add_argument(
+        "--search-r1-max-response-length",
+        type=int,
+        default=2048,
+        help="Total Search-R1 trajectory token budget, including tool responses",
+    )
+    parser.add_argument(
+        "--search-r1-max-model-len", type=int, default=3072
+    )
+    parser.add_argument(
+        "--search-r1-dtype",
+        default="bfloat16",
+        help=(
+            "vLLM dtype for search_r1. The released checkpoints declare "
+            "torch_dtype=float32 (verl saves fp32 FSDP master weights) even "
+            "though training and rollout ran in bf16, so bf16 both matches how "
+            "the weights were produced and halves memory. Use 'auto' to follow "
+            "config.json instead."
+        ),
+    )
+    # Shared by search_r1 and lmlm, which want different defaults (0.95 vs the
+    # historical greedy 1.0). Left as None here and resolved per-method after
+    # parse_args() so neither method's default behaviour changes.
+    parser.add_argument("--top-p", type=float, default=None,
+                        help="Nucleus sampling probability (default: 0.95 for search_r1, 1.0 for lmlm)")
+    parser.add_argument(
+        "--sampling-top-k", type=int, default=-1, help="Sampling top-k; -1 disables it"
+    )
+    parser.add_argument("--tensor-parallel-size", type=int, default=1)
+    parser.add_argument("--gpu-memory-utilization", type=float, default=0.85)
+    parser.add_argument("--max-num-seqs", type=int, default=None)
+    parser.add_argument("--enforce-eager", action="store_true")
+    parser.add_argument(
         "--debug-evidence",
         action="store_true",
         help="Include retrieved evidence in saved preds for debugging",
@@ -604,6 +733,10 @@ def main() -> None:
         ),
     )
 
+    # NOTE: --top-p is declared once above (shared with search_r1); for lmlm it
+    # defaults to 1.0. two_phase resolves top_p from --use-train-params instead.
+    parser.add_argument("--vllm-top-k", type=int, default=0,
+                        help="lmlm only: vLLM sampling top_k, 0 = disabled (distinct from retrieval --top-k)")
     parser.add_argument("--max-model-len", type=int, default=8192,
                         help="vLLM max model length for two_phase (default 8192 > training 4096 to handle multi-turn context growth)")
 
@@ -666,6 +799,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # --top-p is shared by search_r1 and lmlm but their historical defaults
+    # differ, so it is declared with default=None and resolved here. lmlm's 1.0
+    # (with --vllm-top-k 0) reproduces the original greedy decoding.
+    if args.top_p is None:
+        args.top_p = 1.0 if args.method == "lmlm" else 0.95
+
     # Validate use-contexts flag
     if args.use_contexts == "all" and args.method != "two_phase":
         raise ValueError("--use-contexts=all is only supported for --method=two_phase")
@@ -676,6 +815,19 @@ def main() -> None:
 
     if args.concat_all_db and args.method != "two_phase":
         raise ValueError("--concat-all-db is only supported for --method=two_phase")
+
+    if args.method == "search_r1":
+        if not args.model_path:
+            raise ValueError("--model-path is required for --method=search_r1")
+        if args.search_r1_retrieval_k <= 0:
+            raise ValueError("--search-r1-retrieval-k must be positive")
+        if args.search_r1_max_tool_response_length <= 0:
+            raise ValueError("--search-r1-max-tool-response-length must be positive")
+        if args.search_r1_retrieval_workers <= 0:
+            raise ValueError("--search-r1-retrieval-workers must be positive")
+        if args.search_r1_max_response_length <= 0 or args.search_r1_max_model_len <= 0:
+            raise ValueError("Search-R1 response and model lengths must be positive")
+        args.max_tokens = args.search_r1_max_response_length
 
     # Logging
     logging.basicConfig(
@@ -722,6 +874,14 @@ def main() -> None:
         "max_tokens": args.max_tokens,
         **({k: _extra_agent_kwargs[k] for k in ("top_p", "vllm_top_k", "repetition_penalty", "max_model_len")}
            if args.method == "two_phase" else {}),
+        **({"top_p": args.top_p, "vllm_top_k": args.vllm_top_k, "max_model_len": args.max_model_len}
+           if args.method == "lmlm" else {}),
+        **({
+            "top_p": args.top_p,
+            "sampling_top_k": args.sampling_top_k,
+            "max_model_len": args.search_r1_max_model_len,
+            "dtype": args.search_r1_dtype,
+        } if args.method == "search_r1" else {}),
         "use_train_params": getattr(args, "use_train_params", False),
     }
 
@@ -871,13 +1031,36 @@ def main() -> None:
         "query_count": examples_to_process,
         "knowledge_store_source_count": args.knowledge_store_count or examples_to_process,
     }
+    args._search_r1_corpus_manifest = None
+    if args.method == "search_r1" and args.search_r1_corpus_manifest:
+        with open(args.search_r1_corpus_manifest, "r", encoding="utf-8") as stream:
+            corpus_manifest = json.load(stream)
+        corpus_selection = corpus_manifest["dataset_provenance"]["selection"]
+        expected_store_count = args.knowledge_store_count or corpus_selection["count"]
+        if corpus_selection["count"] != expected_store_count:
+            raise ValueError(
+                f"Expected a {expected_store_count}-row Search-R1 corpus, "
+                f"found {corpus_selection['count']}"
+            )
+        if corpus_selection["setting"] != dataset_setting:
+            raise ValueError(
+                "Search-R1 corpus condition does not match the query condition: "
+                f"{corpus_selection['setting']} != {dataset_setting}"
+            )
+        query_ids = [str(value) for value in selected_ids]
+        corpus_ids = [str(value) for value in corpus_selection["ordered_ids"]]
+        if corpus_ids[: len(query_ids)] != query_ids:
+            raise ValueError(
+                "Search-R1 query IDs are not the ordered prefix of the corpus IDs"
+            )
+        args._search_r1_corpus_manifest = corpus_manifest
 
     print(f"Evaluating {examples_to_process} / {total_dataset_size} examples (index {args.start_index} to {end_index})")
     logger.info(f"Dataset size: {total_dataset_size}, Processing {examples_to_process} examples from index {args.start_index} to {end_index}")
 
     # Prepare output location
     base_output_dir = args.output_dir or os.path.join(REPO_ROOT, "preds")
-    if args.method in ('lmlm', 'two_phase'):
+    if args.method in ('lmlm', 'two_phase', 'search_r1'):
         # Strip trailing slashes to ensure consistent path parsing
         model_path_clean = args.model_path.rstrip('/')
         model_name = model_path_clean.split('/')[-1] if "checkpoint" not in model_path_clean else model_path_clean.split('/')[-2]+"-ckpt"+model_path_clean.split('/')[-1].split("checkpoint-")[-1]
@@ -889,7 +1072,8 @@ def main() -> None:
             settings_str += f"_ctx{args.use_contexts}"
             if args.concat_all_db:
                 settings_str += "_cdb"
-        settings_str += f"_k{args.top_k}"
+        if args.method != "search_r1":
+            settings_str += f"_k{args.top_k}"
         if getattr(args, "use_train_params", False):
             settings_str += "_tp"
         if args.dataset == "synthworlds":
@@ -898,8 +1082,8 @@ def main() -> None:
             settings_str += f"_setting{args.confiqa_setting}"
 
         save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}{settings_str}.json"
-        save_path = os.path.join(output_dir, f"generations{args.save_version}", f"eval_{save_postfix}")
-        save_results_path = os.path.join(output_dir, f"results{args.save_version}", f"results_{save_postfix}")
+        save_path = os.path.join(output_dir, f"generations{args.save_version}", _fit_filename(f"eval_{save_postfix}"))
+        save_results_path = os.path.join(output_dir, f"results{args.save_version}", _fit_filename(f"results_{save_postfix}"))
     else:
         model_name = args.model or "unknown-model"
         save_path = os.path.join(base_output_dir, args.method, f"{args.dataset}_{args.setting}", model_name, "generations")
@@ -962,7 +1146,7 @@ def main() -> None:
     )
 
     llm = None
-    if args.method not in ("lmlm", "two_phase"):
+    if args.method not in ("lmlm", "two_phase", "search_r1"):
         llm = get_llm(model_name=args.model)
 
 
@@ -986,10 +1170,40 @@ def main() -> None:
         "contexts_are_split": args.use_contexts == "all" if args.method == "two_phase" else False,
     }
 
+    if args.method == "search_r1":
+        agent_kwargs.update({
+            "retrieval_url": args.search_r1_retrieval_url,
+            "retrieval_top_k": args.search_r1_retrieval_k,
+            "retrieval_timeout": args.search_r1_retrieval_timeout,
+            "retrieval_workers": args.search_r1_retrieval_workers,
+            "top_p": args.top_p,
+            "sampling_top_k": args.sampling_top_k,
+            "max_model_len": args.search_r1_max_model_len,
+            # "auto" means "let vLLM read config.json"; the agent treats None
+            # as that, so translate here rather than passing the string through.
+            "dtype": None if args.search_r1_dtype == "auto" else args.search_r1_dtype,
+            "max_tool_response_length": args.search_r1_max_tool_response_length,
+            "tool_response_truncate_side": args.search_r1_tool_response_truncate_side,
+            "tensor_parallel_size": args.tensor_parallel_size,
+            "gpu_memory_utilization": args.gpu_memory_utilization,
+            "max_num_seqs": args.max_num_seqs,
+            "enforce_eager": args.enforce_eager,
+            "seed": args.seed,
+        })
+
     # Add RAG corpus if available (for fullwiki setting)
     if args.method == "rag" and rag_corpus:
         agent_kwargs["corpus"] = rag_corpus
         logger.info(f"Added RAG corpus to agent_kwargs: {len(rag_corpus)} documents")
+
+    if args.method == "lmlm":
+        # Mirror the two_phase sampling knobs so lmlm runs can be made
+        # hyperparameter-identical to a two_phase --use-train-params run.
+        agent_kwargs.update({
+            "top_p": args.top_p,
+            "vllm_top_k": args.vllm_top_k,
+            "max_model_len": args.max_model_len,
+        })
 
     agent_kwargs.update(_extra_agent_kwargs)
 
