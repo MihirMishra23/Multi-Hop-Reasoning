@@ -171,6 +171,13 @@ def main() -> None:
         expected_count=args.expected_count,
         expected_shards=args.expected_shards,
     )
+    script_path = Path(__file__).resolve()
+    merged["metadata"]["merge"].update(
+        {
+            "script_path": str(script_path),
+            "script_sha256": hashlib.sha256(script_path.read_bytes()).hexdigest(),
+        }
+    )
     _atomic_write(args.output, merged)
 
     if args.results_output:
