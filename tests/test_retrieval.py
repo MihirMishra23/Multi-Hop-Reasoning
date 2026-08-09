@@ -1,6 +1,5 @@
 import importlib.util
 import sys
-import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -18,30 +17,23 @@ def load_retrieval_module():
 retrieval = load_retrieval_module()
 
 
-class FakeIndexBuilder:
-    def __init__(self, **kwargs):
-        pass
-
-    def build_index(self):
-        pass
-
-
-class FakeBM25Retriever:
+class FakeMemoryIndex:
     instances = []
 
-    def __init__(self, config):
-        self.config = config
+    def __init__(self, contents, backend):
+        self.contents = contents
+        self.backend = backend
         self.search_calls = []
         self.__class__.instances.append(self)
 
-    def search(self, query, num, return_score):
-        self.search_calls.append((query, num, return_score))
-        return list(range(num))
+    def search(self, query, top_k):
+        self.search_calls.append((query, top_k))
+        return list(range(top_k))
 
 
 class RetrievalTests(unittest.TestCase):
     def setUp(self):
-        FakeBM25Retriever.instances.clear()
+        FakeMemoryIndex.instances.clear()
 
     def test_effective_top_k_is_bounded_by_non_empty_documents(self):
         self.assertEqual(retrieval._effective_top_k(4, 2), 2)
@@ -49,27 +41,34 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(retrieval._effective_top_k(0, 10), 0)
 
     def test_per_example_retriever_clamps_bm25_search_depth(self):
-        index_builder = types.ModuleType("flashrag.retriever.index_builder")
-        index_builder.Index_Builder = FakeIndexBuilder
-        flashrag_retriever = types.ModuleType("flashrag.retriever")
-        flashrag_retriever.BM25Retriever = FakeBM25Retriever
-        stubs = {
-            "flashrag": types.ModuleType("flashrag"),
-            "flashrag.retriever": flashrag_retriever,
-            "flashrag.retriever.index_builder": index_builder,
-        }
-
-        with patch.dict(sys.modules, stubs):
+        with patch.object(retrieval, "_BM25sMemoryIndex", FakeMemoryIndex):
             result = retrieval.FlashRAGBM25Retriever().retrieve(
                 query="question",
                 documents=["First: text", "Second: text", ""],
                 top_k=4,
             )
 
-        instance = FakeBM25Retriever.instances[-1]
-        self.assertEqual(instance.config["retrieval_topk"], 2)
-        self.assertEqual(instance.search_calls, [("question", 2, False)])
+        instance = FakeMemoryIndex.instances[-1]
+        self.assertEqual(instance.contents, ["First\n\ntext", "Second\n\ntext"])
+        self.assertEqual(instance.backend, "bm25s")
+        self.assertEqual(instance.search_calls, [("question", 2)])
         self.assertEqual(result, ["First: text", "Second: text"])
+
+    def test_corpus_retriever_builds_once_and_reuses_index(self):
+        with patch.object(retrieval, "_BM25sMemoryIndex", FakeMemoryIndex):
+            retriever = retrieval.FlashRAGBM25CorpusRetriever(
+                ["First: text", "Second: text"]
+            )
+            first = retriever.retrieve("first question", [], 1)
+            second = retriever.retrieve("second question", [], 1)
+
+        self.assertEqual(len(FakeMemoryIndex.instances), 1)
+        self.assertEqual(
+            FakeMemoryIndex.instances[0].search_calls,
+            [("first question", 1), ("second question", 1)],
+        )
+        self.assertEqual(first, ["First: text"])
+        self.assertEqual(second, ["First: text"])
 
     def test_empty_tokenized_query_is_a_zero_hit_retrieval(self):
         class EmptyQueryRetriever:
