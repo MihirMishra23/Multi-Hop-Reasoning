@@ -27,7 +27,8 @@ PROMPT_VARIANT=icl3hop ENABLE_THINKING=false \
 MAX_TOOL_RESPONSE_LENGTH=1024 SAVE_FULL_OUTPUT=true \
 CORPUS_PATH=/path/to/hotpotqa_dev/corpus.jsonl \
 INDEX_PATH=/path/to/hotpotqa_dev/e5_Flat.index \
-sbatch rebuttal-search-r1/sbatch_eval_hermes.slurm
+sbatch --partition=<authorized-partition> --gres=gpu:<available-gpu>:1 \
+  rebuttal-search-r1/sbatch_eval_hermes.slurm
 ```
 
 For ConFiQA, construct the retrieval store from all 1,000 ordered rows, even
@@ -49,7 +50,8 @@ CORPUS_PATH=/tmp/confiqa_cf356_store1000/corpus.jsonl \
 INDEX_PATH=/tmp/confiqa_cf356_store1000/e5_Flat.index \
 PROMPT_VARIANT=icl3hop ENABLE_THINKING=false \
 MAX_TOOL_RESPONSE_LENGTH=1024 \
-sbatch rebuttal-search-r1/sbatch_eval_hermes.slurm
+sbatch --partition=<authorized-partition> --gres=gpu:<available-gpu>:1 \
+  rebuttal-search-r1/sbatch_eval_hermes.slurm
 ```
 
 The evaluator rejects a ConFiQA store with the wrong condition, seed, size,

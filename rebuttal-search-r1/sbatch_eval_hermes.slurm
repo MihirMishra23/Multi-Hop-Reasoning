@@ -11,7 +11,8 @@
 #   PROMPT_VARIANT=icl3hop ENABLE_THINKING=false \
 #   sbatch sbatch_eval_hermes.slurm
 #
-# Required env: MERGED_CKPT, DATASET, SPLIT, PROMPT_VARIANT.
+# Required env: MERGED_CKPT, DATASET, SPLIT, PROMPT_VARIANT.  Supply an
+# account-authorized GPU at submission time with --partition and --gres.
 # For ConFiQA, also set CONFIQA_SETTING and CORPUS_MANIFEST.  NUM_SAMPLES
 # controls queries while EXPECTED_STORE_SAMPLES validates the full corpus.
 
@@ -23,8 +24,9 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH -t 4:00:00
-#SBATCH --partition=aimi
-#SBATCH --gres=gpu:nvidia_b200:1
+# The partition/GRES are deliberately not hardcoded: Unicorn availability and
+# account associations differ.  For example:
+#   sbatch --partition=jjs533 --gres=gpu:nvidia_rtx_6000_ada_generation:1 ...
 
 set -euo pipefail
 
