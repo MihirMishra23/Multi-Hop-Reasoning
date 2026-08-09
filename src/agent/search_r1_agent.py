@@ -364,6 +364,7 @@ class SearchR1Agent(Agent):
                             prompt=prompt_snapshots[index],
                             answer=generated,
                             action="finish",
+                            raw_response=generated,
                             error=(
                                 "trajectory budget exhausted before tool execution"
                                 if tool_call is not None and exhausted
@@ -382,6 +383,7 @@ class SearchR1Agent(Agent):
                     prompt=prompt_snapshots[index],
                     answer=generated,
                     action="toolcall",
+                    raw_response=generated,
                     tool_name=tool_call["name"],
                     tool_args=arguments,
                 )

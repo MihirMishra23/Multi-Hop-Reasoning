@@ -20,6 +20,21 @@ REPO_DIR="${REPO_DIR:-/home/rtn27/Multi-Hop-Reasoning-popqa-longtail}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-/share/j_sun/rtn27/popqa_longtail_1399}"
 OUTPUT_DIR="${OUTPUT_DIR:-/share/j_sun/rtn27/popqa_longtail_eval/${RUN_TAG}}"
 CORPUS_PATH="${ARTIFACT_DIR}/popqa_longtail_contexts.jsonl"
+CACHE_ROOT="${CACHE_ROOT:-/scratch/rtn27/eval_cache}"
+JOB_TMP="${JOB_TMP:-/scratch/rtn27/eval_tmp/${SLURM_JOB_ID}}"
+
+mkdir -p \
+    "${CACHE_ROOT}/huggingface" \
+    "${CACHE_ROOT}/torch" \
+    "${CACHE_ROOT}/vllm" \
+    "${JOB_TMP}/triton"
+export TMPDIR="${JOB_TMP}"
+export TMP="${JOB_TMP}"
+export TEMP="${JOB_TMP}"
+export HF_HOME="${CACHE_ROOT}/huggingface"
+export TORCH_HOME="${CACHE_ROOT}/torch"
+export VLLM_CACHE_ROOT="${CACHE_ROOT}/vllm"
+export TRITON_CACHE_DIR="${JOB_TMP}/triton"
 
 source /share/apps/software/anaconda3/etc/profile.d/conda.sh
 conda activate /scratch/rtn27/multi-hop-reasoning
@@ -58,7 +73,7 @@ COMMON_ARGS=(
     --start-index 0
     --total-count 1399
     --max-tokens 1024
-    --save-every 64
+    --save-every-examples 64
     --output-dir "${OUTPUT_DIR}"
     --save-version "_${RUN_TAG}"
     --eval

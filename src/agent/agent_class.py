@@ -11,6 +11,7 @@ class AgentStep:
     prompt: str
     answer: Optional[str]
     action: ActionType
+    raw_response: Optional[str] = None
     error: Optional[str] = None
     tool_name: Optional[str] = None
     tool_args: Optional[Dict[str, Any]] = None
@@ -65,18 +66,29 @@ class Agent:
             resp = self.llm.run(prompt, **llm_kwargs)
             action, tool_name, tool_args, final_answer = self.parse_action(resp)
             if action == "finish":
-                step = AgentStep(prompt=prompt, answer=final_answer, action="finish")
+                step = AgentStep(
+                    prompt=prompt,
+                    answer=final_answer,
+                    action="finish",
+                    raw_response=resp.text,
+                )
             elif action == "toolcall":
                 step = AgentStep(
                     prompt=prompt,
                     answer=resp.text,
                     action="toolcall",
+                    raw_response=resp.text,
                     tool_name=tool_name,
                     tool_args=tool_args,
                 )
                 self.on_toolcall(step)
             else:
-                step = AgentStep(prompt=prompt, answer=resp.text, action="generate")
+                step = AgentStep(
+                    prompt=prompt,
+                    answer=resp.text,
+                    action="generate",
+                    raw_response=resp.text,
+                )
         except Exception as e:
             step = AgentStep(prompt=prompt, answer=None, action="finish", error=str(e))
         return step
@@ -99,4 +111,3 @@ class Agent:
                 break
         # Return a copy of the trace for the caller
         return [final_answer], [list(self.trace)]
-

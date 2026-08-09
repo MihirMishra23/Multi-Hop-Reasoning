@@ -78,3 +78,6 @@ src/analysis/reward_hacking_evaluate/**/examples/
 src/analysis/kb_baselines/README.md
 
 menghan-scripts/
+
+# Downloaded, checksum-verified assets from the pinned IRCoT release.
+provenance/ircot/prompts/

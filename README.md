@@ -42,6 +42,10 @@ See `INSTALLATION.md` for full details, including editable install and environme
 
 ### Quickstart (scripts)
 
+For the pinned IRCoT method reproduction with Qwen models, including the
+required official Elasticsearch corpus service and subset-first workflow, see
+[`docs/IRCOT.md`](docs/IRCOT.md).
+
 1) Create and activate a conda environment (Python 3.12):
 
 ```bash

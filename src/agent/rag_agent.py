@@ -86,8 +86,10 @@ class RAGAgent(Agent):
             if len(question) > 1:
                 print("DEBUG: ", question)
                 raise NotImplementedError("RAGAgent does not support batch inference. Please set the batch size to 1.")
+            question = question[0]
 
-        query = self.build_query(question)
         self._evidence_docs = []
-        self.gather_evidence(query)
-        return super().run(query, **llm_kwargs)
+        # Retrieve with the raw question. Agent.run adds the answer-format
+        # instruction exactly once before generation.
+        self.gather_evidence(question)
+        return super().run(question, **llm_kwargs)

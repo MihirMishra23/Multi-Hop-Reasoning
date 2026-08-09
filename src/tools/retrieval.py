@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -55,6 +56,36 @@ def _build_contents_list(documents: List[Any]) -> Tuple[List[str], List[Any]]:
     return contents_list, docs_list
 
 
+def _effective_top_k(top_k: int, document_count: int) -> int:
+    """Clamp retrieval depth to the non-empty documents in the index.
+
+    ``bm25s==0.2.1`` raises from its numba backend when ``k`` exceeds the
+    number of indexed documents instead of returning the shorter result.  A
+    few Table 3 examples contain fewer than four non-empty contexts, so the
+    evaluator must handle this at the wrapper boundary.
+    """
+    return max(0, min(int(top_k), int(document_count)))
+
+
+def _search_bm25(retriever: Any, query: str, top_k: int) -> List[Any]:
+    """Search BM25, treating an out-of-vocabulary query as no retrieval.
+
+    The pinned FlashRAG/bm25s stack raises ``ValueError`` when every query
+    token is absent from the index vocabulary.  That is a valid zero-hit
+    retrieval round, especially for model-generated IRCoT queries.  Preserve
+    all other errors so corpus or index failures remain visible.
+    """
+    try:
+        return retriever.search(query=query, num=top_k, return_score=False)
+    except ValueError as exc:
+        if "query_tokens must be a list of list of tokens" not in str(exc):
+            raise
+        logging.getLogger(__name__).warning(
+            "BM25 query contained no indexed tokens; returning no evidence"
+        )
+        return []
+
+
 def _map_results_to_docs(
     results: List[Any],
     contents_list: List[str],
@@ -98,6 +129,10 @@ class FlashRAGBM25Retriever:
         if len(contents_list) == 0:
             return []
 
+        effective_top_k = _effective_top_k(top_k, len(contents_list))
+        if effective_top_k == 0:
+            return []
+
         # Lazily import heavy deps
         from flashrag.retriever.index_builder import Index_Builder
         from flashrag.retriever import BM25Retriever
@@ -132,7 +167,7 @@ class FlashRAGBM25Retriever:
             # Create retriever config and search
             config = {
                 "retrieval_method": "bm25",
-                "retrieval_topk": top_k,
+                "retrieval_topk": effective_top_k,
                 "index_path": os.path.join(temp_dir, "bm25"),
                 "corpus_path": corpus_path,
                 "silent_retrieval": True,
@@ -144,11 +179,15 @@ class FlashRAGBM25Retriever:
                 "use_reranker": False,
             }
             retriever = BM25Retriever(config=config)
-            results = retriever.search(query=query, num=top_k, return_score=False)
+            results = _search_bm25(retriever, query, effective_top_k)
 
             # results may be dicts with 'contents' or id integers; normalize to contents strings
             if isinstance(results, list):
-                return _map_results_to_docs(results, contents_list, docs_list)[:top_k]
+                return _map_results_to_docs(
+                    results,
+                    contents_list,
+                    docs_list,
+                )[:effective_top_k]
             return []
         finally:
             # Cleanup temporary directory
@@ -225,9 +264,17 @@ class FlashRAGBM25CorpusRetriever:
         if not self._retriever:
             return []
 
-        results = self._retriever.search(query=query, num=top_k, return_score=False)
+        effective_top_k = _effective_top_k(top_k, len(self._contents_list))
+        if effective_top_k == 0:
+            return []
+
+        results = _search_bm25(self._retriever, query, effective_top_k)
         if isinstance(results, list):
-            return _map_results_to_docs(results, self._contents_list, self._docs_list)[:top_k]
+            return _map_results_to_docs(
+                results,
+                self._contents_list,
+                self._docs_list,
+            )[:effective_top_k]
         return []
 
     def close(self) -> None:

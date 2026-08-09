@@ -24,9 +24,10 @@ import random
 import sys
 import logging
 import gc
+import subprocess
+import fcntl
 from typing import Dict, Any, List
 from tqdm import tqdm
-from datetime import datetime
 
 # Fix OpenMP conflict when multiple libraries link to different OpenMP runtimes
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -38,10 +39,16 @@ import torch
 from agent import get_agent, Agent
 from llm import get_llm
 from data import get_dataset, selected_rows_provenance
+from data.ircot_official import load_ircot_official_evaluation
 from data.hotpotqa import load_hotpotqa_rag_corpus
 from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
 from data.popqa import load_popqa_rag_corpus
 from multi_lmlm.database.database_manager import build_databases_from_triplets_batch
+from agent.ircot_constants import (
+    OFFICIAL_CORPUS_NAMES,
+    OFFICIAL_IRCOT_COMMIT,
+    OFFICIAL_IRCOT_URL,
+)
 
 # Import for TriviaQA sentence splitting
 from nltk.tokenize import PunktSentenceTokenizer
@@ -118,6 +125,26 @@ def split_trivia_qa_contexts(contexts: List[str], titles: List[str], min_chunk_l
 DEFAULT_FULLWIKI_CORPUS_PATH = "/share/j_sun/lmlm_multihop/datasets/hotpot_dev_fullwiki_v1.json"
 
 
+def _get_git_commit() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO_ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return None
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _load_training_config(model_path: str) -> dict:
     cfg = {}
     for fname in ("training_args.json", "trainer_state.json"):
@@ -147,6 +174,15 @@ from eval.evaluate import (
     build_output_filename,
     save_results,
 )
+from eval.live_progress import (
+    append_completion_records,
+    atomic_write_json,
+    load_completion_ids,
+    score_results,
+    summarize_scores,
+    utc_now,
+    write_progress,
+)
 
 def build_query(question: str) -> str:
     """Instruction to ensure the Agent emits a FINAL_ANSWER the parser recognizes."""
@@ -170,6 +206,12 @@ def _normalize_title(title: Any) -> str:
 def _extract_retrieved_title(doc: Any) -> str:
     if isinstance(doc, dict):
         return _normalize_title(doc.get("title", ""))
+    if isinstance(doc, str):
+        first_line = doc.splitlines()[0].strip() if doc.strip() else ""
+        if first_line.lower().startswith("wikipedia title:"):
+            return _normalize_title(first_line.split(":", 1)[1])
+        if ": " in first_line:
+            return _normalize_title(first_line.split(": ", 1)[0])
     return ""
 
 
@@ -283,6 +325,7 @@ def process_single_batch(
             "qid": qid,
             "question": question,
             "answers": ex["answers"],
+            "answer_objects": ex.get("answer_objects"),
             "supporting_facts": ex.get("supporting_facts"),
             "contexts": contexts,
         }
@@ -327,6 +370,25 @@ def process_single_batch(
             temperature=args.temperature,
             max_tokens=args.max_tokens,
         )
+    elif args.method == "ircot":
+        answers = []
+        traces = []
+        ircot_run_info = []
+        for query, metadata in zip(queries, examples_metadata):
+            agent.reset(metadata["contexts"])  # type: ignore
+            answer_list, trace_list = agent.run(
+                [query],
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+            )
+            answers.append(answer_list[0] if answer_list else None)
+            traces.append(trace_list[0] if trace_list else None)
+            ircot_run_info.append(
+                {
+                    "retrieval_rounds": list(getattr(agent, "_retrieval_rounds", [])),
+                    "evidence": list(getattr(agent, "_evidence_docs", [])),
+                }
+            )
     else:
         answers, traces = agent.run(
             queries,
@@ -344,6 +406,8 @@ def process_single_batch(
         evidence_docs = []
         if args.method == "rag":
             evidence_docs = getattr(agent, "_evidence_docs", [])
+        elif args.method == "ircot":
+            evidence_docs = ircot_run_info[idx]["evidence"]
         logger.debug("Answer: %s", answer)
         logger.debug("Trace: %s", trace)
 
@@ -358,6 +422,7 @@ def process_single_batch(
             {
                 "prompt": step.prompt,
                 "answer": step.answer,
+                "raw_response": step.raw_response,
                 "action": step.action,
                 "error": step.error,
                 "tool_name": step.tool_name,
@@ -383,6 +448,8 @@ def process_single_batch(
         ):
             if provenance_key in metadata:
                 results[str(metadata["qid"])][provenance_key] = metadata[provenance_key]
+        if metadata.get("answer_objects") is not None:
+            results[str(metadata["qid"])]["gold_answer_objects"] = metadata["answer_objects"]
         # For MQuAKE, also save new_gold_answer and split type for knowledge editing evaluation
         if "new_answers" in metadata:
             results[str(metadata["qid"])]["new_gold_answer"] = metadata["new_answers"]
@@ -400,12 +467,20 @@ def process_single_batch(
             if idx < len(phase1_info):
                 results[str(metadata["qid"])]["phase1"] = phase1_info[idx]
         if args.method == "rag":
-            results[str(qid)]["retrieval"] = _compute_retrieval_stats(
+            results[str(metadata["qid"])]["retrieval"] = _compute_retrieval_stats(
                 evidence_docs=evidence_docs,
-                supporting_facts=ex.get("supporting_facts") or [],
+                supporting_facts=metadata.get("supporting_facts") or [],
             )
         if args.method == "rag" and args.debug_evidence:
             results[str(metadata["qid"])]["evidence"] = evidence_docs
+        if args.method == "ircot":
+            results[str(metadata["qid"])]["retrieval_rounds"] = ircot_run_info[idx]["retrieval_rounds"]
+            results[str(metadata["qid"])]["retrieval"] = _compute_retrieval_stats(
+                evidence_docs=evidence_docs,
+                supporting_facts=metadata.get("supporting_facts") or [],
+            )
+            if args.debug_evidence:
+                results[str(metadata["qid"])]["evidence"] = evidence_docs
 
     logger.info("Generated %d predictions for batch %d", len(results), batch_number)
 
@@ -467,6 +542,14 @@ def save_results_to_file(
             "total_examples": len(all_results),
             "type": args.method,
             "seed": args.seed if args.seed is not None else None,
+            # Resolve this once when the evaluator starts.  A long-running job
+            # may outlive worktree updates, and resolving HEAD at save time can
+            # incorrectly attribute already-running code to a later commit.
+            "code_commit": args.code_commit,
+            "generated_at_utc": utc_now(),
+            "expected_examples": getattr(args, "_expected_examples", None),
+            "resolved_model_id": getattr(args, "resolved_model_id", None),
+            "model_revision": getattr(args, "model_revision", None),
         },
         "inference_params": {
             "seed": args.seed,
@@ -483,6 +566,9 @@ def save_results_to_file(
             "phase1_prompt_type": args.phase1_prompt_type,
             "top_k": args.top_k,
             "similarity_threshold": args.similarity_threshold,
+            "embedding_batch_size": args.embedding_batch_size,
+            "vllm_gpu_memory_utilization": args.vllm_gpu_memory_utilization,
+            "pytorch_cuda_alloc_conf": os.environ.get("PYTORCH_CUDA_ALLOC_CONF"),
             "concat_all_db": args.concat_all_db,
             "use_contexts": args.use_contexts,
         }
@@ -498,20 +584,72 @@ def save_results_to_file(
             "max_response_length": args.search_r1_max_response_length,
             "max_model_len": args.search_r1_max_model_len,
         }
-    # Add retrieval metadata for RAG
-    if args.method == "rag":
+    # Add retrieval metadata for text retrieval methods.
+    if args.method in ("rag", "ircot"):
         output["metadata"]["retrieval"] = {
-            "backend": args.retrieval,
-            "scope": args.setting,
-            "k": args.rag_k,
+            "backend": "official_elasticsearch_bm25" if args.method == "ircot" else args.retrieval,
+            "scope": args.rag_scope,
+            "corpus_path": None if args.method == "ircot" else args.rag_corpus_path,
+            "k": args.rag_k if args.method == "rag" else args.ircot_retrieval_k,
+        }
+    if args.method == "ircot":
+        output["metadata"]["ircot"] = {
+            "implementation": "faithful_port_with_model_substitution",
+            "model_substitution": args.resolved_model_id,
+            "prompt_transport": "raw_completion",
+            "max_steps": args.ircot_max_steps,
+            "max_evidence": args.ircot_max_evidence,
+            "generator_max_tokens": args.ircot_generator_max_tokens,
+            "retrieval_k": args.ircot_retrieval_k,
+            "distractor_count": args.ircot_distractor_count,
+            "prompt_set": args.ircot_prompt_set,
+            "prompt_file": args.ircot_prompt_file,
+            "prompt_sha256": getattr(args, "ircot_prompt_sha256", None),
+            "retriever_url": args.ircot_retriever_url,
+            "corpus_name": OFFICIAL_CORPUS_NAMES.get(args.dataset),
+            "index_manifest": args.ircot_index_manifest,
+            "index_manifest_sha256": getattr(args, "ircot_index_manifest_sha256", None),
+            "evaluation_file": args.ircot_evaluation_file,
+            "evaluation_file_sha256": getattr(args, "ircot_evaluation_file_sha256", None),
+            "evaluation_ids_sha256": getattr(args, "ircot_evaluation_ids_sha256", None),
+            "official_repository": OFFICIAL_IRCOT_URL,
+            "official_commit": OFFICIAL_IRCOT_COMMIT,
         }
 
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-
-    with open(save_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, indent=4)
+    atomic_write_json(save_path, output, indent=4)
 
     logger.info("Saved %d predictions to %s", len(all_results), save_path)
+
+
+def evaluate_saved_file(save_path: str, args: argparse.Namespace) -> Dict[str, Any]:
+    """Evaluate a checkpoint with the method's canonical answer metric."""
+    if args.method != "ircot":
+        return evaluate_file(
+            save_path,
+            dataset=args.dataset,
+            setting=args.setting,
+            split=args.split,
+            source="hf",
+        )
+
+    from eval.ircot_official_metrics import evaluate_predictions as evaluate_ircot_predictions
+
+    with open(save_path, "r", encoding="utf-8") as source:
+        payload = json.load(source)
+    return {
+        "metrics": evaluate_ircot_predictions((payload.get("results") or {}).values()),
+        "meta": {
+            "dataset": args.dataset,
+            "setting": args.setting,
+            "agent": args.method,
+            "llm": args.model,
+            "split": args.split,
+            "preds_path": save_path,
+            "metric": "official_ircot_drop",
+            **(payload.get("metadata") or {}),
+        },
+        "inference_params": payload.get("inference_params") or {},
+    }
 
 
 def main() -> None:
@@ -538,7 +676,7 @@ def main() -> None:
     parser.add_argument(
         "--method",
         default="icl",
-        choices=["db", "rag", "icl", "lmlm", "direct", "two_phase", "search_r1"],
+        choices=["db", "rag", "ircot", "icl", "lmlm", "direct", "two_phase", "search_r1"],
         help="Agent method label (for output path)",
     )
     parser.add_argument(
@@ -589,6 +727,24 @@ def main() -> None:
         help="cosine similarity threshold for lmlm retrieval",
     )
     parser.add_argument(
+        "--embedding-batch-size",
+        default=2048,
+        type=int,
+        help=(
+            "Sentence-transformer batch size used while building two_phase databases. "
+            "This is a memory/performance control and does not change the retrieval recipe."
+        ),
+    )
+    parser.add_argument(
+        "--vllm-gpu-memory-utilization",
+        default=0.6,
+        type=float,
+        help=(
+            "Fraction of GPU memory reserved by the two_phase vLLM engine. Lower values "
+            "leave room for the sentence-transformer database builder."
+        ),
+    )
+    parser.add_argument(
         "--return-triplets",
         default=False,
         help="Whether to return entire triplets (as opposed to only values)",
@@ -596,7 +752,10 @@ def main() -> None:
     )
     # RAG-related flags
     parser.add_argument(
-        "--retrieval", default="bm25", choices=["bm25"], help="Retrieval backend for --method rag"
+        "--retrieval",
+        default="bm25",
+        choices=["bm25"],
+        help="Retrieval backend for --method rag or ircot",
     )
     parser.add_argument("--rag-k", type=int, default=4, help="Top-k documents to retrieve")
     parser.add_argument(
@@ -678,6 +837,65 @@ def main() -> None:
     parser.add_argument("--max-num-seqs", type=int, default=None)
     parser.add_argument("--enforce-eager", action="store_true")
     parser.add_argument(
+        "--ircot-retrieval-k",
+        type=int,
+        default=6,
+        help="Documents retrieved per IRCoT round (official default: 6)",
+    )
+    parser.add_argument(
+        "--ircot-max-evidence",
+        type=int,
+        default=15,
+        help="Maximum cumulative IRCoT evidence paragraphs (official default: 15)",
+    )
+    parser.add_argument(
+        "--ircot-max-steps",
+        type=int,
+        default=10,
+        help="Maximum sentence-level reasoning generations (official default: 10)",
+    )
+    parser.add_argument(
+        "--ircot-generator-max-tokens",
+        "--ircot-step-max-tokens",
+        dest="ircot_generator_max_tokens",
+        type=int,
+        default=300,
+        help="Generation budget for reasoning and final reader calls (official default: 300)",
+    )
+    parser.add_argument(
+        "--ircot-distractor-count",
+        type=int,
+        choices=[1, 2, 3],
+        default=2,
+        help="Released IRCoT prompt variant; this is a tuned hyperparameter",
+    )
+    parser.add_argument(
+        "--ircot-prompt-set",
+        choices=["1", "2", "3"],
+        default="1",
+        help="Released IRCoT demonstration set (paper development tuning uses set 1)",
+    )
+    parser.add_argument(
+        "--ircot-prompt-dir",
+        default=os.path.join(REPO_ROOT, "provenance", "ircot", "prompts"),
+        help="Root containing checksum-verified prompts from scripts/fetch_ircot_assets.py",
+    )
+    parser.add_argument(
+        "--ircot-retriever-url",
+        default=None,
+        help="Official IRCoT retrieval service root or /retrieve endpoint",
+    )
+    parser.add_argument(
+        "--ircot-index-manifest",
+        default=None,
+        help="Versioned JSON manifest for the corpus/index served by --ircot-retriever-url",
+    )
+    parser.add_argument(
+        "--ircot-evaluation-file",
+        default=None,
+        help="Exact released IRCoT dev/test subsample JSONL; row order is preserved",
+    )
+    parser.add_argument(
         "--debug-evidence",
         action="store_true",
         help="Include retrieved evidence in saved preds for debugging",
@@ -699,6 +917,11 @@ def main() -> None:
                         help="vLLM max model length for two_phase (default 8192 > training 4096 to handle multi-turn context growth)")
 
     parser.add_argument("--model", default=None, help="LLM model name")
+    parser.add_argument(
+        "--model-revision",
+        default=None,
+        help="Optional immutable Hugging Face model revision for local model adapters",
+    )
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature (two_phase greedy default; overridden by --use-train-params)")
     parser.add_argument("--max-tokens", type=int, default=1024, help="Max completion tokens (two_phase greedy default; overridden by --use-train-params)")
     parser.add_argument(
@@ -722,7 +945,16 @@ def main() -> None:
         "--save-every",
         type=int,
         default=None,
-        help="Save results every N batches. None saves once at the end",
+        help="Legacy checkpoint interval in batches; prefer --save-every-examples",
+    )
+    parser.add_argument(
+        "--save-every-examples",
+        type=int,
+        default=64,
+        help=(
+            "Atomically checkpoint the prediction artifact after at least N new examples "
+            "(default: 64). Completion JSONL and rolling metrics update every batch."
+        ),
     )
     parser.add_argument(
         "--use-inverses",
@@ -756,6 +988,49 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    args.code_commit = _get_git_commit()
+
+    if args.method == "ircot" and args.batch_size != 1:
+        raise ValueError("--method=ircot requires --batch-size=1")
+    if args.method == "ircot":
+        if args.dataset not in OFFICIAL_CORPUS_NAMES:
+            raise ValueError("Faithful IRCoT supports --dataset hotpotqa, 2wiki, or musique")
+        if not args.ircot_retriever_url:
+            raise ValueError(
+                "Faithful IRCoT requires --ircot-retriever-url pointing to the official "
+                "Elasticsearch retrieval service"
+            )
+        prompt_dataset = "2wikimultihopqa" if args.dataset == "2wiki" else args.dataset
+        args.ircot_prompt_file = os.path.join(
+            args.ircot_prompt_dir,
+            prompt_dataset,
+            f"gold_with_{args.ircot_distractor_count}_distractors_context_cot_qa_codex.txt",
+        )
+        if not os.path.isfile(args.ircot_prompt_file):
+            raise FileNotFoundError(
+                f"Missing official IRCoT prompt {args.ircot_prompt_file}; "
+                "run scripts/fetch_ircot_assets.py"
+            )
+        if args.ircot_index_manifest:
+            if not os.path.isfile(args.ircot_index_manifest):
+                raise FileNotFoundError(
+                    f"IRCoT index manifest does not exist: {args.ircot_index_manifest}"
+                )
+            args.ircot_index_manifest_sha256 = _sha256_file(args.ircot_index_manifest)
+        if args.ircot_evaluation_file:
+            if not os.path.isfile(args.ircot_evaluation_file):
+                raise FileNotFoundError(
+                    f"IRCoT evaluation file does not exist: {args.ircot_evaluation_file}"
+                )
+            args.ircot_evaluation_file_sha256 = _sha256_file(args.ircot_evaluation_file)
+    if args.embedding_batch_size <= 0:
+        raise ValueError("--embedding-batch-size must be positive")
+    if args.save_every is not None and args.save_every <= 0:
+        raise ValueError("--save-every must be positive when supplied")
+    if args.save_every_examples <= 0:
+        raise ValueError("--save-every-examples must be positive")
+    if not 0.0 < args.vllm_gpu_memory_utilization <= 1.0:
+        raise ValueError("--vllm-gpu-memory-utilization must be in (0, 1]")
 
     # --top-p is shared by search_r1 and lmlm but their historical defaults
     # differ, so it is declared with default=None and resolved here. lmlm's 1.0
@@ -874,13 +1149,26 @@ def main() -> None:
             hf_split,
             rag_corpus_path,
         )
-        count = write_musique_rag_corpus_jsonl(
-            path=rag_corpus_path,
-            split=hf_split,
-            limit=None,
-            seed=args.seed,
-        )
-        logger.info("Wrote %d unique RAG paragraphs to %s", count, rag_corpus_path)
+        os.makedirs(os.path.dirname(rag_corpus_path), exist_ok=True)
+        lock_path = f"{rag_corpus_path}.lock"
+        with open(lock_path, "w", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            if os.path.isfile(rag_corpus_path) and os.path.getsize(rag_corpus_path) > 0:
+                logger.info("Reusing existing MuSiQue RAG corpus at %s", rag_corpus_path)
+            else:
+                temporary_path = f"{rag_corpus_path}.tmp.{os.getpid()}"
+                try:
+                    count = write_musique_rag_corpus_jsonl(
+                        path=temporary_path,
+                        split=hf_split,
+                        limit=None,
+                        seed=args.seed,
+                    )
+                    os.replace(temporary_path, rag_corpus_path)
+                finally:
+                    if os.path.exists(temporary_path):
+                        os.unlink(temporary_path)
+                logger.info("Wrote %d unique RAG paragraphs to %s", count, rag_corpus_path)
         rag_scope = f"hf_{hf_split}"
 
     if args.method == "rag" and rag_corpus_path:
@@ -911,6 +1199,8 @@ def main() -> None:
     if rag_scope is None:
         if args.method == "rag" and rag_corpus_path:
             rag_scope = _infer_rag_scope(rag_corpus_path)
+        elif args.method == "ircot":
+            rag_scope = f"official_{OFFICIAL_CORPUS_NAMES[args.dataset]}_index"
         else:
             rag_scope = args.setting
     args.rag_scope = rag_scope
@@ -931,13 +1221,18 @@ def main() -> None:
     dataset_setting = args.confiqa_setting if args.dataset == "confiqa" else args.setting
     if args.dataset == "confiqa":
         logger.info(f"DEBUG: Loading ConFiQA with setting='{dataset_setting}' (args.confiqa_setting='{args.confiqa_setting}')")
-    full_dataset = get_dataset(
-        name=args.dataset,
-        setting=dataset_setting,
-        split=args.split,
-        source=args.dataset_source,
-        seed=args.seed,
-    )
+    if args.method == "ircot" and args.ircot_evaluation_file:
+        full_dataset = load_ircot_official_evaluation(args.ircot_evaluation_file)
+        evaluation_ids = "\n".join(str(row["id"]) for row in full_dataset) + "\n"
+        args.ircot_evaluation_ids_sha256 = hashlib.sha256(evaluation_ids.encode("utf-8")).hexdigest()
+    else:
+        full_dataset = get_dataset(
+            name=args.dataset,
+            setting=dataset_setting,
+            split=args.split,
+            source=args.dataset_source,
+            seed=args.seed,
+        )
     total_dataset_size = len(full_dataset)
 
     print(f"examples in dataset: {full_dataset[0]}")
@@ -949,6 +1244,7 @@ def main() -> None:
 
     # Calculate how many examples to process (total_count is NUMBER of examples from start_index)
     examples_to_process = min(args.total_count, total_dataset_size - args.start_index)
+    args._expected_examples = examples_to_process
 
     # TODO: how to make the training and eval use the same split function (e.g. create_train_val_splits)?
     # Calculate the exclusive end index
@@ -1012,11 +1308,38 @@ def main() -> None:
         save_results_path = os.path.join(output_dir, f"results{args.save_version}", _fit_filename(f"results_{save_postfix}"))
     else:
         model_name = args.model or "unknown-model"
-        save_path = os.path.join(base_output_dir, args.method, f"{args.dataset}_{args.setting}", model_name, "generations")
-        save_results_path = os.path.join(base_output_dir, args.method, f"{args.dataset}_{args.setting}", model_name, "results")
+        output_dir = os.path.join(
+            base_output_dir,
+            args.method,
+            f"{args.dataset}_{args.setting}",
+            model_name,
+        )
+        retrieval_suffix = ""
+        if args.method == "rag":
+            retrieval_suffix = f"_k{args.rag_k}"
+        elif args.method == "ircot":
+            retrieval_suffix = (
+                f"_k{args.ircot_retrieval_k}_steps{args.ircot_max_steps}"
+                f"_evidence{args.ircot_max_evidence}_d{args.ircot_distractor_count}"
+                f"_ps{args.ircot_prompt_set}"
+            )
+        version = args.save_version or ""
+        save_postfix = (
+            f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}"
+            f"_i{args.start_index}_seed{args.seed}{retrieval_suffix}{version}.json"
+        )
+        save_path = os.path.join(output_dir, "generations", f"eval_{save_postfix}")
+        save_results_path = os.path.join(output_dir, "results", f"results_{save_postfix}")
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     os.makedirs(os.path.dirname(save_results_path), exist_ok=True)
+    completions_path = f"{save_path}.completions.jsonl"
+    progress_path = f"{save_path}.progress.json"
+
+    if not args.resume:
+        # A non-resume run intentionally starts a fresh append-only completion stream.
+        with open(completions_path, "w", encoding="utf-8"):
+            pass
 
     # Load existing results if resuming
     existing_results = {}
@@ -1029,6 +1352,20 @@ def main() -> None:
         except Exception as e:
             logger.warning(f"Failed to load existing results from {save_path}: {e}")
 
+    rolling_scores = score_results(existing_results, args.method)
+    logged_completion_ids = load_completion_ids(completions_path)
+    write_progress(
+        progress_path,
+        completed=len(existing_results),
+        expected=examples_to_process,
+        scores=rolling_scores,
+        checkpoint_path=save_path,
+        completions_path=completions_path,
+        status="running",
+    )
+    logger.info("Live completions: %s", completions_path)
+    logger.info("Rolling metrics: %s", progress_path)
+
     # Check if we already have all the results we need (and not resuming)
     if args.resume and os.path.exists(save_path):
         try:
@@ -1040,17 +1377,20 @@ def main() -> None:
                 logger.info(f"Generations already complete at {save_path} ({len(existing_data['results'])} results). Evaluating...")
                 if args.eval:
                     # Evaluate
-                    results = evaluate_file(
-                        save_path,
-                        dataset=args.dataset,
-                        setting=args.setting,
-                        split=args.split,
-                        source='hf',
-                    )
+                    results = evaluate_saved_file(save_path, args)
                     logger.info(f"Evaluation results: {json.dumps(results, indent=2)}")
 
                     outpath = save_results(results, "./", save_results_path)
                     logger.info(f"Evaluation results saved to: {outpath}")
+                write_progress(
+                    progress_path,
+                    completed=len(existing_results),
+                    expected=examples_to_process,
+                    scores=rolling_scores,
+                    checkpoint_path=save_path,
+                    completions_path=completions_path,
+                    status="complete",
+                )
                 return
         except Exception as e:
             logger.warning(f"Failed to read existing results from {save_path}: {e}")
@@ -1073,7 +1413,18 @@ def main() -> None:
 
     llm = None
     if args.method not in ("lmlm", "two_phase", "search_r1"):
-        llm = get_llm(model_name=args.model)
+        llm_kwargs = {"model_name": args.model}
+        if args.model_revision:
+            llm_kwargs["revision"] = args.model_revision
+        llm = get_llm(**llm_kwargs)
+        args.resolved_model_id = getattr(llm, "hf_model_id", args.model)
+        model_config = getattr(getattr(llm, "model", None), "config", None)
+        resolved_revision = getattr(model_config, "_commit_hash", None)
+        if args.model_revision and resolved_revision and resolved_revision != args.model_revision:
+            raise RuntimeError(
+                f"Loaded model revision {resolved_revision}, expected {args.model_revision}"
+            )
+        args.model_revision = resolved_revision or args.model_revision
 
 
     # Build agent_kwargs dictionary
@@ -1084,13 +1435,22 @@ def main() -> None:
         "setting": args.setting,
         "retrieval": args.retrieval,
         "rag_k": args.rag_k,
-        "max_steps": args.max_steps,
+        "ircot_retrieval_k": args.ircot_retrieval_k,
+        "ircot_max_evidence": args.ircot_max_evidence,
+        "ircot_max_steps": args.ircot_max_steps,
+        "ircot_generator_max_tokens": args.ircot_generator_max_tokens,
+        "ircot_prompt_set": args.ircot_prompt_set,
+        "ircot_prompt_file": getattr(args, "ircot_prompt_file", None),
+        "ircot_retriever_url": args.ircot_retriever_url,
+        "max_steps": args.ircot_max_steps if args.method == "ircot" else args.max_steps,
         "model_path": args.model_path,
         "database_path": args.database_path,
         "return_triplets" : args.return_triplets,
         "use_inverses" : args.use_inverses,
         "top_k": args.top_k,
         "similarity_threshold": args.similarity_threshold,
+        "embedding_batch_size": args.embedding_batch_size,
+        "vllm_gpu_memory_utilization": args.vllm_gpu_memory_utilization,
         "phase1_prompt_type": args.phase1_prompt_type,
         "concat_all_db": args.concat_all_db if args.method == "two_phase" else False,
         "contexts_are_split": args.use_contexts == "all" if args.method == "two_phase" else False,
@@ -1135,6 +1495,8 @@ def main() -> None:
 
     # Get agent instance using factory function
     agent: Agent = get_agent(method=args.method, agent_kwargs=agent_kwargs)
+    if args.method == "ircot":
+        args.ircot_prompt_sha256 = getattr(agent, "prompt_sha256", None)
 
     # Build unified database if concat_all_db is enabled (two_phase only)
     unified_db_path = None
@@ -1248,6 +1610,7 @@ def main() -> None:
     all_results = existing_results.copy() if existing_results else {}
     successful_batches = 0
     failed_batches = 0
+    last_checkpoint_count = len(all_results)
 
     with tqdm(total=batches_to_process, desc="Processing batches", unit="batch") as pbar:
         for batch_num in range(1, batches_to_process + 1):
@@ -1258,15 +1621,75 @@ def main() -> None:
                 all_results.update(batch_results)
                 if batch_results:  # Only count as successful if we actually processed
                     successful_batches += 1
+                    rolling_scores.extend(score_results(batch_results, args.method))
 
-                # Save based on save_every flag
-                if args.save_every and successful_batches % args.save_every == 0:
-                    save_results_to_file(all_results, save_path, args)
+                    completion_records = append_completion_records(
+                        completions_path,
+                        batch_results,
+                        args.method,
+                        logged_completion_ids,
+                    )
+                    for record in completion_records:
+                        completion_preview = " ".join(str(record["completion"]).split())[:240]
+                        logger.info(
+                            "COMPLETION qid=%s metric=%s em=%.3f f1=%.3f pred=%r raw=%r",
+                            record["qid"],
+                            record["metric"],
+                            record["em"],
+                            record["f1"],
+                            str(record["pred"])[:160],
+                            completion_preview,
+                        )
+
+                    # Checkpoint only after newly generated batches.  In resume
+                    # mode, an empty/skipped batch must not repeatedly rewrite
+                    # the same large artifact just because 0 % save_every == 0.
+                    batch_checkpoint_due = bool(
+                        args.save_every
+                        and successful_batches % args.save_every == 0
+                    )
+                    example_checkpoint_due = (
+                        len(all_results) - last_checkpoint_count >= args.save_every_examples
+                    )
+                    if batch_checkpoint_due or example_checkpoint_due:
+                        save_results_to_file(all_results, save_path, args)
+                        last_checkpoint_count = len(all_results)
+
+                    rolling = summarize_scores(rolling_scores)
+                    logger.info(
+                        "PROGRESS completed=%d/%d metric=%s rolling_em=%.4f rolling_f1=%.4f",
+                        len(all_results),
+                        examples_to_process,
+                        rolling["metric"],
+                        rolling["em"],
+                        rolling["f1"],
+                    )
+
+                write_progress(
+                    progress_path,
+                    completed=len(all_results),
+                    expected=examples_to_process,
+                    scores=rolling_scores,
+                    checkpoint_path=save_path,
+                    completions_path=completions_path,
+                    status="running",
+                    last_qids=list(batch_results),
+                )
 
                 pbar.update(1)
             except Exception as e:
                 failed_batches += 1
                 logger.error("Error processing batch %d: %s", batch_num, e, exc_info=True)
+                write_progress(
+                    progress_path,
+                    completed=len(all_results),
+                    expected=examples_to_process,
+                    scores=rolling_scores,
+                    checkpoint_path=save_path,
+                    completions_path=completions_path,
+                    status="failed",
+                    error=f"batch {batch_num}: {e}",
+                )
                 pbar.update(1)
                 raise
                 
@@ -1279,16 +1702,19 @@ def main() -> None:
 
     # Save final results (either first time if save_every=-1, or final update)
     save_results_to_file(all_results, save_path, args)
+    write_progress(
+        progress_path,
+        completed=len(all_results),
+        expected=examples_to_process,
+        scores=rolling_scores,
+        checkpoint_path=save_path,
+        completions_path=completions_path,
+        status="complete",
+    )
 
     if args.eval:
         # Evaluate
-        results = evaluate_file(
-            save_path,
-            dataset=args.dataset,
-            setting=args.setting,
-            split=args.split,
-            source='hf',
-        )
+        results = evaluate_saved_file(save_path, args)
         logging.info(f"Evaluation results: {json.dumps(results, indent=2)}")
 
 

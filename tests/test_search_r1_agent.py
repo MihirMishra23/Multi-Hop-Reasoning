@@ -13,6 +13,7 @@ class FakeAgentStep:
     prompt: str
     answer: Optional[str]
     action: str
+    raw_response: Optional[str] = None
     error: Optional[str] = None
     tool_name: Optional[str] = None
     tool_args: Optional[dict[str, Any]] = None

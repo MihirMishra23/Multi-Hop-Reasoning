@@ -1,0 +1,22 @@
+{
+  "source": "https://github.com/StonyBrookNLP/ircot",
+  "commit": "3c1820f698eea5eeddb4fba3c56b64c961e063e4",
+  "license": "Apache-2.0",
+  "prompt_files": {
+    "hotpotqa/gold_with_1_distractors_context_cot_qa_codex.txt": "00fd7b411360004f55c5d295d71d257d45f00c8125033faa88232935607993c3",
+    "hotpotqa/gold_with_2_distractors_context_cot_qa_codex.txt": "af56b51582a5fdbebf5a5d50ab95cefcb95d92986cf820774ccbaa897a71552f",
+    "hotpotqa/gold_with_3_distractors_context_cot_qa_codex.txt": "299fbb3b9e3b642cbe4c09ec035e64a2627a5d118aa2aaede8c8829e4ab7dbe8",
+    "2wikimultihopqa/gold_with_1_distractors_context_cot_qa_codex.txt": "890050a6dd6c396b2af3cb2c1f88f01049e7bee49e64f11cb5fd08eaae27015a",
+    "2wikimultihopqa/gold_with_2_distractors_context_cot_qa_codex.txt": "6cd153370f5f35a0e3db53d8def28abfe341ae67cddd2ccc5365eeb61769e235",
+    "2wikimultihopqa/gold_with_3_distractors_context_cot_qa_codex.txt": "f4ffc3fdcf1616b60b5317fc44da61ba1306c8413d86c59d01621b0433daad95",
+    "musique/gold_with_1_distractors_context_cot_qa_codex.txt": "4f6b4b337de812ff94dbc713e3eabdbeb97f93fd5549ac2e3b92c5e0813cf5d0",
+    "musique/gold_with_2_distractors_context_cot_qa_codex.txt": "454bac330eb8800e629a2ca9938b7358da8131a75c563b51ff1836cf4501377f",
+    "musique/gold_with_3_distractors_context_cot_qa_codex.txt": "406602227e58733de4396230008ea9ccc8a2c167be2006f24e4fe77e3446b5d5"
+  },
+  "official_index_document_counts": {
+    "hotpotqa": 5233329,
+    "2wikimultihopqa": 430225,
+    "musique": 139416
+  },
+  "notes": "Prompt files are downloaded on demand and are intentionally not committed. The index counts are the upstream release's required validation counts, not hashes."
+}

@@ -249,6 +249,7 @@ python src/eval_multihop.py \\
     --total-count ${NUM_SAMPLES} \\
     --output-dir "${OUTPUT_DIR}/" \\
     --save-version "${SAVE_VERSION}" \\
+    --save-every-examples 32 \\
     --seed 42 \\
     --eval \\
     --resume

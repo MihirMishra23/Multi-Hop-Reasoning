@@ -27,6 +27,7 @@ class QwenLLM(LLM):
         device: Optional[str] = None,
         device_map: Optional[str] = None,
         dtype: Optional[str] = None,
+        revision: Optional[str] = None,
     ):
         super().__init__(model_name=model_name, timeout_s=timeout_s, max_retries=max_retries)
 
@@ -38,6 +39,7 @@ class QwenLLM(LLM):
                 f"Supported models: {list(MODEL_MAP.keys())}"
             )
         self.hf_model_id = hf_model_id
+        self.requested_revision = revision
 
         # Device configuration
         if device is None:
@@ -63,6 +65,7 @@ class QwenLLM(LLM):
         self.tokenizer = AutoTokenizer.from_pretrained(
             hf_model_id,
             trust_remote_code=True,
+            revision=revision,
         )
 
         # Load model
@@ -79,6 +82,7 @@ class QwenLLM(LLM):
 
         self.model = AutoModelForCausalLM.from_pretrained(
             hf_model_id,
+            revision=revision,
             **model_kwargs,
         )
         self.model.eval()  # Set to evaluation mode
@@ -94,11 +98,15 @@ class QwenLLM(LLM):
         extra: Optional[Dict[str, Any]] = None,
     ) -> LLMResponse:
         """Generate a response from the Qwen model."""
-        # Format prompt using chat template for instruct models
-        messages = [{"role": "user", "content": prompt}]
+        adapter_options = dict(extra or {})
+        raw_prompt = bool(adapter_options.pop("raw_prompt", False))
 
-        # Apply chat template if available
-        if hasattr(self.tokenizer, "apply_chat_template") and self.tokenizer.chat_template:
+        # IRCoT's released few-shot assets are completion prompts. Other agents retain
+        # the repository's usual chat-template behavior.
+        if raw_prompt:
+            formatted_prompt = prompt
+        elif hasattr(self.tokenizer, "apply_chat_template") and self.tokenizer.chat_template:
+            messages = [{"role": "user", "content": prompt}]
             # Explicitly disable thinking mode in chat template (Qwen3 specific)
             formatted_prompt = self.tokenizer.apply_chat_template(
                 messages,
@@ -156,8 +164,8 @@ class QwenLLM(LLM):
                 )
 
         # Allow extra parameters to override defaults
-        if extra:
-            generation_kwargs.update(extra)
+        if adapter_options:
+            generation_kwargs.update(adapter_options)
 
         last_err: Optional[Exception] = None
         for attempt in range(self.max_retries + 1):
