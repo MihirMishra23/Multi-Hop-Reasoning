@@ -172,6 +172,7 @@ class IRCoTAgentTests(unittest.TestCase):
         self.assertEqual(agent._retrieval_rounds[1]["cumulative_evidence_count"], 3)
         self.assertEqual(llm.calls[0][1]["max_tokens"], 300)
         self.assertEqual(llm.calls[0][1]["stop"], ["\n"])
+        self.assertEqual(llm.calls[0][1]["extra"]["max_input_tokens"], 8000)
         self.assertNotIn("France's capital city is Paris", llm.calls[-1][0])
         self.assertTrue(llm.calls[-1][0].endswith("Q: What is the capital of France?\nA:"))
 

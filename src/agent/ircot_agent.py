@@ -516,6 +516,11 @@ class IRCoTAgent(Agent):
         generation_kwargs["stop"] = ["\n"]
         extra = dict(generation_kwargs.get("extra") or {})
         extra["raw_prompt"] = True
+        # The official prompt fitter guarantees an 8K-token input budget.
+        # Override stale tokenizer metadata (Qwen snapshots may advertise
+        # 1,024) so the final test question and retrieved evidence are not
+        # silently truncated from the raw completion prompt.
+        extra["max_input_tokens"] = OFFICIAL_MODEL_LENGTH_LIMIT
         generation_kwargs["extra"] = extra
         return self.llm.run(prompt, **generation_kwargs).text.strip()
 

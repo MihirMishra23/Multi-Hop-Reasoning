@@ -100,6 +100,9 @@ class QwenLLM(LLM):
         """Generate a response from the Qwen model."""
         adapter_options = dict(extra or {})
         raw_prompt = bool(adapter_options.pop("raw_prompt", False))
+        max_input_tokens = adapter_options.pop("max_input_tokens", None)
+        if max_input_tokens is not None and int(max_input_tokens) <= 0:
+            raise ValueError("max_input_tokens must be positive")
 
         # IRCoT's released few-shot assets are completion prompts. Other agents retain
         # the repository's usual chat-template behavior.
@@ -119,11 +122,18 @@ class QwenLLM(LLM):
             formatted_prompt = prompt
 
         # Tokenize input
-        inputs = self.tokenizer(
-            formatted_prompt,
-            return_tensors="pt",
-            truncation=True,
-        )
+        tokenization_kwargs: Dict[str, Any] = {
+            "return_tensors": "pt",
+            "truncation": True,
+        }
+        if max_input_tokens is not None:
+            # Some Qwen tokenizer snapshots advertise model_max_length=1024
+            # even though the underlying model supports a much larger context.
+            # Methods with a verified prompt budget (notably IRCoT's 8K
+            # completion prompt) must be able to override that metadata or the
+            # tokenizer silently drops the question/evidence at the end.
+            tokenization_kwargs["max_length"] = int(max_input_tokens)
+        inputs = self.tokenizer(formatted_prompt, **tokenization_kwargs)
         # Only move to device if not using device_map
         if not self.use_device_map:
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
