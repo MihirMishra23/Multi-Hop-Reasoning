@@ -20,8 +20,9 @@ REPO_DIR="${REPO_DIR:-/home/rtn27/Multi-Hop-Reasoning-popqa-longtail}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-/share/j_sun/rtn27/popqa_longtail_1399}"
 OUTPUT_DIR="${OUTPUT_DIR:-/share/j_sun/rtn27/popqa_longtail_eval/${RUN_TAG}}"
 CORPUS_PATH="${ARTIFACT_DIR}/popqa_longtail_contexts.jsonl"
-CACHE_ROOT="${CACHE_ROOT:-/scratch/rtn27/eval_cache}"
-JOB_TMP="${JOB_TMP:-/scratch/rtn27/eval_tmp/${SLURM_JOB_ID}}"
+CACHE_ROOT="${CACHE_ROOT:-/scratch/${USER}/eval_cache}"
+JOB_TMP="${JOB_TMP:-/scratch/${USER}/eval_tmp/${SLURM_JOB_ID}}"
+EVAL_ENV="${EVAL_ENV:-/scratch/rtn27/multi-hop-reasoning}"
 
 mkdir -p \
     "${CACHE_ROOT}/huggingface" \
@@ -37,7 +38,7 @@ export VLLM_CACHE_ROOT="${CACHE_ROOT}/vllm"
 export TRITON_CACHE_DIR="${JOB_TMP}/triton"
 
 source /share/apps/software/anaconda3/etc/profile.d/conda.sh
-conda activate /scratch/rtn27/multi-hop-reasoning
+conda activate "${EVAL_ENV}"
 cd "${REPO_DIR}"
 export POPQA_CORPUS_PATH="${CORPUS_PATH}"
 
