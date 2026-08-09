@@ -40,6 +40,7 @@ from llm import get_llm
 from data import get_dataset, selected_rows_provenance
 from data.hotpotqa import load_hotpotqa_rag_corpus
 from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
+from data.popqa import load_popqa_rag_corpus
 from multi_lmlm.database.database_manager import build_databases_from_triplets_batch
 
 # Import for TriviaQA sentence splitting
@@ -525,7 +526,7 @@ def main() -> None:
     parser.add_argument(
         "--setting",
         default="distractor",
-        choices=["distractor", "fullwiki", "qa-sm", "qa-rm", "rc.wikipedia"],
+        choices=["distractor", "fullwiki", "long_tail", "qa-sm", "qa-rm", "rc.wikipedia"],
         help="Dataset setting",
     )
     parser.add_argument(
@@ -890,6 +891,9 @@ def main() -> None:
         elif args.dataset == "musique":
             rag_corpus = load_musique_rag_corpus(rag_corpus_path)
             logger.info(f"Loaded {len(rag_corpus)} unique RAG paragraphs from musique")
+        elif args.dataset == "popqa":
+            rag_corpus = load_popqa_rag_corpus(rag_corpus_path)
+            logger.info(f"Loaded {len(rag_corpus)} unique RAG articles from PopQA")
         else:
             rag_corpus = []
         
