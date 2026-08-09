@@ -13,7 +13,6 @@
 #SBATCH --mem=128G
 #SBATCH --time=12:00:00
 #SBATCH --partition=default_partition
-#SBATCH --nodelist=unicorn-compute-[01-02]
 #SBATCH --gres=gpu:nvidia_a40:1
 #SBATCH --output=/home/rtn27/table3_%x_%j.out
 #SBATCH --error=/home/rtn27/table3_%x_%j.err
@@ -28,9 +27,12 @@ set -euo pipefail
 NUM_SAMPLES="${NUM_SAMPLES:-1000}"
 OUTPUT_DIR="${OUTPUT_DIR:-/share/j_sun/rtn27/table3_reproduction}"
 REPO_DIR="${REPO_DIR:-/home/rtn27/Multi-Hop-Reasoning-ircot-table3}"
+EVAL_ENV="${EVAL_ENV:-multi-hop-reasoning}"
 
 source /share/apps/software/anaconda3/etc/profile.d/conda.sh
-conda activate multi-hop-reasoning
+set +u
+conda activate "${EVAL_ENV}"
+set -u
 cd "${REPO_DIR}"
 
 case "${MODEL_KEY}" in
