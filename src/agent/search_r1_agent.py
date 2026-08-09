@@ -2,6 +2,12 @@
 
 The agent only owns Search-R1's multi-turn generation protocol. Dataset loading,
 batching, persistence, and scoring remain in ``eval_multihop.py``.
+
+Behaviour is a byte-for-byte reproduction of the release's infer.py — the
+prompt, ``_passages2string`` document rendering, ``StopOnSequence`` stop set,
+and ``curr_search_template`` prefix newlines all match. Rollout uses vLLM
+instead of ``AutoModel.generate`` so a full dev sweep finishes in hours rather
+than days; there is no behavioural switch to opt out.
 """
 
 from __future__ import annotations
@@ -17,34 +23,10 @@ from typing import Any, Callable
 from agent.agent_class import Agent, AgentStep
 
 
-SYSTEM_PROMPT = "You are a helpful and harmless assistant."
-
-SEARCH_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "search",
-        "description": "Searches the web for relevant information based on the given query.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query_list": {
-                    "type": "array",
-                    "description": (
-                        "A list of fully-formed semantic queries. The tool will return "
-                        "search results for each query."
-                    ),
-                }
-            },
-            "required": ["query_list"],
-        },
-    },
-}
-
 # Verbatim prompt from the Search-R1 release (evaluate_searchr1.py), which is
 # also the format the released checkpoints were RL-trained under. The literal
-# <search>/</search> and <information> markers are the tool-calling protocol the
-# policy learned; paraphrasing them (as the tool_call variants below do) makes
-# the model emit something else and the retriever is never invoked.
+# <search>/</search> and <information> markers are the tool-calling protocol
+# the policy learned.
 SEARCHR1_OFFICIAL_PROMPT = (
     "Answer the given question. "
     "You must conduct reasoning inside <think> and </think> first every time you get new information. "
@@ -54,63 +36,6 @@ SEARCHR1_OFFICIAL_PROMPT = (
     "If you find no further external knowledge needed, you can directly provide the answer inside <answer> and "
     "</answer>, without detailed illustrations. For example, <answer> Beijing </answer>. Question: "
 )
-
-# Variants that speak the official <search> protocol. Everything else uses the
-# Hermes <tool_call> schema, which only suits models trained for that protocol.
-OFFICIAL_PROTOCOL_VARIANTS = {"default"}
-
-PROMPT_VARIANTS = {
-    "default": SEARCHR1_OFFICIAL_PROMPT,
-    # Paraphrased tool_call variants. NOTE: these do not work with the released
-    # PeterJinGo Search-R1 checkpoints — measured 0 retrievals in 20 samples,
-    # EM roughly a third of the official number — because those checkpoints only
-    # ever saw the <search> protocol. Keep them for models trained on the
-    # Hermes tool_call schema.
-    "toolcall": (
-        "Answer the given question. You must conduct reasoning inside <think> and </think> "
-        "first every time you get new information. After reasoning, if you find you lack some "
-        "knowledge, you can call the search tool that is available to you; its results will be "
-        "returned in a tool response. You can search as many times as you want. If you find no "
-        "further external knowledge needed, directly provide the answer inside <answer> and "
-        "</answer>, without detailed illustrations. For example, <answer> Beijing </answer>. "
-        "Question: "
-    ),
-    "thinkingtag": (
-        "Answer the given question. You must conduct reasoning inside <thinking> and </thinking> "
-        "first every time you get new information. After reasoning, if you find you lack some "
-        "knowledge, you can call the search tool that is available to you; its results will be "
-        "returned in a tool response. You can search as many times as you want. If you find no "
-        "further external knowledge needed, directly provide the answer inside <answer> and "
-        "</answer>, without detailed illustrations. For example, <answer> Beijing </answer>. "
-        "Question: "
-    ),
-    "icl3hop": (
-        "Answer the given question. You must conduct reasoning inside <thinking> and </thinking> "
-        "first every time you get new information. Each <thinking> should be ONE BRIEF SENTENCE "
-        "stating what you need next — not detailed analysis. After reasoning, if you lack "
-        "knowledge, call the search tool. When you have enough information, provide the answer "
-        "inside <answer> and </answer> without detailed illustrations.\n\n"
-        "Here is an example showing the expected format and brevity:\n\n"
-        "Question: What is the population of the capital city of the country where the inventor "
-        "of the World Wide Web was born?\n\n"
-        "<thinking>I need to find who invented the World Wide Web.</thinking>\n"
-        '<tool_call>{"name": "search", "arguments": {"query_list": ["who invented the World Wide Web"]}}</tool_call>\n'
-        '<tool_response>Doc 1 (Title: "Tim Berners-Lee"): Sir Timothy John Berners-Lee, also '
-        "known as TimBL, is an English computer scientist best known as the inventor of the World "
-        "Wide Web.</tool_response>\n"
-        "<thinking>Tim Berners-Lee is English, so the country is the United Kingdom. I need the "
-        "capital of the UK.</thinking>\n"
-        '<tool_call>{"name": "search", "arguments": {"query_list": ["capital of the United Kingdom"]}}</tool_call>\n'
-        '<tool_response>Doc 1 (Title: "London"): London is the capital and largest city of England '
-        "and the United Kingdom.</tool_response>\n"
-        "<thinking>The capital is London. Now I need the population of London.</thinking>\n"
-        '<tool_call>{"name": "search", "arguments": {"query_list": ["population of London"]}}</tool_call>\n'
-        '<tool_response>Doc 1 (Title: "London"): London has a population of approximately 9 '
-        "million people.</tool_response>\n"
-        "<thinking>The population is about 9 million.</thinking>\n"
-        "<answer>9 million</answer>\n\nNow answer this question: "
-    ),
-}
 
 
 def extract_answer(text: str) -> str:
@@ -133,26 +58,8 @@ def parse_search_query(text: str) -> str | None:
     return query or None
 
 
-def parse_tool_call(text: str) -> dict[str, Any] | None:
-    """Return the first structurally valid Hermes tool call."""
-    for candidate in re.findall(r"<tool_call>(.*?)</tool_call>", text, re.DOTALL):
-        try:
-            value = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if (
-            isinstance(value, dict)
-            and isinstance(value.get("name"), str)
-            and "arguments" in value
-        ):
-            return value
-    return None
-
-
-def _passages_to_string(passages: list[dict[str, Any]], official: bool = False) -> str:
-    """Render retrieved passages.
-
-    official=True reproduces Search-R1's own infer.py::_passages2string:
+def _passages_to_string(passages: list[dict[str, Any]]) -> str:
+    """Render retrieved passages exactly as infer.py::_passages2string does:
 
         title = content.split("\\n")[0]
         text  = "\\n".join(content.split("\\n")[1:])
@@ -160,53 +67,34 @@ def _passages_to_string(passages: list[dict[str, Any]], official: bool = False) 
 
     Note "Doc N(Title:" has no space before the paren, the body follows the
     paren after a single space, and each document ends with one newline.
-
-    (mx253's evaluate_searchr1.py uses a third shape, f"Doc {idx+1} {content}",
-    which keeps the title inline and does not match infer.py. infer.py is the
-    file that ships with the Search-R1 release, so it is what we follow.)
     """
-    if official:
-        parts = []
-        for index, item in enumerate(passages):
-            content = str(item["document"]["contents"])
-            title = content.split("\n")[0]
-            text = "\n".join(content.split("\n")[1:])
-            parts.append(f"Doc {index + 1}(Title: {title}) {text}\n")
-        return "".join(parts)
-    rendered = []
+    parts = []
     for index, item in enumerate(passages):
-        contents = str(item["document"]["contents"])
-        title, _, body = contents.partition("\n")
-        rendered.append(f"Doc {index + 1} (Title: {title})\n{body}".rstrip())
-    return "\n\n".join(rendered)
+        content = str(item["document"]["contents"])
+        title = content.split("\n")[0]
+        text = "\n".join(content.split("\n")[1:])
+        parts.append(f"Doc {index + 1}(Title: {title}) {text}\n")
+    return "".join(parts)
 
 
-def _render_passages(response: dict[str, Any], official: bool = False) -> str:
+def _render_passages(response: dict[str, Any]) -> str:
     results = response.get("result", [])
     if not results:
         return "No search results found."
-    if official:
-        # Upstream issues one query per turn and concatenates its documents
-        # with no separator between result groups.
-        return "".join(_passages_to_string(p, official=True) for p in results)
-    return "\n---\n".join(_passages_to_string(passages) for passages in results)
+    # Upstream issues one query per turn and concatenates its documents with
+    # no separator between result groups.
+    return "".join(_passages_to_string(p) for p in results)
 
 
-def format_search_response(response: dict[str, Any], official: bool = False) -> str:
-    """Render retrieval results in the protocol the model expects.
+def format_search_response(response: dict[str, Any]) -> str:
+    """Render retrieval results as upstream Search-R1's continuation.
 
-    official=True reproduces upstream Search-R1's plain
-    "\\n<information>...</information>\\n\\n" continuation. Otherwise the result
-    is a JSON tool payload for the Hermes tool_call schema.
+    Upstream's ``curr_search_template`` is
+        '\\n\\n{output_text}<information>{search_results}</information>\\n\\n'.
+    The generated text is appended to the prompt by the caller, so only the
+    <information> block and its trailing blank line remain here.
     """
-    result = _render_passages(response, official=official)
-    if official:
-        # Upstream's curr_search_template is
-        #   '\n\n{output_text}<information>{search_results}</information>\n\n'
-        # The generated text is already appended to the prompt by the caller,
-        # so only the <information> block and its trailing blank line remain.
-        return f"<information>{result}</information>\n\n"
-    return json.dumps({"result": result}, ensure_ascii=False)
+    return f"<information>{_render_passages(response)}</information>\n\n"
 
 
 _INFORMATION_OPEN = "<information>"
@@ -240,6 +128,15 @@ def truncate_tool_response(text: str, limit: int, side: str) -> str:
     return _clip(text)
 
 
+# infer.py's StopOnSequence checks token-sequence equality against these 6
+# variants to catch tokenizations that pack trailing whitespace with </search>.
+_INFER_PY_STOPS = [
+    "</search>", " </search>",
+    "</search>\n", " </search>\n",
+    "</search>\n\n", " </search>\n\n",
+]
+
+
 class SearchR1Agent(Agent):
     """Run batched Search-R1 trajectories while preserving the shared Agent API."""
 
@@ -251,8 +148,6 @@ class SearchR1Agent(Agent):
         retrieval_top_k: int = 3,
         retrieval_timeout: float = 30.0,
         retrieval_workers: int = 32,
-        prompt_variant: str = "default",
-        enable_thinking: bool = False,
         top_p: float = 0.95,
         sampling_top_k: int = -1,
         max_model_len: int = 3072,
@@ -277,8 +172,6 @@ class SearchR1Agent(Agent):
     ) -> None:
         if not model_path:
             raise ValueError("--model-path is required for Search-R1 evaluation")
-        if prompt_variant not in PROMPT_VARIANTS:
-            raise ValueError(f"unknown Search-R1 prompt variant: {prompt_variant}")
 
         if tokenizer is None:
             from transformers import AutoTokenizer
@@ -304,17 +197,12 @@ class SearchR1Agent(Agent):
                     engine_kwargs["max_num_seqs"] = max_num_seqs
                 engine = LLM(**engine_kwargs)
 
-        # Which tool-calling protocol this variant speaks. The released
-        # Search-R1 checkpoints were RL-trained on the <search> protocol.
-        self.official_protocol = prompt_variant in OFFICIAL_PROTOCOL_VARIANTS
         self.model_path = model_path
         self.retrieval_url = retrieval_url
         self.max_steps = max_steps
         self.retrieval_top_k = retrieval_top_k
         self.retrieval_timeout = retrieval_timeout
         self.retrieval_workers = retrieval_workers
-        self.prompt_variant = prompt_variant
-        self.enable_thinking = enable_thinking
         self.top_p = top_p
         self.sampling_top_k = sampling_top_k
         self.max_model_len = max_model_len
@@ -326,41 +214,15 @@ class SearchR1Agent(Agent):
 
     def _initial_prompt(self, question: str) -> str:
         # Upstream normalises the question to end with '?' before templating.
+        # A single user turn with no system prompt and no tool schema; the
+        # protocol lives entirely in the prompt text.
         question = question.strip()
         if question and question[-1] != "?":
             question += "?"
-        content = PROMPT_VARIANTS[self.prompt_variant] + question
-        if self.official_protocol:
-            # Upstream passes a single user turn with no system prompt and no
-            # tool schema; the protocol lives entirely in the prompt text.
-            return self.tok.apply_chat_template(
-                [{"role": "user", "content": content}],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": content},
-        ]
         return self.tok.apply_chat_template(
-            messages,
-            tools=[SEARCH_TOOL_SCHEMA],
+            [{"role": "user", "content": SEARCHR1_OFFICIAL_PROMPT + question}],
             tokenize=False,
             add_generation_prompt=True,
-            enable_thinking=self.enable_thinking,
-        )
-
-    def _tool_continuation(self, result: str) -> str:
-        if self.official_protocol:
-            # Already wrapped in <information>...</information>; appending it
-            # verbatim keeps the trajectory a single assistant turn, which is
-            # what the policy saw during training.
-            return result
-        return self.tok.apply_chat_template(
-            [{"role": "tool", "content": result}],
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=self.enable_thinking,
         )
 
     def _token_ids(self, text: str) -> list[int]:
@@ -390,7 +252,6 @@ class SearchR1Agent(Agent):
                 with urllib.request.urlopen(request, timeout=self.retrieval_timeout) as response:
                     result = format_search_response(
                         json.loads(response.read().decode("utf-8")),
-                        official=self.official_protocol,
                     )
                 return truncate_tool_response(
                     result,
@@ -401,7 +262,7 @@ class SearchR1Agent(Agent):
                 last_error = exc
                 if attempt < 2:
                     time.sleep(attempt + 1)
-        error = json.dumps({"result": f"Search error: {last_error}"}, ensure_ascii=False)
+        error = f"<information>Search error: {last_error}</information>\n\n"
         return truncate_tool_response(
             error,
             self.max_tool_response_length,
@@ -453,21 +314,19 @@ class SearchR1Agent(Agent):
                     continue
                 active.append(index)
                 prompt_snapshots[index] = prompt
-                params_kwargs = {
-                    "n": 1,
-                    "temperature": temperature,
-                    "top_p": self.top_p,
-                    "top_k": self.sampling_top_k,
-                    "max_tokens": budget,
-                }
-                if self.official_protocol:
-                    # Upstream stops generation at </search> so the query can be
-                    # executed and the <information> block spliced in. Without
-                    # this the model keeps going and hallucinates its own
-                    # search results instead of waiting for real ones.
-                    params_kwargs["stop"] = ["</search>"]
-                    params_kwargs["include_stop_str_in_output"] = True
-                sampling_params.append(self._sampling_params_cls(**params_kwargs))
+                # Upstream stops generation at </search> so the query can be
+                # executed and the <information> block spliced in. Without
+                # this the model keeps going and hallucinates its own
+                # search results instead of waiting for real ones.
+                sampling_params.append(self._sampling_params_cls(
+                    n=1,
+                    temperature=temperature,
+                    top_p=self.top_p,
+                    top_k=self.sampling_top_k,
+                    max_tokens=budget,
+                    stop=_INFER_PY_STOPS,
+                    include_stop_str_in_output=True,
+                ))
 
             if not active:
                 break
@@ -481,18 +340,19 @@ class SearchR1Agent(Agent):
 
             for output, index in zip(outputs, active):
                 generated, generated_ids = self._decode_completion(output.outputs[0])
-                prompts[index] += generated
+                # infer.py's curr_search_template = '\n\n{output_text}<information>...'
+                # inserts '\n\n' before every turn's output when concatenating
+                # into the growing prompt (including turn 0). Reproduce that
+                # here so the next-turn context matches infer.py byte-for-byte.
+                prompts[index] += "\n\n" + generated
                 assistant_text[index] += generated
                 response_tokens[index] += len(generated_ids)
-                if self.official_protocol:
-                    search_query = parse_search_query(generated)
-                    tool_call = (
-                        {"name": "search", "arguments": {"query_list": [search_query]}}
-                        if search_query
-                        else None
-                    )
-                else:
-                    tool_call = parse_tool_call(generated)
+                search_query = parse_search_query(generated)
+                tool_call = (
+                    {"name": "search", "arguments": {"query_list": [search_query]}}
+                    if search_query
+                    else None
+                )
 
                 exhausted = (
                     response_tokens[index] >= response_limit
@@ -516,40 +376,26 @@ class SearchR1Agent(Agent):
                     finished[index] = True
                     continue
 
-                arguments = tool_call.get("arguments")
-                query_list = arguments.get("query_list") if isinstance(arguments, dict) else None
+                arguments = tool_call["arguments"]
+                query_list = arguments["query_list"]
                 step = AgentStep(
                     prompt=prompt_snapshots[index],
                     answer=generated,
                     action="toolcall",
                     tool_name=tool_call["name"],
-                    tool_args=arguments if isinstance(arguments, dict) else None,
+                    tool_args=arguments,
                 )
-                if tool_call["name"] != "search":
-                    step.error = f"unknown tool: {tool_call['name']}"
-                    query_list = None
-                elif not isinstance(query_list, list) or not query_list:
-                    step.error = "search requires a non-empty query_list"
-                    query_list = None
-
-                if query_list is None:
-                    result = truncate_tool_response(
-                        json.dumps({"result": f"Search error: {step.error}"}),
-                        self.max_tool_response_length,
-                        self.tool_response_truncate_side,
-                    )
-                    step.tool_result = result
-                    pending.append((index, [], step))
-                else:
-                    pending.append((index, query_list, step))
+                pending.append((index, query_list, step))
 
             retrieval_inputs = [queries for _, queries, _ in pending if queries]
             retrieval_results = iter(self._retrieve_many(retrieval_inputs))
             for index, tool_queries, step in pending:
                 result = next(retrieval_results) if tool_queries else step.tool_result
                 step.tool_result = result
-                continuation = self._tool_continuation(result)
-                continuation_ids = self._token_ids(continuation)
+                # Official protocol: the <information> block is already wrapped
+                # and appended verbatim to the prompt, keeping the trajectory a
+                # single assistant turn — what the policy saw during training.
+                continuation_ids = self._token_ids(result)
                 if (
                     response_tokens[index] + len(continuation_ids) >= response_limit
                     or len(self._token_ids(prompts[index])) + len(continuation_ids)
@@ -558,7 +404,7 @@ class SearchR1Agent(Agent):
                     step.error = step.error or "tool response exceeded trajectory budget"
                     finished[index] = True
                 else:
-                    prompts[index] += continuation
+                    prompts[index] += result
                     response_tokens[index] += len(continuation_ids)
                 traces[index].append(step)
 

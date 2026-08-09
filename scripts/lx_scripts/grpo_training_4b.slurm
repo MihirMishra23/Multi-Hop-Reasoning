@@ -2,20 +2,24 @@
 
 
 # SLURM Directives
-#SBATCH -J grpo_4b_2ph_0805
-#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_2ph_0805_%j.out
-#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_2ph_0805_%j.err
+#SBATCH -J grpo_4b_2ph_0807_ckpt735
+#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_2ph_0807_ckpt735_%j.out
+#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_2ph_0807_ckpt735_%j.err
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=256G
-#SBATCH -t 8:00:00
+#SBATCH -t infinite
 #SBATCH --partition=aimi,kilian,jjs533,default_partition
 #SBATCH --gres=gpu:nvidia_b200:4
 #SBATCH --requeue
 
 # Load the required environmentt
 source activate mem
+
+# WANDB destination
+export WANDB_ENTITY=KBevo
+export WANDB_PROJECT=LMLM
 
 # Navigate to the working directory
 cd /share/j_sun/mx253_lmlm/
@@ -29,9 +33,11 @@ DATASET=hotpotqa-v2
 # MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_classic_retrieval_6k
 # MODEL_PATH="/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k"
 # MODEL_PATH="Qwen/Qwen3-1.7B"
-# Mid-training checkpoint (checkpoint-276 unavailable; falling back to 368 per user)
-MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
-SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/main/0805
+# Final SFT checkpoint (epoch 3, step 735). A/B against the ckpt-368 run under
+# 0805/ — same GRPO recipe, only the init changes. Motivation: 4B GRPO from
+# ckpt-368 lost -2.72 F1 on 2wiki full; try if a fully-SFT'd init behaves better.
+MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-735
+SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/main/0807
 RETRIEVAL_THRESHOLD=0.6
 RETRIEVAL_TOP_K=4
 NUM_GENERATIONS=32

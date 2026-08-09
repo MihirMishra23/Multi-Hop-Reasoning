@@ -7,14 +7,23 @@
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH --get-user-env
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=2
 #SBATCH --mem=64G
 #SBATCH -t infinite
-#SBATCH --partition=aimi,kilian,jjs533,default_partition
+#SBATCH --partition=kilian,default_partition,jjs533
 #SBATCH --gres=gpu:nvidia_rtx_a6000:1
 
 source activate mem
-cd /home/lz586/icl/Multi-Hop-Reasoning/
+cd /share/j_sun/mx253_lmlm/
+
+_directive() {  # _directive --partition  →  value after '='
+    sed -n "s|^#SBATCH[[:space:]]\+$1=\(.*\)|\1|p" "${BASH_SOURCE[0]}" | head -1
+}
+SB_CPUS=$(_directive --cpus-per-task)
+SB_MEM=$(_directive --mem)
+SB_PARTITION=$(_directive --partition)
+SB_GRES=$(_directive --gres)
+echo "Resources (from #SBATCH header): partition=${SB_PARTITION} gres=${SB_GRES} cpus=${SB_CPUS} mem=${SB_MEM}"
 
 echo "Starting Eval..."
 
@@ -120,10 +129,43 @@ MODEL_PATH_LST=(
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k-grpo-B32-K2-M4-bs16-s16-b0.0-ep5-n7000-em_size-v2-p1binary-ptcontext_only-wmcount-th0.6-topk4-nak
 
     # ----------------------------
-    # Final Runs: SFT
-    Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
-    Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
+    # Row 3 (Train w/ Phase-2 Only) rerun, 0806 — static Gemini DB + row-1 sampling
+    # 0805/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_1phase-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-rth0.6-rk4-sk4-nak-inv
+
+    # ----------------------------
+    # 0806: mid-training SFT checkpoint-368. Re-run at n=1000 so the SFT baseline
+    # uses the same 1000-example unified DB pool as the ckpt-368 GRPO n1000 evals
+    # (the earlier full-dev SFT runs pooled the whole dev set, which is not comparable).
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4/checkpoint-368
     # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
+
+    # ----------------------------
+    # 0807: old 4B GRPO that started from the FINAL SFT (= ckpt-735 = root).
+    # Trained WITHOUT --use_inverses. Re-eval at n=1000 with the same
+    # unified-DB pool as the ckpt-368 GRPO n1000 runs so it slots into the
+    # comparison table cleanly. Filling in the 2x2 (init: ckpt-368 vs ckpt-735)
+    # x (train inverses: off vs on).
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-th0.6-topk4-nak
+
+    # ----------------------------
+    # 0808: 4B GRPO trained FROM the ckpt-735 SFT WITH --use_inverses
+    # (job 858596, finished at step 500).
+    0807/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-checkpoint-735-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-rth0.6-rk4-sk4-nak-inv/checkpoint-500
+
+    # ----------------------------
+    # 0806: 4B GRPO trained FROM the ckpt-368 SFT (job 827668, finished at step 500).
+    # Distinct from the older 4B GRPO that started from the final SFT checkpoint.
+    # 0805/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1-checkpoint-368-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-rth0.6-rk4-sk4-nak-inv/checkpoint-500
+
+    # ----------------------------
+    # 0806: 1.7B GRPO trained FROM the ckpt-368 SFT, finished at step 500.
+    # Same params as the 4B ckpt-368 GRPO eval above (full dev, two_phase).
+    # 0805_ret_0.6_top_k_4/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4-checkpoint-368-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n7000-f1-2ph-prsft-wcount-rth0.6-rk4-sk4-nak-inv/checkpoint-500
+
+    # ----------------------------
+    # Final Runs: SFT
+    # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4
+    # Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1
     # Qwen3-8B-SFT_hotpotqa_ep3_bsz48_lr5e-5_th-1
@@ -187,6 +229,9 @@ MODEL_PATH_LST=(
     # Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k_ret_0.6_top_k_4-grpo-tbs512-N32-K4-B16-M7-b0.0-lr5e-6-step500-n90447-f1-2ph-prsft-wcount-th0.6-topk4-nak-tier1_3-curric
 )
 
+# "lmlm"      → Phase-2 only over the pre-built DB that eval_lmlm_multihop.sh
+#               maps per (dataset, split). Used for the row-3 ablation.
+# "two_phase" → normal co-evolution eval (model builds its own DB).
 # TWO_PHASE_METHOD="lmlm"
 TWO_PHASE_METHOD="two_phase"
 
@@ -199,7 +244,7 @@ DATASET_LST=(
     hotpotqa
     musique
     2wiki
-    popqa
+    # popqa      # broken: 13275/14267 have empty contexts, rest misaligned
     # mquake
 )
 SPLIT_LST=(
@@ -217,8 +262,10 @@ fi
 
 # ── Eval parameters ──────────────────────────────────────────────────────────
 OUTPUT_DIR="./output/main_tables"
-SAVE_VERSION="_0805_full"
-NUM_SAMPLES=20000    # auto-caps per dataset; > max dev (popqa=14267) → runs full dev
+SAVE_VERSION="_0808_4b_ckpt735_grpo_ckpt500_n1000"
+NUM_SAMPLES=1000     # for the full-dev pass, set NUM_SAMPLES=20000 (auto-caps
+                     # to each dataset's dev size: hotpotqa 7405 / musique 2417
+                     # / 2wiki 12576)
 
 # Retrieval hyper-parameters (match training)
 TOP_K=4
@@ -229,6 +276,16 @@ USE_INVERSES="--use-inverses"
 # DB settings (two-phase only)
 CONCAT_ALL_DB="--concat-all-db"  # "--concat-all-db" or ""
 USE_CONTEXTS="all"               # "golden" or "all"
+
+# lmlm-only sampling knobs. Set to match row 1's TRAINING_SAMPLING_PARAMS
+# (see TRAINING_SAMPLING_PARAMS in src/eval_multihop.py) so a phase-2-only
+# eval is hyperparameter-identical to a two_phase --use-train-params run.
+# Leave all four empty to get the historical greedy behaviour (T=0.0).
+# Ignored when TWO_PHASE_METHOD="two_phase" (that path uses USE_TRAIN_PARAMS).
+TEMPERATURE="--temperature 1.0"
+TOP_P="--top-p 0.95"
+VLLM_TOP_K="--vllm-top-k 4"
+MAX_MODEL_LEN="--max-model-len 8192"
 
 # Sampling: "" = greedy (temperature=0, recommended); "--use-train-params" = T=1.0, top_p=0.95
 USE_TRAIN_PARAMS="--use-train-params"
@@ -334,7 +391,12 @@ for MODEL_DIR in "${MODEL_PATH_LST[@]}"; do
 #!/bin/bash
 source \$(conda info --base)/etc/profile.d/conda.sh
 conda activate mem
-cd /home/lz586/icl/Multi-Hop-Reasoning/
+cd /share/j_sun/mx253_lmlm/
+# Per-job vLLM cache. Concurrent jobs on the same model share a torch.compile
+# cache hash, and racing writes to it on NFS kill jobs with either
+# "Errno 116 Stale file handle" or an AssertionError in standalone_compile.save.
+# Costs a few minutes of recompilation per job; avoids the race entirely.
+export VLLM_CACHE_ROOT=/home/lz586/.cache/vllm_\${SLURM_JOB_ID}
 SCRIPT_EOF
             fi
             TMP_SCRIPT="${GROUPED_SCRIPTS[${GROUP_KEY}]}"
@@ -358,7 +420,7 @@ SCRIPT_EOF
 
                     cat >> "${TMP_SCRIPT}" << SCRIPT_EOF
 echo "========== ${MODEL_PATH} | ${DATASET} | ${SPLIT} | ${METHOD} =========="
-bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
+bash /share/j_sun/mx253_lmlm/scripts/eval_lmlm_multihop.sh \
     --model_path "${MODEL_PATH}" \
     --dataset "${DATASET}" \
     --split "${SPLIT}" \
@@ -372,6 +434,10 @@ bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/eval_lmlm_multihop.sh \
     ${USE_INVERSES} \
     ${USE_TRAIN_PARAMS} \
     ${CONCAT_ALL_DB} \
+    ${TEMPERATURE} \
+    ${TOP_P} \
+    ${VLLM_TOP_K} \
+    ${MAX_MODEL_LEN} \
     --use-contexts "${_USE_CONTEXTS}" \
     --setting "${SETTING}"
 SCRIPT_EOF
@@ -394,11 +460,11 @@ for GROUP_KEY in "${!GROUPED_SCRIPTS[@]}"; do
             -e "/home/lz586/icl/slurm_output/lmlm_multi_hop/${JOB_NAME}_%j.err" \
             -N 1 -n 1 \
             --get-user-env \
-            --cpus-per-task=4 \
-            --mem=64G \
+            --cpus-per-task="${SB_CPUS}" \
+            --mem="${SB_MEM}" \
             -t infinite \
-            --partition=kilian \
-            --gres=gpu:nvidia_rtx_a6000:1 \
+            --partition="${SB_PARTITION}" \
+            --gres="${SB_GRES}" \
             --requeue \
             "${TMP_SCRIPT}"
         rm -f "${TMP_SCRIPT}"

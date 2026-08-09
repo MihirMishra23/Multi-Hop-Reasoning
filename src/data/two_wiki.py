@@ -1,134 +1,110 @@
-from data.hotpotqa import _normalize_examples_pylist, _normalize_hf_dataset, _normalize_split
-from datasets import Dataset as HFDataset  # type: ignore
-from datasets import load_dataset  # type: ignore
-from typing import Optional
-import json
+"""Portable 2WikiMultiHopQA validation loader."""
 
-TWO_WIKI_PATH = "/share/j_sun/rtn27/datasets/two_wiki_dev.json"
+import json
+import os
+from typing import Optional
+
+from datasets import Dataset as HFDataset  # type: ignore
+
+from .hotpotqa import _normalize_split
+from .provenance import hf_dataset_file
+
+
+def _resolve_path(source: str, two_wiki_path: Optional[str]) -> str:
+    explicit = two_wiki_path or os.environ.get("TWO_WIKI_PATH")
+    if explicit:
+        path = os.path.abspath(os.path.expanduser(explicit))
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"2Wiki dev file not found: {path}")
+        return path
+    if source == "local":
+        raise FileNotFoundError(
+            "source='local' requires two_wiki_path=... or the TWO_WIKI_PATH environment variable"
+        )
+    if source not in {"auto", "hf", "remote"}:
+        raise ValueError(f"Unsupported 2Wiki source: {source}")
+    return hf_dataset_file("2wiki")
+
+
 def load_2wiki(
     setting: str,
     split: str,
+    source: str = "auto",
     limit: Optional[int] = None,
     seed: Optional[int] = None,
+    two_wiki_path: Optional[str] = None,
 ) -> HFDataset:
-    """Load HotpotQA with unified schema.
-
-    Args:
-        setting: "distractor" or "fullwiki".
-        split: "train", "dev"/"validation", or "test" (where available).
-        source: "auto" (prefer local), "local", or "hf".
-        limit: optional max number of rows to return.
-        seed: optional random seed for shuffling. If provided, dataset will be shuffled deterministically.
-    """
+    del setting  # 2Wiki exposes a single distractor-style validation file here.
     split = _normalize_split(split)
+    if split != "validation":
+        raise NotImplementedError("Use the dev/validation split for 2WikiMultiHopQA")
 
-    if split != 'validation':
-        raise NotImplementedError("Please use the 'dev / validation' split for 2wiki.")
-
-    with open(TWO_WIKI_PATH) as f:
-        data = json.load(f)  # type: ignore
-
-    
-    ds = _normalize_2wiki_data(data)
-    # Shuffle with seed if provided
+    with open(_resolve_path(source, two_wiki_path), "r", encoding="utf-8") as stream:
+        data = json.load(stream)
+    dataset = _normalize_2wiki_data(data)
     if seed is not None:
-        ds = ds.shuffle(seed=seed)
-        
+        dataset = dataset.shuffle(seed=seed)
     if limit is not None:
-        ds = ds.select(range(min(limit, len(ds))))
-    return ds
-
+        dataset = dataset.select(range(min(limit, len(dataset))))
+    return dataset
 
 
 def _normalize_2wiki_data(data):
     rows = []
     for ex in data:
         ex_id = ex.get("_id") or ex.get("id") or ""
-        question = ex.get("question") or ""
         answer = ex.get("answer")
-        answers = []
         if isinstance(answer, str):
             answers = [answer]
         elif isinstance(answer, list):
-            answers = [str(a) for a in answer]
+            answers = [str(value) for value in answer]
         else:
-            answers = ex.get("answers") or []
-            answers = [str(a) for a in answers]
+            answers = [str(value) for value in (ex.get("answers") or [])]
         contexts = _build_contexts(ex.get("context"))
         supporting_facts = _build_supporting_facts(ex.get("supporting_facts"))
-        golden_contexts = _build_golden_contexts(ex.get("context"), ex.get("supporting_facts"))
         rows.append(
             {
                 "id": str(ex_id),
-                "question": str(question),
+                "question": str(ex.get("question") or ""),
                 "answers": answers,
                 "contexts": contexts,
                 "supporting_facts": supporting_facts,
-                "golden_contexts": golden_contexts,
+                "golden_contexts": _build_golden_contexts(
+                    ex.get("context"), ex.get("supporting_facts")
+                ),
             }
         )
     return HFDataset.from_list(rows)
 
 
-def _build_contexts(context: list[list]):
-    """Build all context paragraphs from 2wiki format.
-
-    Format: [[title, [sent1, sent2, ...]], [title, [sent1, ...]], ...]
-    """
+def _build_contexts(context):
     if not context:
         return []
-    result = []
-    for sub_list in context:
-        if len(sub_list) >= 2:
-            title = sub_list[0]
-            sentences = sub_list[1]
-            # Format: "Title: sentence1 sentence2 ..."
-            paragraph = f"{title}: " + " ".join(sentences).strip()
-            result.append(paragraph)
-    return result
+    return [
+        f"{item[0]}: " + " ".join(item[1]).strip()
+        for item in context
+        if isinstance(item, (list, tuple)) and len(item) >= 2
+    ]
 
 
-def _build_supporting_facts(sf_field):
-    """Build supporting facts from 2wiki format.
-
-    Format: [[title, sent_id], [title, sent_id], ...]
-    Returns: [{"title": str, "sentence_id": int}, ...]
-    """
-    if not sf_field:
+def _build_supporting_facts(supporting_facts):
+    if not supporting_facts:
         return []
-    result = []
-    for item in sf_field:
-        if isinstance(item, (list, tuple)) and len(item) >= 2:
-            title, sent_id = item[0], item[1]
-            result.append({"title": str(title), "sentence_id": int(sent_id)})
-    return result
+    return [
+        {"title": str(item[0]), "sentence_id": int(item[1])}
+        for item in supporting_facts
+        if isinstance(item, (list, tuple)) and len(item) >= 2
+    ]
 
 
-def _build_golden_contexts(context: list[list], supporting_facts):
-    """Build golden context strings - only contexts whose title is in supporting_facts.
-
-    Args:
-        context: [[title, [sent1, ...]], ...] format
-        supporting_facts: [[title, sent_id], ...] format
-    Returns:
-        List of context strings for supporting titles only
-    """
+def _build_golden_contexts(context, supporting_facts):
     if not context or not supporting_facts:
         return []
-
-    # Extract supporting titles from supporting_facts
-    supporting_titles = set()
-    for item in supporting_facts:
-        if isinstance(item, (list, tuple)) and len(item) >= 1:
-            supporting_titles.add(item[0])
-
-    # Build contexts only for supporting titles
-    result = []
-    for sub_list in context:
-        if len(sub_list) >= 2:
-            title = sub_list[0]
-            if title in supporting_titles:
-                sentences = sub_list[1]
-                paragraph = f"{title}: " + " ".join(sentences).strip()
-                result.append(paragraph)
-    return result
+    supporting_titles = {
+        item[0] for item in supporting_facts if isinstance(item, (list, tuple)) and item
+    }
+    return [
+        f"{item[0]}: " + " ".join(item[1]).strip()
+        for item in context
+        if isinstance(item, (list, tuple)) and len(item) >= 2 and item[0] in supporting_titles
+    ]

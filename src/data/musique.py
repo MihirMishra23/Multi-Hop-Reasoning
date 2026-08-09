@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional
 from datasets import Dataset as HFDataset  # type: ignore
 from datasets import load_dataset  # type: ignore
 
+from .provenance import hf_source
+
 
 def _normalize_split(split: str) -> str:
     s = split.lower()
@@ -172,7 +174,10 @@ def load_musique(
         raise ValueError(f"Unsupported source for MuSiQue: {source}")
 
     try:
-        raw = load_dataset("dgslibisey/MuSiQue", split=split_norm)  # type: ignore
+        pinned_source = hf_source("musique")
+        raw = load_dataset(
+            pinned_source["path"], split=split_norm, revision=pinned_source["revision"]
+        )  # type: ignore
     except Exception as e:
         raise RuntimeError(f"Failed to load MuSiQue from Hugging Face (split={split_norm}): {e}")
 
@@ -260,7 +265,10 @@ def load_musique_rag_corpus_from_hf(
 ) -> List[Dict[str, Any]]:
     """Build a deduplicated MuSiQue RAG corpus from the HF dataset."""
     split_norm = _normalize_split(split)
-    raw = load_dataset("dgslibisey/MuSiQue", split=split_norm)  # type: ignore
+    pinned_source = hf_source("musique")
+    raw = load_dataset(
+        pinned_source["path"], split=split_norm, revision=pinned_source["revision"]
+    )  # type: ignore
     if seed is not None:
         raw = raw.shuffle(seed=seed)
     if limit is not None:

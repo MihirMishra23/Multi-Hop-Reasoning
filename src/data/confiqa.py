@@ -1,24 +1,4 @@
-"""Loader for ConFiQA dataset with unified schema.
-
-Exposes `load_confiqa(split, limit=None, seed=None, setting='orig')` returning an HF Dataset
-with fields:
-
-- id: str
-- question: str
-- answers: List[str]
-- contexts: List[str]
-- context_titles: List[str]
-- supporting_facts: List[Dict[str, Any]]  (empty for ConFiQA)
-- golden_contexts: List[str]
-- golden_triplets: List[tuple]  (triplets based on setting)
-
-Notes:
-- ConFiQA is loaded from a local JSON file
-- setting='orig' uses orig_context, orig_answer, orig_triplets for all examples
-- setting='cf' uses cf_context, cf_answer, cf_triplets for all examples
-- setting='cf_100' uses cf for first 100 examples, orig for rest
-- setting='cf_500' uses cf for first 500 examples, orig for rest
-"""
+"""Portable ConFiQA-MR loader with deterministic counterfactual subsets."""
 
 import ast
 import json
@@ -28,115 +8,129 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from datasets import Dataset as HFDataset  # type: ignore
 
-logger = logging.getLogger(__name__)
+from .provenance import dataset_source, download_verified_file, sha256_file
 
-# Path to the ConFiQA dataset
-CONFIQA_PATH = "/share/j_sun/lmlm_multihop/confiqa/ConFiQA-MR.json"
+logger = logging.getLogger(__name__)
+VALID_SETTINGS = {"orig", "cf", "cf_100", "cf_500"}
 
 
 def _parse_triplets(triplet_str: str) -> List[Tuple[str, str, str]]:
-    """Parse triplet string into list of tuples.
-
-    Args:
-        triplet_str: String like "[('A', 'B', 'C'), ('D', 'E', 'F')]"
-
-    Returns:
-        List of tuples like [('A', 'B', 'C'), ('D', 'E', 'F')]
-    """
     if not triplet_str:
         return []
-
     try:
         parsed = ast.literal_eval(triplet_str)
-        if isinstance(parsed, list):
-            return parsed
     except (ValueError, SyntaxError):
-        pass
+        return []
+    if not isinstance(parsed, list):
+        return []
+    triplets: List[Tuple[str, str, str]] = []
+    for item in parsed:
+        if isinstance(item, (list, tuple)) and len(item) == 3:
+            triplets.append((str(item[0]), str(item[1]), str(item[2])))
+    return triplets
 
-    return []
+
+def _resolve_confiqa_path(
+    source: str, confiqa_path: Optional[str], cache_dir: Optional[str]
+) -> str:
+    """Resolve an explicit local override or the pinned canonical download."""
+    source_norm = source.lower()
+    if source_norm not in {"auto", "local", "hf", "remote"}:
+        raise ValueError(f"Unsupported ConFiQA source: {source}")
+
+    explicit_path = confiqa_path or os.environ.get("CONFIQA_PATH")
+    if explicit_path:
+        expanded = os.path.abspath(os.path.expanduser(explicit_path))
+        if not os.path.exists(expanded):
+            raise FileNotFoundError(f"ConFiQA dataset not found: {expanded}")
+        expected = dataset_source("confiqa")["sha256"]
+        actual = sha256_file(expanded)
+        if actual != expected:
+            raise ValueError(
+                f"ConFiQA file has SHA-256 {actual}, expected canonical {expected}: {expanded}"
+            )
+        return expanded
+
+    if source_norm == "local":
+        raise FileNotFoundError(
+            "source='local' requires confiqa_path=... or the CONFIQA_PATH environment variable"
+        )
+
+    provenance = dataset_source("confiqa")
+    return download_verified_file(
+        url=provenance["url"],
+        sha256=provenance["sha256"],
+        relative_path="confiqa/ConFiQA-MR.json",
+        cache_dir=cache_dir,
+    )
 
 
-def _load_confiqa(path: str = CONFIQA_PATH) -> List[Dict[str, Any]]:
-    """Load ConFiQA dataset from JSON file.
-
-    Args:
-        path: Path to ConFiQA-MC.json
-
-    Returns:
-        List of examples
-    """
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"ConFiQA dataset not found: {path}")
-
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
+def _load_confiqa(path: str) -> List[Dict[str, Any]]:
+    with open(path, "r", encoding="utf-8") as stream:
+        data = json.load(stream)
+    if not isinstance(data, list):
+        raise ValueError(f"Expected a list of ConFiQA examples in {path}")
     return data
 
 
-def _normalize_confiqa(data: List[Dict[str, Any]], setting: str = "orig") -> HFDataset:
-    """Normalize ConFiQA data to unified schema.
+def _counterfactual_cutoff(setting: str) -> Optional[int]:
+    if setting == "orig":
+        return 0
+    if setting == "cf":
+        return None
+    if setting == "cf_100":
+        return 100
+    if setting == "cf_500":
+        return 500
+    raise ValueError(
+        f"Unsupported ConFiQA setting {setting!r}; choose from {sorted(VALID_SETTINGS)}"
+    )
 
-    Args:
-        data: Raw ConFiQA examples
-        setting: 'orig', 'cf', 'cf_100', or 'cf_500' - determines which context/answer/triplets to use
 
-    Returns:
-        HFDataset with unified schema
-    """
-    examples = []
+def _ordered_source_indices(size: int, seed: Optional[int]) -> List[int]:
+    """Match Hugging Face Dataset.shuffle while preserving raw source IDs."""
+    indices = HFDataset.from_dict({"source_index": list(range(size))})
+    if seed is not None:
+        indices = indices.shuffle(seed=seed)
+    return [int(value) for value in indices["source_index"]]
 
-    logger.info(f"Normalizing ConFiQA with setting: {setting}")
-    for idx, ex in enumerate(data):
-        # Parse both orig and cf triplets
-        triplets_orig = _parse_triplets(ex.get("orig_path_labeled", ""))
-        triplets_cf = _parse_triplets(ex.get("cf_path_labeled", ""))
 
-        # Determine whether to use cf or orig for this example
-        use_cf = False
-        if setting == "cf":
-            use_cf = True
-        elif setting == "cf_100" and idx < 100:
-            use_cf = True
-        elif setting == "cf_500" and idx < 500:
-            use_cf = True
+def _normalize_confiqa(
+    data: List[Dict[str, Any]], source_indices: List[int], setting: str
+) -> HFDataset:
+    cutoff = _counterfactual_cutoff(setting)
+    examples: List[Dict[str, Any]] = []
 
-        # Select context, answer, and triplets based on use_cf
-        if use_cf:
-            context = ex.get("cf_context", "")
-            answer = ex.get("cf_answer", "")
-            aliases = ex.get("cf_alias", [])
-            golden_triplets = triplets_cf
-        else:
-            context = ex.get("orig_context", "")
-            answer = ex.get("orig_answer", "")
-            aliases = ex.get("orig_alias", [])
-            golden_triplets = triplets_orig
+    for eval_position, source_index in enumerate(source_indices):
+        ex = data[source_index]
+        use_cf = setting == "cf" or (cutoff is not None and eval_position < cutoff)
+        prefix = "cf" if use_cf else "orig"
+        context = str(ex.get(f"{prefix}_context", ""))
+        answer = str(ex.get(f"{prefix}_answer", ""))
+        aliases = ex.get(f"{prefix}_alias", [])
+        triplets = _parse_triplets(str(ex.get(f"{prefix}_path_labeled", "")))
 
-        # Build answer list (primary answer + aliases)
         answers = [answer] if answer else []
         if isinstance(aliases, list):
-            answers.extend([str(a).strip() for a in aliases if str(a).strip()])
+            answers.extend(str(alias).strip() for alias in aliases if str(alias).strip())
+        unique_answers = list(dict.fromkeys(answers))
 
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_answers = []
-        for ans in answers:
-            if ans and ans not in seen:
-                seen.add(ans)
-                unique_answers.append(ans)
-
-        examples.append({
-            "id": str(idx),
-            "question": str(ex.get("question", "")),
-            "answers": unique_answers,
-            "contexts": [context] if context else [],
-            "context_titles": ["ConFiQA Context"],
-            "golden_contexts": [context] if context else [],
-            "supporting_facts": [],  # ConFiQA doesn't have sentence-level supporting facts
-            "golden_triplets": golden_triplets,
-        })
-
+        examples.append(
+            {
+                "id": str(source_index),
+                "source_index": source_index,
+                "eval_position": eval_position,
+                "confiqa_setting": setting,
+                "is_counterfactual": use_cf,
+                "question": str(ex.get("question", "")),
+                "answers": unique_answers,
+                "contexts": [context] if context else [],
+                "context_titles": [f"ConFiQA {source_index}"],
+                "golden_contexts": [context] if context else [],
+                "supporting_facts": [],
+                "golden_triplets": triplets,
+            }
+        )
     return HFDataset.from_list(examples)
 
 
@@ -146,38 +140,32 @@ def load_confiqa(
     limit: Optional[int] = None,
     seed: Optional[int] = None,
     setting: str = "orig",
-    confiqa_path: str = CONFIQA_PATH,
+    confiqa_path: Optional[str] = None,
+    cache_dir: Optional[str] = None,
 ) -> HFDataset:
-    """Load ConFiQA with unified schema.
+    """Load ConFiQA-MR from its pinned public source.
 
-    Args:
-        split: Dataset split (ConFiQA only has test, so this is ignored)
-        source: Data source (ignored, always loads from local file)
-        limit: Optional max number of rows to return
-        seed: Optional random seed for shuffling
-        setting: 'orig', 'cf', 'cf_100', or 'cf_500' - which version of context/answers to use
-        confiqa_path: Path to ConFiQA-MC.json
-
-    Returns:
-        HFDataset with unified schema
+    The dataset is ordered first, then the counterfactual setting is applied.
+    Consequently ``orig``, ``cf_100`` and ``cf_500`` always contain the same
+    questions in the same order, and a 1,000-row evaluation has exactly 0, 100
+    and 500 counterfactual rows respectively.
     """
-    # Load raw data
-    raw_data = _load_confiqa(confiqa_path)
+    if split.lower() not in {"test", "dev", "validation"}:
+        raise ValueError("ConFiQA-MR has one evaluation split; use test/dev/validation")
+    if setting not in VALID_SETTINGS:
+        _counterfactual_cutoff(setting)
 
-    # Normalize to unified schema first
-    ds = _normalize_confiqa(raw_data, setting=setting)
-
-    # Shuffle if seed provided
-    if seed is not None:
-        ds = ds.shuffle(seed=seed)
-
-    # Limit if requested
+    path = _resolve_confiqa_path(source, confiqa_path, cache_dir)
+    raw_data = _load_confiqa(path)
+    source_indices = _ordered_source_indices(len(raw_data), seed)
     if limit is not None:
-        ds = ds.select(range(min(limit, len(ds))))
-
-    # Debug logging
-    logger.info(f"DEBUG load_confiqa: Loading {len(ds)} examples with setting='{setting}'")
-    if len(ds) > 0:
-        logger.info(f"DEBUG load_confiqa: First example answer: {ds[0]['answers']}")
-
-    return ds
+        source_indices = source_indices[: min(limit, len(source_indices))]
+    dataset = _normalize_confiqa(raw_data, source_indices, setting)
+    logger.info(
+        "Loaded %d ConFiQA rows (setting=%s, seed=%s, counterfactual=%d)",
+        len(dataset),
+        setting,
+        seed,
+        sum(bool(value) for value in dataset["is_counterfactual"]),
+    )
+    return dataset

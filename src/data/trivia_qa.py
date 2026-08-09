@@ -25,6 +25,8 @@ from venv import logger
 from datasets import Dataset as HFDataset  # type: ignore
 from datasets import load_dataset  # type: ignore
 
+from .provenance import hf_source
+
 
 def _normalize_split(split: str) -> str:
     """Normalize split names (dev -> validation)."""
@@ -168,7 +170,13 @@ def load_trivia_qa(
 
     # Load from Hugging Face
     try:
-        raw = load_dataset("trivia_qa", trivia_setting, split=split_norm)  # type: ignore
+        pinned_source = hf_source("trivia_qa")
+        raw = load_dataset(
+            pinned_source["path"],
+            trivia_setting,
+            split=split_norm,
+            revision=pinned_source["revision"],
+        )  # type: ignore
     except Exception as e:
         raise RuntimeError(
             f"Failed to load TriviaQA from Hugging Face (setting={trivia_setting}, split={split_norm}): {e}"

@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional
 from datasets import Dataset as HFDataset  # type: ignore
 from datasets import load_dataset  # type: ignore
 
+from .provenance import hf_source
+
 
 def _normalize_split(split: str) -> str:
     """Normalize split name. SynthWorlds only has 'test' split."""
@@ -110,7 +112,13 @@ def load_synthworlds(
         raise ValueError(f"SynthWorlds only supports source='hf', got '{source}'")
 
     try:
-        raw = load_dataset("kenqgu/SynthWorlds", subset_norm, split=split_norm)  # type: ignore
+        pinned_source = hf_source("synthworlds")
+        raw = load_dataset(
+            pinned_source["path"],
+            subset_norm,
+            split=split_norm,
+            revision=pinned_source["revision"],
+        )  # type: ignore
     except Exception as e:
         raise RuntimeError(
             f"Failed to load SynthWorlds from HuggingFace (subset={subset_norm}, split={split_norm}): {e}"

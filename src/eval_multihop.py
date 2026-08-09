@@ -17,6 +17,7 @@ The JSON format uses deduplicated metadata at the top level:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -36,7 +37,7 @@ import torch
 
 from agent import get_agent, Agent
 from llm import get_llm
-from data import get_dataset
+from data import get_dataset, selected_rows_provenance
 from data.hotpotqa import load_hotpotqa_rag_corpus
 from data.musique import load_musique_rag_corpus, write_musique_rag_corpus_jsonl
 from multi_lmlm.database.database_manager import build_databases_from_triplets_batch
@@ -284,6 +285,14 @@ def process_single_batch(
             "supporting_facts": ex.get("supporting_facts"),
             "contexts": contexts,
         }
+        for provenance_key in (
+            "source_index",
+            "eval_position",
+            "confiqa_setting",
+            "is_counterfactual",
+        ):
+            if provenance_key in ex:
+                metadata_entry[provenance_key] = ex[provenance_key]
         # For MQuAKE, also capture new_answers and split type for knowledge editing evaluation
         if "new_answers" in ex:
             metadata_entry["new_answers"] = ex["new_answers"]
@@ -365,6 +374,14 @@ def process_single_batch(
             "question": metadata["question"],
             "trace": serialized_trace,
         }
+        for provenance_key in (
+            "source_index",
+            "eval_position",
+            "confiqa_setting",
+            "is_counterfactual",
+        ):
+            if provenance_key in metadata:
+                results[str(metadata["qid"])][provenance_key] = metadata[provenance_key]
         # For MQuAKE, also save new_gold_answer and split type for knowledge editing evaluation
         if "new_answers" in metadata:
             results[str(metadata["qid"])]["new_gold_answer"] = metadata["new_answers"]
@@ -402,6 +419,27 @@ def process_single_batch(
     return results
 
 
+def _fit_filename(name: str, max_bytes: int = 255) -> str:
+    """Shorten a leaf filename that would exceed the filesystem's 255-byte cap.
+
+    Long model tags push results_*.json past the limit (hotpotqa lands on 256
+    bytes and dies with "Errno 36 File name too long", while musique squeaks
+    through at 255). The model tag is also the parent directory name, so
+    dropping the middle of it loses nothing; a hash of the full name is spliced
+    in so two different runs can never collide. No-op for names that already
+    fit, which keeps every existing path untouched.
+    """
+    if len(name.encode()) <= max_bytes:
+        return name
+    stem, _, ext = name.rpartition(".")
+    ext = f".{ext}" if stem else ""
+    stem = stem or name
+    digest = hashlib.sha1(name.encode()).hexdigest()[:8]
+    budget = max_bytes - len(ext.encode()) - len(digest) - 2  # 2 for the ".." join
+    head = budget * 2 // 3
+    return f"{stem[:head]}.{digest}.{stem[-(budget - head):]}{ext}"
+
+
 def save_results_to_file(
     all_results: Dict[str, Dict[str, Any]],
     save_path: str,
@@ -420,7 +458,9 @@ def save_results_to_file(
             "database-path": database_path_value,
             "model": args.model,
             "dataset": args.dataset,
-            "setting": args.setting,
+            "setting": args.confiqa_setting if args.dataset == "confiqa" else args.setting,
+            "dataset_source": args.dataset_source,
+            "dataset_provenance": getattr(args, "_dataset_provenance", None),
             "split": args.split,
             "batch_size": args.batch_size,
             "total_examples": len(all_results),
@@ -449,8 +489,6 @@ def save_results_to_file(
         output["metadata"]["search_r1"] = {
             "retrieval_url": args.search_r1_retrieval_url,
             "retrieval_top_k": args.search_r1_retrieval_k,
-            "prompt_variant": args.search_r1_prompt_variant,
-            "enable_thinking": args.search_r1_enable_thinking,
             "max_steps": args.max_steps,
             "max_tool_response_length": args.search_r1_max_tool_response_length,
             "tool_response_truncate_side": args.search_r1_tool_response_truncate_side,
@@ -478,6 +516,12 @@ def save_results_to_file(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run agent over a dataset and save predictions.")
     parser.add_argument("--dataset", choices=["hotpotqa", "musique", "2wiki", "synthworlds", "trivia_qa", "popqa", "confiqa", "mquake", "mquake-remastered"], help="Dataset name")
+    parser.add_argument(
+        "--dataset-source",
+        default="auto",
+        choices=["auto", "hf", "remote", "local"],
+        help="Use pinned public data by default, or an explicitly configured local override.",
+    )
     parser.add_argument(
         "--setting",
         default="distractor",
@@ -562,22 +606,22 @@ def main() -> None:
     parser.add_argument(
         "--search-r1-retrieval-k", type=int, default=3, help="Search-R1 documents per query"
     )
-    parser.add_argument(
+    # Accepted-but-ignored: the behavioural switches these controlled were
+    # collapsed into the single infer.py-aligned path. Only kept so in-flight
+    # jobs 859612-617, whose SLURM spool scripts still pass these flags, can
+    # requeue without argparse rejecting them. Safe to delete once those runs
+    # (and any resubmissions of them) have finished.
+    for _dep in (
         "--search-r1-prompt-variant",
-        choices=["default", "toolcall", "thinkingtag", "icl3hop"],
-        default="default",
-        help=(
-            "Prompt variant. 'default' is the verbatim upstream Search-R1 prompt "
-            "and speaks the <search>/<information> protocol the released "
-            "checkpoints were trained on. The others are paraphrases using the "
-            "Hermes <tool_call> schema and do not work with those checkpoints."
-        ),
-    )
-    parser.add_argument(
+        "--search-r1-doc-format",
+        "--search-r1-stop-variants",
+    ):
+        parser.add_argument(_dep, help=argparse.SUPPRESS)
+    for _dep in (
+        "--search-r1-splice-prefix-newlines",
         "--search-r1-enable-thinking",
-        action="store_true",
-        help="Enable Qwen3 native thinking in the Search-R1 chat template",
-    )
+    ):
+        parser.add_argument(_dep, action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--search-r1-max-tool-response-length",
         type=int,
@@ -615,12 +659,16 @@ def main() -> None:
         help=(
             "vLLM dtype for search_r1. The released checkpoints declare "
             "torch_dtype=float32 (verl saves fp32 FSDP master weights) even "
-            "though training and rollout ran in bf16, and infer.py itself loads "
-            "bfloat16. Following config.json would load 7B as 29GB and not fit "
-            "a 48GB card. Use 'auto' to follow config.json instead."
+            "though training and rollout ran in bf16, so bf16 both matches how "
+            "the weights were produced and halves memory. Use 'auto' to follow "
+            "config.json instead."
         ),
     )
-    parser.add_argument("--top-p", type=float, default=0.95, help="Nucleus sampling probability")
+    # Shared by search_r1 and lmlm, which want different defaults (0.95 vs the
+    # historical greedy 1.0). Left as None here and resolved per-method after
+    # parse_args() so neither method's default behaviour changes.
+    parser.add_argument("--top-p", type=float, default=None,
+                        help="Nucleus sampling probability (default: 0.95 for search_r1, 1.0 for lmlm)")
     parser.add_argument(
         "--sampling-top-k", type=int, default=-1, help="Sampling top-k; -1 disables it"
     )
@@ -642,6 +690,10 @@ def main() -> None:
         ),
     )
 
+    # NOTE: --top-p is declared once above (shared with search_r1); for lmlm it
+    # defaults to 1.0. two_phase resolves top_p from --use-train-params instead.
+    parser.add_argument("--vllm-top-k", type=int, default=0,
+                        help="lmlm only: vLLM sampling top_k, 0 = disabled (distinct from retrieval --top-k)")
     parser.add_argument("--max-model-len", type=int, default=8192,
                         help="vLLM max model length for two_phase (default 8192 > training 4096 to handle multi-turn context growth)")
 
@@ -652,16 +704,6 @@ def main() -> None:
         "--max-steps", type=int, default=5, help="Max reasoning steps for the Agent"
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
-    parser.add_argument(
-        "--no-shuffle",
-        action="store_true",
-        help=(
-            "Load the dataset in its original order instead of shuffling by "
-            "--seed. Use when comparing against numbers produced by a harness "
-            "that takes the first N examples unshuffled, as upstream Search-R1 "
-            "does."
-        ),
-    )
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
     parser.add_argument(
         "--start-index",
@@ -713,6 +755,12 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+
+    # --top-p is shared by search_r1 and lmlm but their historical defaults
+    # differ, so it is declared with default=None and resolved here. lmlm's 1.0
+    # (with --vllm-top-k 0) reproduces the original greedy decoding.
+    if args.top_p is None:
+        args.top_p = 1.0 if args.method == "lmlm" else 0.95
 
     # Validate use-contexts flag
     if args.use_contexts == "all" and args.method != "two_phase":
@@ -783,6 +831,8 @@ def main() -> None:
         "max_tokens": args.max_tokens,
         **({k: _extra_agent_kwargs[k] for k in ("top_p", "vllm_top_k", "repetition_penalty", "max_model_len")}
            if args.method == "two_phase" else {}),
+        **({"top_p": args.top_p, "vllm_top_k": args.vllm_top_k, "max_model_len": args.max_model_len}
+           if args.method == "lmlm" else {}),
         **({
             "top_p": args.top_p,
             "sampling_top_k": args.sampling_top_k,
@@ -877,13 +927,12 @@ def main() -> None:
     dataset_setting = args.confiqa_setting if args.dataset == "confiqa" else args.setting
     if args.dataset == "confiqa":
         logger.info(f"DEBUG: Loading ConFiQA with setting='{dataset_setting}' (args.confiqa_setting='{args.confiqa_setting}')")
-    # The loaders shuffle only when seed is not None, so None keeps the
-    # original order (which is what --no-shuffle asks for).
     full_dataset = get_dataset(
         name=args.dataset,
         setting=dataset_setting,
         split=args.split,
-        seed=None if args.no_shuffle else args.seed,
+        source=args.dataset_source,
+        seed=args.seed,
     )
     total_dataset_size = len(full_dataset)
 
@@ -900,6 +949,33 @@ def main() -> None:
     # TODO: how to make the training and eval use the same split function (e.g. create_train_val_splits)?
     # Calculate the exclusive end index
     end_index = args.start_index + examples_to_process
+
+    selected_dataset = full_dataset.select(range(args.start_index, end_index))
+    counterfactual_count = None
+    if "is_counterfactual" in selected_dataset.column_names:
+        counterfactual_count = sum(
+            bool(value) for value in selected_dataset["is_counterfactual"]
+        )
+    id_column = next(
+        (
+            column
+            for column in ("id", "_id", "case_id")
+            if column in selected_dataset.column_names
+        ),
+        None,
+    )
+    selected_ids = (
+        selected_dataset[id_column]
+        if id_column is not None
+        else list(range(args.start_index, end_index))
+    )
+    args._dataset_provenance = selected_rows_provenance(
+        args.dataset,
+        selected_ids,
+        seed=args.seed,
+        setting=dataset_setting,
+        counterfactual_count=counterfactual_count,
+    )
 
     print(f"Evaluating {examples_to_process} / {total_dataset_size} examples (index {args.start_index} to {end_index})")
     logger.info(f"Dataset size: {total_dataset_size}, Processing {examples_to_process} examples from index {args.start_index} to {end_index}")
@@ -924,10 +1000,12 @@ def main() -> None:
             settings_str += "_tp"
         if args.dataset == "synthworlds":
             settings_str += f"_setting{args.setting}"
+        if args.dataset == "confiqa":
+            settings_str += f"_setting{args.confiqa_setting}"
 
         save_postfix = f"{args.dataset}_{args.split}_{model_name}_n{examples_to_process}_i{args.start_index}{use_inv_str}{settings_str}.json"
-        save_path = os.path.join(output_dir, f"generations{args.save_version}", f"eval_{save_postfix}")
-        save_results_path = os.path.join(output_dir, f"results{args.save_version}", f"results_{save_postfix}")
+        save_path = os.path.join(output_dir, f"generations{args.save_version}", _fit_filename(f"eval_{save_postfix}"))
+        save_results_path = os.path.join(output_dir, f"results{args.save_version}", _fit_filename(f"results_{save_postfix}"))
     else:
         model_name = args.model or "unknown-model"
         save_path = os.path.join(base_output_dir, args.method, f"{args.dataset}_{args.setting}", model_name, "generations")
@@ -1020,8 +1098,6 @@ def main() -> None:
             "retrieval_top_k": args.search_r1_retrieval_k,
             "retrieval_timeout": args.search_r1_retrieval_timeout,
             "retrieval_workers": args.search_r1_retrieval_workers,
-            "prompt_variant": args.search_r1_prompt_variant,
-            "enable_thinking": args.search_r1_enable_thinking,
             "top_p": args.top_p,
             "sampling_top_k": args.sampling_top_k,
             "max_model_len": args.search_r1_max_model_len,
@@ -1041,6 +1117,15 @@ def main() -> None:
     if args.method == "rag" and rag_corpus:
         agent_kwargs["corpus"] = rag_corpus
         logger.info(f"Added RAG corpus to agent_kwargs: {len(rag_corpus)} documents")
+
+    if args.method == "lmlm":
+        # Mirror the two_phase sampling knobs so lmlm runs can be made
+        # hyperparameter-identical to a two_phase --use-train-params run.
+        agent_kwargs.update({
+            "top_p": args.top_p,
+            "vllm_top_k": args.vllm_top_k,
+            "max_model_len": args.max_model_len,
+        })
 
     agent_kwargs.update(_extra_agent_kwargs)
 
@@ -1121,7 +1206,10 @@ def main() -> None:
         os.makedirs(unified_db_dir, exist_ok=True)
 
         contexts_suffix = f"_{args.use_contexts}" if args.use_contexts != "golden" else ""
-        unified_db_filename = f"unified_db_{args.dataset}_{args.split}_n{examples_to_process}_i{args.start_index}{contexts_suffix}.json"
+        confiqa_suffix = (
+            f"_{args.confiqa_setting}" if args.dataset == "confiqa" else ""
+        )
+        unified_db_filename = f"unified_db_{args.dataset}_{args.split}_n{examples_to_process}_i{args.start_index}{contexts_suffix}{confiqa_suffix}.json"
         unified_db_path = os.path.join(unified_db_dir, unified_db_filename)
 
         # Extract triplets from the unified database and save
@@ -1139,6 +1227,7 @@ def main() -> None:
                 "total_triplets": len(all_triplets),
                 "use_contexts": args.use_contexts,
                 "contexts_are_split": args.use_contexts == "all",
+                "dataset_provenance": args._dataset_provenance,
             },
             "triplets": [{"head": t[0], "relation": t[1], "tail": t[2]} for t in all_triplets]
         }
