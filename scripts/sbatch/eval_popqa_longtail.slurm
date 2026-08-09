@@ -38,7 +38,11 @@ export VLLM_CACHE_ROOT="${CACHE_ROOT}/vllm"
 export TRITON_CACHE_DIR="${JOB_TMP}/triton"
 
 source /share/apps/software/anaconda3/etc/profile.d/conda.sh
+# The lz586 ``mem`` environment's MKL activation hook reads an unset variable.
+# Temporarily disable nounset only for Conda activation, then restore it.
+set +u
 conda activate "${EVAL_ENV}"
+set -u
 cd "${REPO_DIR}"
 export POPQA_CORPUS_PATH="${CORPUS_PATH}"
 
