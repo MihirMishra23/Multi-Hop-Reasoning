@@ -51,7 +51,6 @@ esac
 
 COMMON_ARGS=(
     --dataset popqa
-    --dataset-source hf
     --setting long_tail
     --split test
     --seed 42
