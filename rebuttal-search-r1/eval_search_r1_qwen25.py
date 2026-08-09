@@ -8,8 +8,10 @@ temperature=0.7 follow Search-R1's public `infer.py` at commit 598e61b.
 import argparse
 import json
 import logging
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -53,6 +55,34 @@ def format_passages(retrieval_result: List[Dict[str, Any]]) -> str:
         text = "\n".join(contents.split("\n")[1:])
         formatted += f"Doc {index + 1}(Title: {title}) {text}\n"
     return formatted
+
+
+def load_tokenizer(model_path: str, revision: Optional[str], fix_mistral_regex: bool):
+    """Load once and persist the exact tokenizer that vLLM should use.
+
+    Recent Transformers versions detect the legacy Qwen2 tokenizer regex used
+    by Qwen3 checkpoints and require ``fix_mistral_regex=True``.  vLLM 0.10
+    does not expose tokenizer kwargs, so serialize the corrected fast tokenizer
+    and point vLLM at that snapshot instead of letting it reload the unfixed
+    tokenizer from the model directory.
+    """
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_path,
+        revision=revision,
+        fix_mistral_regex=fix_mistral_regex,
+    )
+    if not fix_mistral_regex:
+        return tokenizer, model_path
+
+    scratch_root = Path(os.environ.get("TMPDIR", tempfile.gettempdir()))
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    tokenizer_dir = Path(
+        tempfile.mkdtemp(prefix="searchr1-tokenizer-", dir=str(scratch_root))
+    )
+    tokenizer.save_pretrained(tokenizer_dir)
+    return tokenizer, str(tokenizer_dir)
 
 
 class HttpRetriever:
@@ -114,13 +144,17 @@ class LocalRetriever:
 
 
 def run_eval(args) -> None:
-    from transformers import AutoTokenizer
     from vllm import LLM, SamplingParams
 
     model_revision = args.model_revision or MODEL_REVISIONS.get(args.model_path)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_path, revision=model_revision)
+    tokenizer, vllm_tokenizer_path = load_tokenizer(
+        args.model_path,
+        model_revision,
+        args.fix_mistral_regex,
+    )
     llm = LLM(
         model=args.model_path,
+        tokenizer=vllm_tokenizer_path,
         revision=model_revision,
         dtype="bfloat16",
         max_model_len=args.max_model_len,
@@ -240,6 +274,11 @@ def run_eval(args) -> None:
         "metadata": {
             "model": args.model_path,
             "model_revision": model_revision,
+            "tokenizer": {
+                "source": args.model_path,
+                "revision": model_revision,
+                "fix_mistral_regex": args.fix_mistral_regex,
+            },
             "search_r1_code_revision": SEARCH_R1_COMMIT,
             "dataset_provenance": selected_rows_provenance(
                 "confiqa",
@@ -292,6 +331,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--model-revision")
+    parser.add_argument(
+        "--fix-mistral-regex",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Apply Transformers' compatibility fix for the legacy tokenizer "
+            "regex and pass the corrected tokenizer snapshot to vLLM."
+        ),
+    )
     parser.add_argument(
         "--confiqa-setting",
         choices=[
