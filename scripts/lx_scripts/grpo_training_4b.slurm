@@ -2,33 +2,40 @@
 
 
 # SLURM Directives
-#SBATCH -J grpo_optimized_2
-#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_optimized_%j.out
-#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_optimized_%j.err
+#SBATCH -J grpo_4b_2ph_0805
+#SBATCH -o /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_2ph_0805_%j.out
+#SBATCH -e /home/lz586/icl/slurm_output/lmlm_multihop/grpo_train_4b_2ph_0805_%j.err
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=256G
 #SBATCH -t 8:00:00
-#SBATCH --partition=aimi
-#SBATCH --gres=gpu:nvidia_b200:2
+#SBATCH --partition=aimi,kilian,jjs533,default_partition
+#SBATCH --gres=gpu:nvidia_b200:4
 #SBATCH --requeue
 
 # Load the required environmentt
 source activate mem
 
 # Navigate to the working directory
-cd /home/lz586/icl/Multi-Hop-Reasoning/
+cd /share/j_sun/mx253_lmlm/
 
 
 # DATASET=hotpotqa-v2
 DATASET=hotpotqa-v2
 
 # MODEL_PATH=/share/j_sun/lz586/checkpoints/lmlm_multi_hop/Qwen3-8B-SFT_hotpotqa_ep3_bsz48_th-1
-MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
+# MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
 # MODEL_PATH=/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-4B-SFT_hotpotqa_ep5_bsz48_th-1_2phase_classic_retrieval_6k
 # MODEL_PATH="/share/j_sun/rtn27/checkpoints/lmlm_multi_hop/Qwen3-1.7B-SFT_hotpotqa_ep3_bsz48_th-1_2phase_classic_retrieval_6k"
 # MODEL_PATH="Qwen/Qwen3-1.7B"
+# Mid-training checkpoint (checkpoint-276 unavailable; falling back to 368 per user)
+MODEL_PATH=/share/j_sun/lmlm_multihop/checkpoints/main/Qwen3-4B-SFT_hotpotqa_ep3_bsz48_th-1/checkpoint-368
+SAVE_DIR=/share/j_sun/lmlm_multihop/checkpoints/main/0805
+RETRIEVAL_THRESHOLD=0.6
+RETRIEVAL_TOP_K=4
+NUM_GENERATIONS=32
+NUM_DB_ROLLOUTS=4
 DATABASE_PATH=""  # TODO: set a valid database JSON path for single-phase mode
 
 THRESHOLD=-1
@@ -77,9 +84,10 @@ else
 fi
 
 echo "Starting GRPO Training..."
-bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/grpo_train.sh \
+bash /share/j_sun/mx253_lmlm/scripts/grpo_train.sh \
 --gpu_type B200 \
 --model_path ${MODEL_PATH} \
+--save_dir ${SAVE_DIR} \
 --dataset_name ${DATASET_NAME} \
 --database_path "${DATABASE_PATH}" \
 --train_size ${TRAIN_SIZE} \
@@ -88,6 +96,11 @@ bash /home/lz586/icl/Multi-Hop-Reasoning/scripts/grpo_train.sh \
 --phase1_prompt_type ${PHASE1_PROMPT_TYPE} \
 ${USE_CHAT_TEMPLATE} \
 ${TWO_PHASE} \
-${DEBUG}
+${DEBUG} \
+--retrieval_threshold ${RETRIEVAL_THRESHOLD} \
+--retrieval_top_k ${RETRIEVAL_TOP_K} \
+--num_generations ${NUM_GENERATIONS} \
+--num_db_rollouts ${NUM_DB_ROLLOUTS} \
+--use_inverses
 
 echo "GRPO Training complete!"

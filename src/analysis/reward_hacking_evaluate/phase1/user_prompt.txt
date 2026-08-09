@@ -1,0 +1,7 @@
+### Context (Source Wiki Document):
+{context}
+
+### Knowledge Database to Evaluate:
+{database_triplets}
+
+Evaluate each triplet in this database according to the rubric. Return your evaluation as JSON.

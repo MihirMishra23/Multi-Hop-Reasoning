@@ -48,3 +48,29 @@ output/
 
 mlruns/
 core
+
+# Top-level KG rollout dumps (~1.4 GB)
+KG_results/
+KG_results_v2/
+
+# All data under src/analysis/ and menghan-scripts/ (CSVs, JSONLs, plots)
+src/analysis/**/*.csv
+src/analysis/**/*.jsonl
+src/analysis/**/*.png
+menghan-scripts/**/*.csv
+menghan-scripts/**/*.jsonl
+menghan-scripts/**/*.png
+
+# Large KB artifacts + all LLM-judge / analysis result JSONs
+src/analysis/kb_baselines/v2_filtered/
+src/analysis/**/*_kb.json
+src/analysis/**/*_results*.json
+
+# LLM-judge debug dumps and cherry-picked example cases (regenerate if needed)
+src/analysis/reward_hacking_evaluate/**/debug/
+src/analysis/reward_hacking_evaluate/**/examples/
+
+# Copied README (regenerable, not part of this repo's own docs)
+src/analysis/kb_baselines/README.md
+
+menghan-scripts/
